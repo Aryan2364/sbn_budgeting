@@ -72,26 +72,36 @@ push to main ──▶ Actions: build & push ──▶ ghcr.io/aryan2364/sbn-bac
    `SEED_ADMIN_PASSWORD` are both set. Blank the password out of the file
    once it has run.
 
-7. Point nginx at the two containers. The frontend must be served at the
-   domain root and the API at `/api`, because
-   `NEXT_PUBLIC_API_URL=https://sbn.rgbindia.com/api` is compiled into
-   the browser bundle:
+7. Put the domain in front of the two containers with Caddy. Caddy is
+   already running on this box (it serves `v2e.rgbindia.com`), so this
+   is a new site block, not a new install — copy `Caddyfile.sbn` from
+   this repo into the server's Caddyfile, then:
 
-   ```nginx
-   server {
-     server_name sbn.rgbindia.com;
-
-     location /api/ { proxy_pass http://127.0.0.1:4400/api/; }
-     location /     { proxy_pass http://127.0.0.1:3400; }
-
-     proxy_set_header Host              $host;
-     proxy_set_header X-Real-IP         $remote_addr;
-     proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
-     proxy_set_header X-Forwarded-Proto $scheme;
-   }
+   ```bash
+   sudo caddy validate --config /etc/caddy/Caddyfile
+   sudo systemctl reload caddy
    ```
 
-   Then `certbot --nginx -d sbn.rgbindia.com`.
+   Caddy obtains the certificate itself on the first request. There is
+   no certbot step.
+
+   Two things the block gets right that are easy to get wrong:
+
+   - `/api/*` is forwarded **without** stripping the prefix. NestJS sets
+     a global prefix of `api` (`backend/src/main.ts`), so the real route
+     is `/api/auth/login`. Caddy's `handle_path` strips the matched
+     prefix — using it here would 404 every API call. The block uses
+     `handle`.
+   - The `/api/*` block is written before the catch-all, because Caddy
+     evaluates `handle` blocks in order and the catch-all would
+     otherwise swallow the API too.
+
+   DNS already resolves `sbn.rgbindia.com` to Cloudflare, and today the
+   host returns **HTTP 525** — Cloudflare reaching an origin that has no
+   certificate for this name. That is the expected symptom of the site
+   block not existing yet, and it also tells us Cloudflare's SSL mode is
+   already Full (a Flexible origin would not attempt TLS at all), so the
+   certificate Caddy provisions is what clears it.
 
 ## Every deploy after that
 
@@ -158,6 +168,11 @@ psql "host=database-1.cxoqkkq469da.ap-south-1.rds.amazonaws.com port=5432 \
 |----------|-----------|--------|
 | frontend | 3000      | 3400   |
 | backend  | 4000      | 4400   |
+
+Caddy is the only thing that should be reachable from outside; 3400 and
+4400 stay closed in the security group. Cloudflare proxies the domain,
+so the origin only ever needs 80 and 443 open — 80 included, because
+that is how Caddy answers the ACME challenge.
 | db       | — | RDS `sadbhavna_prod`, schema `budgeting`, ap-south-1 |
 
 ## Changing the domain

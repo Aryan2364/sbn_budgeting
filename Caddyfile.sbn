@@ -1,0 +1,40 @@
+# Caddy site block for sbn.rgbindia.com.
+#
+# Append this to the server's Caddyfile (or drop it in the imported
+# conf.d directory if that is how the box is organised), then:
+#
+#   sudo caddy validate --config /etc/caddy/Caddyfile
+#   sudo systemctl reload caddy
+#
+# Caddy provisions the TLS certificate itself on first request. Nothing
+# here needs certbot.
+
+sbn.rgbindia.com {
+	encode zstd gzip
+
+	# The API must arrive at the backend WITH the /api prefix intact:
+	# NestJS sets a global prefix of `api` (backend/src/main.ts), so
+	# /api/auth/login is the real route. `handle_path` would strip it
+	# and every call would 404 — use `handle`.
+	#
+	# This block comes first because Caddy matches handle blocks in
+	# order and the one below catches everything.
+	handle /api/* {
+		reverse_proxy 127.0.0.1:4400
+	}
+
+	# Everything else is the Next.js app.
+	handle {
+		reverse_proxy 127.0.0.1:3400
+	}
+
+	# Cloudflare sits in front, so the connecting address is always a
+	# Cloudflare edge IP. This puts the real client address back in
+	# X-Forwarded-For for the logs.
+	request_header X-Real-IP {http.request.header.CF-Connecting-IP}
+
+	log {
+		output file /var/log/caddy/sbn.rgbindia.com.log
+		format json
+	}
+}
