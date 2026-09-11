@@ -1,0 +1,73 @@
+# Builds the backend + frontend Docker images and pushes them to the GitHub
+# Container Registry (GHCR). Runs on every push to main, and can be triggered
+# by hand from the Actions tab ("Run workflow").
+#
+# Images produced:
+#   ghcr.io/aryan2364/sbn-backend:latest   (+ a tag for the exact commit)
+#   ghcr.io/aryan2364/sbn-frontend:latest  (+ a tag for the exact commit)
+#
+# GHCR login uses the automatic GITHUB_TOKEN — no secret to configure here.
+name: Build & push images
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}   # lets you run it manually from the Actions tab
+
+# GHCR paths must be lowercase. Owner "Aryan2364" -> "aryan2364".
+env:
+  IMAGE_BASE: ghcr.io/aryan2364
+
+# Allow this workflow to push packages (images) using GITHUB_TOKEN.
+permissions:
+  contents: read
+  packages: write
+
+# If you push twice quickly, cancel the older run.
+concurrency:
+  group: build-images-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: backend
+            context: ./backend
+          - name: frontend
+            context: ./frontend
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build & push ${{ matrix.name }}
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          push: true
+          tags: |
+            ${{ env.IMAGE_BASE }}/sbn-${{ matrix.name }}:latest
+            ${{ env.IMAGE_BASE }}/sbn-${{ matrix.name }}:${{ github.sha }}
+          # Ignored by the backend build. NEXT_PUBLIC_API_URL is compiled
+          # into the browser bundle, so it MUST be a build arg — setting it
+          # at runtime in compose does nothing. nginx serves the frontend at
+          # the domain root and proxies /api to the backend, so the browser
+          # talks to the same origin it was loaded from.
+          build-args: |
+            NEXT_PUBLIC_API_URL=https://sbn.rgbindia.com/api
+          # Speed up repeat builds by caching layers in GitHub Actions.
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}

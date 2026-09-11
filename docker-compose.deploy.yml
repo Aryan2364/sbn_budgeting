@@ -1,0 +1,93 @@
+# Runs the PRE-BUILT images from GHCR. This is the file you use ON THE SERVER.
+# It does NOT build anything — it pulls the images GitHub Actions already built.
+#
+# Usage on the server:
+#   ./deploy.sh
+#
+# Requires a .env.production file next to this one (see .env.production.example).
+services:
+  # The database lives in a named volume, not in the container. Removing
+  # and recreating the container is therefore safe; `docker compose down -v`
+  # is the one command that would destroy the data.
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      TZ: Asia/Kolkata
+    volumes:
+      - sbn_pgdata:/var/lib/postgresql/data
+    # Deliberately NOT published to the host. Only the compose network can
+    # reach it; use `docker compose exec db psql` for a shell.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    networks:
+      - sbn_prod
+
+  backend:
+    image: ghcr.io/aryan2364/sbn-backend:latest
+    env_file: .env.production
+    environment:
+      PORT: 4000
+      CORS_ORIGIN: https://sbn.rgbindia.com
+      TZ: Asia/Kolkata
+    ports:
+      - "4400:4000"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - sbn_prod
+
+  frontend:
+    image: ghcr.io/aryan2364/sbn-frontend:latest
+    environment:
+      TZ: Asia/Kolkata
+    ports:
+      - "3400:3000"
+    depends_on:
+      - backend
+    restart: unless-stopped
+    networks:
+      - sbn_prod
+
+  # Not started by `up`. deploy.sh invokes it with `docker compose run --rm
+  # migrate`, so the schema is applied by the same image that serves the API.
+  migrate:
+    image: ghcr.io/aryan2364/sbn-backend:latest
+    env_file: .env.production
+    command: ["node", "dist/db/migrate.js"]
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+    profiles: ["tools"]
+    networks:
+      - sbn_prod
+
+  # Also manual: creates the 19 cost heads, and the first admin if
+  # SEED_ADMIN_EMAIL / SEED_ADMIN_PASSWORD are set. Safe to re-run.
+  seed:
+    image: ghcr.io/aryan2364/sbn-backend:latest
+    env_file: .env.production
+    command: ["node", "dist/db/seed.js"]
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+    profiles: ["tools"]
+    networks:
+      - sbn_prod
+
+volumes:
+  sbn_pgdata:
+
+networks:
+  sbn_prod:
+    driver: bridge
