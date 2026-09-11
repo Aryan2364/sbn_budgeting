@@ -43,14 +43,14 @@ push to main ──▶ Actions: build & push ──▶ ghcr.io/aryan2364/sbn-bac
    psql "host=database-1.cxoqkkq469da.ap-south-1.rds.amazonaws.com          port=5432 dbname=postgres user=postgres          sslmode=verify-full sslrootcert=./global-bundle.pem"
    ```
 
-   The empty database must already exist — RDS gives you `postgres`, not
-   `sadbhavna`. Create it once:
+   The database `sadbhavna_prod` and the schemas `budgeting` and `shared`
+   already exist. The app's tables go in **`budgeting`** — the migrations
+   create everything unqualified, and the `options=-c search_path=...`
+   parameter in `DATABASE_URL` decides where unqualified means. Verified:
+   all 7 tables, both views, and `schema_migrations` land in `budgeting`
+   and `public` is left untouched.
 
-   ```sql
-   CREATE DATABASE sadbhavna;
-   ```
-
-   The *schema* is not created here. `deploy.sh` applies the migrations.
+   The *tables* are not created here. `deploy.sh` applies the migrations.
 
 5. Log in to GHCR. The images are private unless you make the packages
    public, so the server needs a classic personal access token with the
@@ -124,11 +124,27 @@ image bakes Amazon's global bundle at exactly that path (see
 checks the hostname, so `DATABASE_URL` must name the RDS endpoint as
 AWS spells it — an IP or a CNAME of your own will fail the handshake.
 
+### Schemas
+
+The database is shared, so this app keeps to one schema. Every migration
+creates its objects unqualified and `search_path` decides where that is:
+
+```
+options=-c search_path=budgeting,shared,public
+```
+
+`budgeting` is first, so that is where tables are created — including
+`schema_migrations`, the checksum ledger `migrate.js` maintains. `shared`
+and `public` are on the path for reading only; nothing here writes to
+them. Reordering that list would scatter the schema across two places
+on the next migration, and the damage would not be visible until
+something queried the wrong one.
+
 For a psql shell from the app server:
 
 ```bash
 psql "host=database-1.cxoqkkq469da.ap-south-1.rds.amazonaws.com port=5432 \
-      dbname=sadbhavna user=postgres sslmode=verify-full \
+      dbname=sadbhavna_prod user=postgres sslmode=verify-full \
       sslrootcert=./global-bundle.pem"
 ```
 
@@ -138,7 +154,7 @@ psql "host=database-1.cxoqkkq469da.ap-south-1.rds.amazonaws.com port=5432 \
 |----------|-----------|--------|
 | frontend | 3000      | 3400   |
 | backend  | 4000      | 4400   |
-| db       | — | RDS, ap-south-1, private VPC address |
+| db       | — | RDS `sadbhavna_prod`, schema `budgeting`, ap-south-1 |
 
 ## Changing the domain
 
