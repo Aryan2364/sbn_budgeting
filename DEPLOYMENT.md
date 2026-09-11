@@ -105,12 +105,27 @@ push to main ──▶ Actions: build & push ──▶ ghcr.io/aryan2364/sbn-bac
    32xx, v2e 33xx and 43xx; sbn takes **3400** and **4400**, which are
    free.
 
+   This app is new: `sbn.rgbindia.com` never ran on the old server (the
+   archived Caddyfile has nine sites and none of them is this one), so it
+   goes on the **new** box as part of the 2026-09-11 migration. There is
+   nothing here to migrate — no old container, no old certificate, no
+   database to carry over beyond the empty schemas already created on
+   RDS. Add the block to the new server's Caddyfile from the start
+   rather than appending it later.
+
    DNS already resolves `sbn.rgbindia.com` to Cloudflare, and today the
    host returns **HTTP 525** — Cloudflare reaching an origin that has no
    certificate for this name. That is the expected symptom of the site
    block not existing yet, and it also tells us Cloudflare's SSL mode is
    already Full (a Flexible origin would not attempt TLS at all), so the
    certificate Caddy provisions is what clears it.
+
+   **Check where that record points before reloading Caddy.** A DNS
+   record exists, but the Cloudflare dashboard is the only place that
+   says which origin IP is behind it. If it still points at the old
+   server, adding the block to the new one changes nothing and the 525
+   persists — the record has to be repointed at the new box, at which
+   point Caddy issues the certificate within about a minute.
 
 ## Every deploy after that
 
