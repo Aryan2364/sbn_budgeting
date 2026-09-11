@@ -28,6 +28,16 @@ ENV NODE_ENV=production
 COPY package*.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 
+# Amazon's RDS CA bundle. RDS requires TLS and src/db/pool.ts passes no ssl
+# options of its own, so the trust chain has to arrive through DATABASE_URL:
+#   ...?sslmode=verify-full&sslrootcert=/app/certs/rds-global-bundle.pem
+# Fetched at build time so a CA rotation is picked up by the next build.
+RUN apk add --no-cache ca-certificates \
+ && mkdir -p /app/certs \
+ && wget -qO /app/certs/rds-global-bundle.pem \
+      https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem \
+ && grep -q "BEGIN CERTIFICATE" /app/certs/rds-global-bundle.pem
+
 COPY --from=build /app/dist ./dist
 # src/db/migrate.ts resolves the migrations dir as ../../migrations from
 # dist/db, so it must sit next to dist/, not inside it.

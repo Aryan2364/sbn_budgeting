@@ -10,6 +10,8 @@ push to main ──▶ Actions: build & push ──▶ ghcr.io/aryan2364/sbn-bac
                                        └▶ ghcr.io/aryan2364/sbn-frontend:latest
                                                         │
                                    server: ./deploy.sh ─┘  (pull → migrate → up -d)
+                                                        │
+                                         Amazon RDS ◀───┘  (private, same VPC)
 ```
 
 ## One-time server setup
@@ -32,7 +34,25 @@ push to main ──▶ Actions: build & push ──▶ ghcr.io/aryan2364/sbn-bac
    chmod 600 .env.production
    ```
 
-4. Log in to GHCR. The images are private unless you make the packages
+4. Confirm this host can reach RDS. The endpoint resolves to a **private**
+   VPC address (`172.31.48.74`), so it is only reachable from inside the
+   VPC — the app server must sit in the same VPC and its security group
+   must be allowed inbound on 5432 by the RDS security group.
+
+   ```bash
+   psql "host=database-1.cxoqkkq469da.ap-south-1.rds.amazonaws.com          port=5432 dbname=postgres user=postgres          sslmode=verify-full sslrootcert=./global-bundle.pem"
+   ```
+
+   The empty database must already exist — RDS gives you `postgres`, not
+   `sadbhavna`. Create it once:
+
+   ```sql
+   CREATE DATABASE sadbhavna;
+   ```
+
+   The *schema* is not created here. `deploy.sh` applies the migrations.
+
+5. Log in to GHCR. The images are private unless you make the packages
    public, so the server needs a classic personal access token with the
    `read:packages` scope:
 
@@ -40,7 +60,7 @@ push to main ──▶ Actions: build & push ──▶ ghcr.io/aryan2364/sbn-bac
    echo "$GHCR_TOKEN" | docker login ghcr.io -u Aryan2364 --password-stdin
    ```
 
-5. Deploy, then create the 19 cost heads and the first admin:
+6. Deploy, then create the 19 cost heads and the first admin:
 
    ```bash
    ./deploy.sh
@@ -52,7 +72,7 @@ push to main ──▶ Actions: build & push ──▶ ghcr.io/aryan2364/sbn-bac
    `SEED_ADMIN_PASSWORD` are both set. Blank the password out of the file
    once it has run.
 
-6. Point nginx at the two containers. The frontend must be served at the
+7. Point nginx at the two containers. The frontend must be served at the
    domain root and the API at `/api`, because
    `NEXT_PUBLIC_API_URL=https://sbn.rgbindia.com/api` is compiled into
    the browser bundle:
@@ -85,23 +105,31 @@ migrations are checksummed and a second run is a no-op.
 
 ## The database
 
-Postgres runs as a compose service and its data lives in the named
-volume `sbn_pgdata`, not in the container. Recreating the container is
-safe. `docker compose down -v` is the one command that destroys the
-data.
+Amazon RDS, `database-1.cxoqkkq469da.ap-south-1.rds.amazonaws.com`, in
+ap-south-1. Nothing about the database lives in Docker — no container,
+no volume. Backups and point-in-time recovery are RDS's job; check that
+a retention window is actually set on the instance.
 
-The port is deliberately not published to the host. For a shell:
+**TLS is not optional and the trust chain travels in the URL.**
+`backend/src/db/pool.ts` builds its pool from `DATABASE_URL` alone and
+passes no `ssl` option, so the mode and CA path are query parameters:
 
-```bash
-docker compose --env-file .env.production -f docker-compose.deploy.yml \
-  exec db psql -U sadbhavna sadbhavna
+```
+?sslmode=verify-full&sslrootcert=/app/certs/rds-global-bundle.pem
 ```
 
-Backup:
+`pg-connection-string` reads that file at connect time. The backend
+image bakes Amazon's global bundle at exactly that path (see
+`backend/Dockerfile`), so nothing needs mounting. `verify-full` also
+checks the hostname, so `DATABASE_URL` must name the RDS endpoint as
+AWS spells it — an IP or a CNAME of your own will fail the handshake.
+
+For a psql shell from the app server:
 
 ```bash
-docker compose --env-file .env.production -f docker-compose.deploy.yml \
-  exec -T db pg_dump -U sadbhavna sadbhavna | gzip > sbn-$(date +%F).sql.gz
+psql "host=database-1.cxoqkkq469da.ap-south-1.rds.amazonaws.com port=5432 \
+      dbname=sadbhavna user=postgres sslmode=verify-full \
+      sslrootcert=./global-bundle.pem"
 ```
 
 ## Ports
@@ -110,7 +138,7 @@ docker compose --env-file .env.production -f docker-compose.deploy.yml \
 |----------|-----------|--------|
 | frontend | 3000      | 3400   |
 | backend  | 4000      | 4400   |
-| db       | 5432      | *(not published)* |
+| db       | — | RDS, ap-south-1, private VPC address |
 
 ## Changing the domain
 

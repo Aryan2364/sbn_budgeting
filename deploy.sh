@@ -8,9 +8,8 @@ set -euo pipefail
 COMPOSE_FILE="docker-compose.deploy.yml"
 ENV_FILE=".env.production"
 
-# --env-file is passed to compose itself, not just the containers: the
-# db service's POSTGRES_* values are ${...} substitutions in the compose
-# file, and those are resolved by compose before any container exists.
+# --env-file is passed to compose itself, not just the containers, so the
+# same file works for ${...} substitution and for the container env.
 compose() {
   docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"
 }
@@ -23,12 +22,11 @@ fi
 echo "==> Pulling latest images from GHCR..."
 compose pull
 
-echo "==> Starting the database..."
-compose up -d db
-
-echo "==> Applying migrations..."
+echo "==> Applying migrations to RDS..."
 # Plain SQL, applied in filename order, checksummed. A no-op when the
 # schema is already current, so running deploy.sh twice is harmless.
+# This fails fast if the VPC/security group does not let this host reach
+# RDS, which is better than a backend that starts and 500s on every read.
 compose run --rm migrate
 
 echo "==> Starting/restarting containers..."
