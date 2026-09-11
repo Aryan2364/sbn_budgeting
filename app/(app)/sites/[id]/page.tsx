@@ -1,0 +1,454 @@
+"use client"
+
+import * as React from "react"
+import Link from "next/link"
+import { useRouter, useSearchParams } from "next/navigation"
+import {
+  MoreHorizontalIcon,
+  PencilIcon,
+  PlusIcon,
+  TrashIcon,
+  TriangleAlertIcon,
+} from "lucide-react"
+
+import {
+  api,
+  query,
+  type BudgetGrid,
+  type Expense,
+  type ListResponse,
+  type Matchable,
+  type Project,
+  type Site,
+} from "@/lib/api"
+import { formatAmount, formatCurrency, formatDate, formatNumber } from "@/lib/format"
+import { multiplyPaise, sumPaise } from "@/lib/money"
+import { periodLabel } from "@/lib/periods"
+import { errorMessage, useSession } from "@/components/shell/session"
+import { Badge } from "@/components/ui/badge"
+import { Banner, BannerDescription, BannerTitle } from "@/components/ui/banner"
+import { Button } from "@/components/ui/button"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import { EmptyState } from "@/components/ui/empty-state"
+import { Skeleton } from "@/components/ui/skeleton"
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { Truncate } from "@/components/ui/truncate"
+import { PageHeader, PageScroller } from "@/components/templates/page"
+import {
+  DetailColumns,
+  DetailField,
+  DetailFieldList,
+} from "@/components/templates/detail-page"
+import { RecordBreadcrumb } from "@/components/forms/record-breadcrumb"
+import { SiteVarianceTab } from "@/components/forms/site-variance-tab"
+import { DeleteRecordDialog } from "@/components/forms/delete-record-dialog"
+
+/** Section 11.2. The detail template, with data. */
+export default function SiteDetailPage({
+  params,
+}: {
+  params: Promise<{ id: string }>
+}) {
+  return (
+    <React.Suspense fallback={null}>
+      <SiteDetail params={params} />
+    </React.Suspense>
+  )
+}
+
+function SiteDetail({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = React.use(params)
+  const router = useRouter()
+  const searchParams = useSearchParams()
+  const { isAdmin } = useSession()
+
+  /**
+   * Which tab is open lives in the URL, not in component state.
+   *
+   * The Reports list drills into a specific site's VARIANCE tab
+   * (`/sites/:id?tab=variance`), so the target tab has to be
+   * addressable. Keeping it in the URL also means the browser's own
+   * back button returns to the tab the user came from — which is the
+   * navigation the product has instead of a back BUTTON (section 1
+   * rule 11).
+   */
+  const tab = searchParams.get("tab") === "variance" ? "variance" : "expenses"
+
+  const [site, setSite] = React.useState<Site | null>(null)
+  const [project, setProject] = React.useState<Project | null>(null)
+  const [budget, setBudget] = React.useState<BudgetGrid | null>(null)
+  const [expenses, setExpenses] = React.useState<Expense[] | null>(null)
+  const [varianceRows, setVarianceRows] = React.useState(0)
+  const [error, setError] = React.useState<string | null>(null)
+  const [deleting, setDeleting] = React.useState(false)
+
+  const reload = React.useCallback(() => {
+    let cancelled = false
+    api
+      .get<Site>(`/sites/${id}`)
+      .then(async (found) => {
+        if (cancelled) return
+        setSite(found)
+        const [proj, grid, expenseList] = await Promise.all([
+          api.get<Project>(`/projects/${found.projectId}`),
+          api.get<BudgetGrid>(`/sites/${id}/budget`),
+          api.get<ListResponse<Expense & Matchable>>(
+            `/expenses${query({ siteId: id, pageSize: 25, sort: "spentOn", direction: "desc" })}`,
+          ),
+        ])
+        if (cancelled) return
+        setProject(proj)
+        setBudget(grid)
+        setExpenses(expenseList.data)
+      })
+      .catch((caught: unknown) => {
+        if (!cancelled) setError(errorMessage(caught))
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [id])
+
+  React.useEffect(() => reload(), [reload])
+
+  if (error) {
+    return (
+      <PageScroller>
+        <EmptyState
+          variant="failed"
+          heading="This site could not be loaded"
+          onAction={() => reload()}
+        >
+          {error}
+        </EmptyState>
+      </PageScroller>
+    )
+  }
+
+  // Per-tree total across all heads and periods. Null when nothing is
+  // budgeted, which reads "Budget not set" rather than 0.00.
+  const perTree = budget ? sumPaise(budget.cells.map((c) => c.perTreePaise)) : null
+  const siteBudget = site ? multiplyPaise(perTree, site.plannedTrees) : null
+  const spent = expenses ? sumPaise(expenses.map((e) => e.amountPaise)) : null
+
+  const over =
+    project !== null && project.allocatedTrees > project.plannedTrees
+
+  return (
+    <PageScroller>
+      <RecordBreadcrumb
+        trail={[{ label: "Sites", href: "/sites" }]}
+        current={site ? site.name : <Skeleton className="h-4 w-32" />}
+      />
+
+      <PageHeader
+        className="mt-4"
+        title={site ? site.name : <Skeleton className="h-8 w-64 max-w-full" />}
+        badges={
+          site ? <Badge variant="neutral">{site.projectName}</Badge> : null
+        }
+        meta={
+          site ? (
+            `${formatNumber(site.plannedTrees)} trees · planted ${formatDate(
+              site.plantationStartDate,
+            )}`
+          ) : (
+            <Skeleton className="h-3 w-48 max-w-full" />
+          )
+        }
+        actions={
+          <>
+            <Button render={<Link href={`/sites/${id}/edit`} />}>
+              <PencilIcon />
+              Edit
+            </Button>
+            {isAdmin ? (
+              <DropdownMenu>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <DropdownMenuTrigger
+                        render={
+                          <Button variant="ghost" size="icon" aria-label="More actions" />
+                        }
+                      />
+                    }
+                  >
+                    <MoreHorizontalIcon />
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">More actions</TooltipContent>
+                </Tooltip>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuGroup>
+                    <DropdownMenuItem variant="danger" onClick={() => setDeleting(true)}>
+                      <TrashIcon />
+                      Delete site
+                    </DropdownMenuItem>
+                  </DropdownMenuGroup>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ) : null}
+          </>
+        }
+      />
+
+      {/*
+        Question 5: over-allocation warns and never blocks. It stays
+        true until somebody changes a number, so section 7.1 makes it a
+        banner rather than a toast that vanishes. Section 7.2 rule 1
+        gives it an icon as well as a colour.
+      */}
+      {over && project ? (
+        <Banner variant="warning" className="mt-6">
+          <TriangleAlertIcon />
+          <BannerTitle>
+            {project.name} is over its planned tree count
+          </BannerTitle>
+          <BannerDescription>
+            Its sites cover {formatNumber(project.allocatedTrees)} trees against a
+            plan of {formatNumber(project.plannedTrees)} —{" "}
+            {formatNumber(project.allocatedTrees - project.plannedTrees)} over.
+            Nothing is blocked; adjust a tree count if that is wrong.
+          </BannerDescription>
+        </Banner>
+      ) : null}
+
+      <DetailColumns
+        className="mt-8"
+        main={
+          <Card>
+            <CardHeader>
+              <div className="min-w-0">
+                <CardTitle>Budget</CardTitle>
+              </div>
+              <Button
+                variant="secondary"
+                size="sm"
+                render={<Link href={`/sites/${id}/budget`} />}
+              >
+                <PencilIcon />
+                Edit budget
+              </Button>
+            </CardHeader>
+            <CardContent>
+              {budget === null || site === null ? (
+                <Skeleton className="h-4 w-3/4" />
+              ) : perTree === null ? (
+                <p className="text-body text-text-secondary">
+                  Budget not set. Nothing has been entered for this site yet.
+                </p>
+              ) : (
+                <>
+                  <p className="text-page-title font-medium tabular-nums text-text-primary">
+                    {formatCurrency(siteBudget)}
+                  </p>
+                  {/* Section 3: every budget figure states its basis. */}
+                  <p className="mt-1 text-label text-text-secondary">
+                    {formatCurrency(perTree)} per tree ×{" "}
+                    {formatNumber(site.plannedTrees)} trees, across all five
+                    periods
+                  </p>
+                </>
+              )}
+            </CardContent>
+          </Card>
+        }
+        aside={
+          <Card>
+            <CardHeader>
+              <CardTitle>Summary</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <DetailFieldList className="sm:grid-cols-1">
+                <DetailField label="Project">
+                  {site ? (
+                    <Link
+                      href={`/projects/${site.projectId}`}
+                      className="text-primary hover:text-primary-hover"
+                    >
+                      {site.projectName}
+                    </Link>
+                  ) : (
+                    <Skeleton className="h-4 w-3/4" />
+                  )}
+                </DetailField>
+                <DetailField label="Location">
+                  {site ? (site.locationName ?? "—") : <Skeleton className="h-4 w-1/2" />}
+                </DetailField>
+                <DetailField label="Trees">
+                  {site ? formatNumber(site.plannedTrees) : <Skeleton className="h-4 w-1/2" />}
+                </DetailField>
+                <DetailField label="Plantation started">
+                  {site ? formatDate(site.plantationStartDate) : <Skeleton className="h-4 w-2/3" />}
+                </DetailField>
+                <DetailField label="Site manager">
+                  {site ? (site.managerName ?? "—") : <Skeleton className="h-4 w-2/3" />}
+                </DetailField>
+                <DetailField label="Site supervisor">
+                  {site ? (site.supervisorName ?? "—") : <Skeleton className="h-4 w-2/3" />}
+                </DetailField>
+              </DetailFieldList>
+            </CardContent>
+          </Card>
+        }
+      />
+
+      <Tabs
+        value={tab}
+        onValueChange={(value) => {
+          // replace, not push: flipping a tab is not a place the back
+          // button should have to walk through one step at a time.
+          // scroll: false keeps the page where the user left it.
+          router.replace(`/sites/${id}?tab=${String(value)}`, { scroll: false })
+        }}
+        className="mt-8"
+      >
+        {/* Sibling tabs are styled and behave identically: if one
+            carries a count badge, they all do. */}
+        <TabsList>
+          <TabsTrigger value="expenses">
+            Expenses
+            <Badge variant="neutral">{formatNumber(expenses?.length ?? 0)}</Badge>
+          </TabsTrigger>
+          <TabsTrigger value="variance">
+            Variance
+            <Badge variant="neutral">{formatNumber(varianceRows)}</Badge>
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="expenses">
+          <Card>
+            <CardHeader>
+              <div className="min-w-0">
+                <CardTitle>Expenses</CardTitle>
+                {spent !== null ? (
+                  <p className="text-meta text-text-muted">
+                    {formatCurrency(spent)} on this page
+                  </p>
+                ) : null}
+              </div>
+              <Button
+                variant="secondary"
+                size="sm"
+                render={<Link href={`/expenses/new?siteId=${id}`} />}
+              >
+                <PlusIcon />
+                New expense
+              </Button>
+            </CardHeader>
+            <CardContent className="p-0">
+              {expenses === null ? (
+                <div className="flex flex-col gap-3 p-4">
+                  <Skeleton className="h-4 w-full" />
+                  <Skeleton className="h-4 w-4/5" />
+                </div>
+              ) : expenses.length === 0 ? (
+                <EmptyState
+                  variant="nothing-yet"
+                  heading="No expenses yet"
+                  actionLabel="New expense"
+                  onAction={() => router.push(`/expenses/new?siteId=${id}`)}
+                >
+                  Expenses are booked against a cost head and a budget period.
+                </EmptyState>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead numeric>Date</TableHead>
+                      <TableHead>Cost head</TableHead>
+                      <TableHead className="hidden md:table-cell">Period</TableHead>
+                      <TableHead className="hidden lg:table-cell">Bill no.</TableHead>
+                      <TableHead numeric>Amount</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {expenses.map((expense) => (
+                      <TableRow
+                        key={expense.id}
+                        role="link"
+                        tabIndex={0}
+                        className="cursor-pointer outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary-ring"
+                        onClick={() => router.push(`/expenses/${expense.id}/edit`)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault()
+                            router.push(`/expenses/${expense.id}/edit`)
+                          }
+                        }}
+                      >
+                        <TableCell numeric>{formatDate(expense.spentOn)}</TableCell>
+                        <TableCell>
+                          <Truncate>{expense.costHeadName}</Truncate>
+                        </TableCell>
+                        <TableCell className="hidden md:table-cell">
+                          {periodLabel(expense.period)}
+                        </TableCell>
+                        <TableCell className="hidden lg:table-cell">
+                          <Truncate>{expense.billNumber ?? "—"}</Truncate>
+                        </TableCell>
+                        <TableCell numeric>
+                          {formatAmount(expense.amountPaise)}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/*
+          keepMounted so the tab's count badge is right before anybody
+          opens it. Its sibling's badge is always accurate — a peer
+          reading 0 until clicked would be worse than no badge at all.
+        */}
+        <TabsContent value="variance" keepMounted>
+          <SiteVarianceTab
+            siteId={id}
+            plannedTrees={site?.plannedTrees ?? null}
+            onRowCount={setVarianceRows}
+          />
+        </TabsContent>
+      </Tabs>
+
+      {site ? (
+        <DeleteRecordDialog
+          open={deleting}
+          onOpenChange={setDeleting}
+          recordName={site.name}
+          what="site"
+          consequences={
+            <>
+              This will also remove the site&rsquo;s budget
+              {budget && budget.cells.length > 0
+                ? ` (${formatNumber(budget.cells.length)} budgeted cells)`
+                : ""}
+              . Expenses booked against it are not deleted, and the site cannot
+              be removed while any exist.
+            </>
+          }
+          onConfirm={() => api.delete(`/sites/${id}`)}
+          onDeleted={() => router.push("/sites")}
+        />
+      ) : null}
+    </PageScroller>
+  )
+}

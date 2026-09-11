@@ -1,0 +1,334 @@
+"use client"
+
+import * as React from "react"
+
+import { api, query, type ListResponse, type Matchable, type Person } from "@/lib/api"
+import { errorMessage, useSession } from "@/components/shell/session"
+import { toast } from "@/components/ui/sonner"
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import { Input } from "@/components/ui/input"
+import { PasswordInput } from "@/components/ui/password-input"
+import { InlineFieldError } from "@/components/ui/inline-field-error"
+import { Label } from "@/components/ui/label"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import { Switch } from "@/components/ui/switch"
+import { Truncate } from "@/components/ui/truncate"
+import { FormError } from "@/components/forms/form-error"
+import { MasterSection, useMasterRows } from "@/components/forms/master-section"
+
+/**
+ * The people master. Section 11.5, admin only (section 26).
+ *
+ * ONE list of people (question 3). Office staff sign in; a manager or
+ * supervisor named on a site may never sign in at all. There is no
+ * manager/supervisor axis here — any person can be named on any site.
+ */
+export default function PeopleSettingsPage() {
+  const { isAdmin, user } = useSession()
+
+  const load = React.useCallback(
+    () =>
+      api
+        .get<ListResponse<Person & Matchable>>(
+          `/users${query({ pageSize: 100, sort: "name", direction: "asc" })}`,
+        )
+        .then((response) => response.data),
+    [],
+  )
+  const { rows, loading, refresh } = useMasterRows(load)
+
+  const [editing, setEditing] = React.useState<Person | null>(null)
+  const [creating, setCreating] = React.useState(false)
+
+  return (
+    <>
+      <MasterSection
+        title="People"
+        description="One list. Someone who manages a site and someone who signs in are the same kind of record."
+        createLabel="New person"
+        canEdit={isAdmin}
+        rows={rows}
+        loading={loading}
+        columns={[
+          {
+            key: "name",
+            label: "Name",
+            render: (row) => <Truncate>{row.name}</Truncate>,
+          },
+          {
+            key: "email",
+            label: "Email",
+            className: "hidden md:table-cell",
+            render: (row) => <Truncate>{row.email ?? "—"}</Truncate>,
+          },
+          {
+            key: "role",
+            label: "Role",
+            render: (row) =>
+              row.role === "admin" ? (
+                <Badge variant="primary">Admin</Badge>
+              ) : (
+                <Badge variant="neutral">Staff</Badge>
+              ),
+          },
+          {
+            key: "canLogin",
+            label: "Signs in",
+            render: (row) => (row.canLogin ? "Yes" : "No"),
+          },
+        ]}
+        onCreate={() => setCreating(true)}
+        onEdit={(row) => setEditing(row)}
+        onDelete={(row) => api.delete(`/users/${row.id}`)}
+        deleteWhat="person"
+        deleteName={(row) => row.name}
+        deleteConsequences={(row) =>
+          row.id === user?.id ? (
+            <>This is your own account. It cannot be deleted.</>
+          ) : (
+            <>
+              Someone named on a site or who has booked expenses cannot be
+              deleted — those links have to be changed first. Removing a person
+              cannot be undone.
+            </>
+          )
+        }
+        emptyHeading="No people yet"
+        emptyBody="People are named on sites as managers and supervisors, and are who signs in."
+        onChanged={refresh}
+      />
+
+      {/* Mounted only while open and keyed by record, so its fields
+          start with the right values. Syncing props into state in an
+          effect renders the previous record's values once first. */}
+      {creating || editing !== null ? (
+      <PersonDialog
+        key={editing?.id ?? "new"}
+        open
+        person={editing}
+        onOpenChange={(open) => {
+          if (!open) {
+            setCreating(false)
+            setEditing(null)
+          }
+        }}
+        onSaved={() => {
+          setCreating(false)
+          setEditing(null)
+          refresh()
+        }}
+      />
+      ) : null}
+    </>
+  )
+}
+
+/** Add and Edit, ONE dialog (section 4 rule 1). */
+function PersonDialog({
+  open,
+  person,
+  onOpenChange,
+  onSaved,
+}: {
+  open: boolean
+  person: Person | null
+  onOpenChange: (open: boolean) => void
+  onSaved: () => void
+}) {
+  const isEdit = person !== null
+  const [name, setName] = React.useState(person?.name ?? "")
+  const [email, setEmail] = React.useState(person?.email ?? "")
+  const [phone, setPhone] = React.useState(person?.phone ?? "")
+  const [role, setRole] = React.useState<"admin" | "staff">(person?.role ?? "staff")
+  const [canLogin, setCanLogin] = React.useState(person?.canLogin ?? false)
+  const [password, setPassword] = React.useState("")
+  /* No effect syncs these: the dialog is keyed by record and mounted
+     only while open, so a fresh mount already has the right values. */
+  const [saving, setSaving] = React.useState(false)
+  const [error, setError] = React.useState<string | null>(null)
+  const [fieldErrors, setFieldErrors] = React.useState<Record<string, string>>({})
+
+
+  async function save() {
+    const found: Record<string, string> = {}
+    if (name.trim() === "") found.name = "Enter a name"
+    // The same rule the API and the table constraint enforce, said in
+    // words before the request goes out (section 7.2 rule 2).
+    if (canLogin && email.trim() === "") {
+      found.email = "Someone who signs in needs an email address"
+    }
+    if (canLogin && !isEdit && password.trim() === "") {
+      found.password = "Set a password, or turn off sign-in"
+    }
+    if (password.trim() !== "" && password.trim().length < 8) {
+      found.password = "A password needs at least 8 characters"
+    }
+    if (Object.keys(found).length > 0) {
+      setFieldErrors(found)
+      return
+    }
+
+    setSaving(true)
+    setError(null)
+    try {
+      const body = {
+        name,
+        email: email.trim() || null,
+        phone: phone.trim() || null,
+        role,
+        canLogin,
+        ...(password.trim() ? { password: password.trim() } : {}),
+      }
+      if (isEdit) await api.patch(`/users/${person.id}`, body)
+      else await api.post("/users", body)
+      toast.success(isEdit ? "Person saved" : "Person added")
+      onSaved()
+    } catch (caught) {
+      setError(errorMessage(caught))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-dialog-md">
+        <DialogHeader>
+          <DialogTitle>{isEdit ? "Edit person" : "New person"}</DialogTitle>
+          <DialogDescription>
+            A person can be named on a site without ever signing in.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="flex flex-col gap-6 px-4">
+          <FormError message={error} />
+
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="person-name" required>
+              Name
+            </Label>
+            <Input
+              id="person-name"
+              value={name}
+              aria-invalid={Boolean(fieldErrors.name) || undefined}
+              onChange={(event) => setName(event.target.value)}
+            />
+            <InlineFieldError>{fieldErrors.name}</InlineFieldError>
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="person-email" required={canLogin}>
+              Email address
+            </Label>
+            <Input
+              id="person-email"
+              type="email"
+              value={email}
+              placeholder="name@company.com"
+              aria-invalid={Boolean(fieldErrors.email) || undefined}
+              onChange={(event) => setEmail(event.target.value)}
+            />
+            <InlineFieldError>{fieldErrors.email}</InlineFieldError>
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="person-phone">Phone number</Label>
+            <Input
+              id="person-phone"
+              type="tel"
+              value={phone}
+              onChange={(event) => setPhone(event.target.value)}
+            />
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="person-role" required>
+              Role
+            </Label>
+            <Select
+              value={role}
+              onValueChange={(value: string | null) => {
+                if (value === "admin" || value === "staff") setRole(value)
+              }}
+            >
+              <SelectTrigger id="person-role">
+                {/* Same reason as the period select: the value is
+                    "staff", the label is "Staff". */}
+                <SelectValue>
+                  {(value: string | null) =>
+                    value === "admin" ? "Admin" : "Staff"
+                  }
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="staff">Staff</SelectItem>
+                <SelectItem value="admin">Admin</SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="text-label text-text-secondary">
+              An admin sees Settings and can delete records. Staff cannot.
+            </p>
+          </div>
+
+          <div className="flex items-start gap-3">
+            <Switch
+              id="person-can-login"
+              checked={canLogin}
+              onCheckedChange={(checked: boolean) => setCanLogin(checked)}
+            />
+            <div className="min-w-0">
+              <Label htmlFor="person-can-login">Can sign in</Label>
+              <p className="mt-1 text-label text-text-secondary">
+                Leave off for someone who is only named on a site.
+              </p>
+            </div>
+          </div>
+
+          {canLogin ? (
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="person-password" required={!isEdit}>
+                Password
+              </Label>
+              {/* Section 32 applies here as well as on sign-in: an
+                  admin setting somebody else's password has more reason
+                  to see it, not less. */}
+              <PasswordInput
+                id="person-password"
+                autoComplete="new-password"
+                value={password}
+                aria-invalid={Boolean(fieldErrors.password) || undefined}
+                placeholder={isEdit ? "Leave blank to keep the current one" : ""}
+                onChange={(event) => setPassword(event.target.value)}
+              />
+              <InlineFieldError>{fieldErrors.password}</InlineFieldError>
+            </div>
+          ) : null}
+        </div>
+
+        <DialogFooter>
+          <Button variant="secondary" onClick={() => onOpenChange(false)} disabled={saving}>
+            Cancel
+          </Button>
+          <Button onClick={save} disabled={saving}>
+            {saving ? "Saving…" : isEdit ? "Save person" : "Add person"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}

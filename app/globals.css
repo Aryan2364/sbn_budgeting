@@ -1,0 +1,476 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
+/* Section 12.1. The sidebar's open/collapsed choice is restored before
+   the first paint by the inline script in app/layout.tsx, which writes
+   data-sidebar onto <html>. Driving the width from that attribute in
+   CSS - rather than from React state - is what stops the sidebar
+   animating from 260px to 64px on every load for someone who collapsed
+   it last visit. */
+@custom-variant rail (html[data-sidebar="collapsed"] &);
+
+/* ============================================================
+   TOKENS - AGENTS.md section 2.1
+   This is the only file in the project that contains a colour.
+   Change --primary below and every screen follows automatically.
+   Nothing outside this file knows what the brand colour is.
+   ============================================================ */
+:root {
+  /* Brand - 2.2.
+     All SEVEN of these are edited together when the brand changes.
+     They are deliberately explicit values, not derivations of
+     --primary: this colour is dark, so hover goes LIGHTER and pressed
+     goes DARKER, and a light brand colour reverses both. No formula
+     can flip that direction, and none would land on the specified
+     hexes anyway.
+     Section 2.1 asks for the change to happen in one PLACE - this
+     block - not on one line. Any replacement must measure at least
+     4.5:1 against its foreground. */
+  --primary: #174443;
+  --primary-hover: #1e5a58;
+  --primary-pressed: #0f3231;
+  --primary-ring: #2a6f6c;
+  --primary-subtle: #e8f2f1;
+  --primary-border: #c6dedc;
+  --primary-foreground: #ffffff;
+
+  /* Neutrals - 2.3. --text-muted is never set lighter than this. */
+  --text-primary: #171717;
+  --text-secondary: #525252;
+  --text-muted: #737373;
+  --border: #d4d4d4;
+  --border-light: #e5e5e5;
+  --border-strong: #a3a3a3;
+  --surface: #ffffff;
+  --surface-sunken: #fafafa;
+  --surface-control: #f5f5f5;
+  --surface-control-hover: #e5e5e5;
+  --surface-control-pressed: #d4d4d4;
+
+  /* Status - 2.4. These never change when the brand colour changes.
+     They carry meaning, not brand. There is deliberately no blue. */
+  --success: #166534;
+  --success-bg: #dcfce7;
+  --success-border: #86efac;
+  --warning: #92400e;
+  --warning-bg: #fef3c7;
+  --warning-border: #fcd34d;
+  --danger: #991b1b;
+  --danger-bg: #fee2e2;
+  --danger-border: #fca5a5;
+  /* AGENTS.md gives danger a single value but section 6.4 requires a
+     hover and a pressed state for every interactive element. These two
+     are derived from --danger rather than picked, so a change to the
+     status colour still only happens in one place. Flagged for
+     ratification; if exact values are decided, replace these. */
+  --danger-hover: color-mix(in srgb, var(--danger) 88%, #ffffff);
+  --danger-pressed: color-mix(in srgb, var(--danger) 85%, #000000);
+
+  /* Charts - 21. Positions 1 and 2 are maximally different because
+     most charts carry only two or three series. Never use status
+     colours in a chart unless the chart is about status. */
+  --chart-1: var(--primary);
+  --chart-2: #c2841d;
+  --chart-3: #3b5a9a;
+  --chart-4: #a34a5e;
+  --chart-5: #6fa8a4;
+  --chart-6: #7a7268;
+
+  /* Scrollbar - 10. The browser default is never used. */
+  --scroll-track: #f0f4f3;
+  --scroll-thumb: #a8bdba;
+  --scroll-thumb-hover: #7d9895;
+
+  /* Overlay - 24. The backdrop behind a dialog, sheet or alert
+     dialog. Derived from the neutral so no new colour enters the
+     system and a theme change carries it. */
+  --backdrop: color-mix(in srgb, var(--text-primary) 40%, transparent);
+
+  /* Radius - 5.3. Three values exist. There are no others.
+     --radius-tick is scoped to tick boxes only: a 16px square at 8px
+     reads as a radio button. */
+  --radius-control: 8px;
+  --radius-card: 12px;
+  --radius-tick: 4px;
+
+  /* Control heights - 6.2. Height is fixed; width grows with the
+     label, height never does. */
+  --h-control: 36px;
+  --h-control-sm: 32px;
+  --h-control-lg: 40px;
+}
+
+/* ------------------------------------------------------------
+   DARK THEME - section 28. Structured for, not built.
+   Every colour above is named by its job, so a dark block sits
+   here later and no screen changes. When it is built, --primary
+   must become a LIGHTER teal (around #4a9a94) carrying dark text;
+   the light-theme primary nearly disappears on a dark ground.
+   Do not build this until explicitly asked.
+   ------------------------------------------------------------ */
+
+/* ------------------------------------------------------------
+   shadcn / Base UI vocabulary.
+   The components in components/ui speak shadcn token names. This
+   block is the only translation layer between the two vocabularies,
+   so those components inherit the brand without being rewritten.
+   ------------------------------------------------------------ */
+:root {
+  --background: var(--surface-sunken);
+  --foreground: var(--text-primary);
+  --card: var(--surface);
+  --card-foreground: var(--text-primary);
+  --popover: var(--surface);
+  --popover-foreground: var(--text-primary);
+  --secondary: var(--surface-control);
+  --secondary-foreground: var(--text-primary);
+  --muted: var(--surface-control);
+  --muted-foreground: var(--text-muted);
+  --accent: var(--surface-control);
+  --accent-foreground: var(--text-primary);
+  --destructive: var(--danger);
+  --input: var(--border);
+  --ring: var(--primary-ring);
+  --radius: var(--radius-control);
+  --sidebar: var(--surface);
+  --sidebar-foreground: var(--text-primary);
+  --sidebar-primary: var(--primary);
+  --sidebar-primary-foreground: var(--primary-foreground);
+  --sidebar-accent: var(--primary-subtle);
+  --sidebar-accent-foreground: var(--primary-pressed);
+  --sidebar-border: var(--border-light);
+  --sidebar-ring: var(--primary-ring);
+}
+
+@theme inline {
+  /* Type - section 3. Geist. A serif fallback means it has failed. */
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+  --font-heading: var(--font-geist-sans);
+
+  /* The type scale, by slot. */
+  --text-page-title: 30px;
+  --text-page-title--line-height: 1.25;
+  --text-section: 20px;
+  --text-section--line-height: 1.3;
+  --text-card-heading: 16px;
+  --text-card-heading--line-height: 1.4;
+  --text-body: 14px;
+  --text-body--line-height: 1.6;
+  --text-label: 13px;
+  --text-label--line-height: 1.5;
+  --text-meta: 12px;
+  --text-meta--line-height: 1.5;
+
+  /* Tailwind size names are pinned onto the same scale so nothing
+     in components/ui can land off it. */
+  --text-xs: 12px;
+  --text-xs--line-height: 1.5;
+  --text-sm: 14px;
+  --text-sm--line-height: 1.6;
+  --text-base: 16px;
+  --text-base--line-height: 1.4;
+  --text-lg: 20px;
+  --text-lg--line-height: 1.3;
+  --text-xl: 20px;
+  --text-xl--line-height: 1.3;
+  --text-2xl: 30px;
+  --text-2xl--line-height: 1.25;
+  --text-3xl: 30px;
+  --text-3xl--line-height: 1.25;
+  --text-4xl: initial;
+  --text-5xl: initial;
+  --text-6xl: initial;
+  --text-7xl: initial;
+  --text-8xl: initial;
+  --text-9xl: initial;
+
+  /* Only two weights exist - 3 rule 1. If a heading is not standing
+     out, add space around it; do not add weight. */
+  --font-weight-thin: initial;
+  --font-weight-extralight: initial;
+  --font-weight-light: initial;
+  --font-weight-normal: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: initial;
+  --font-weight-bold: initial;
+  --font-weight-extrabold: initial;
+  --font-weight-black: initial;
+
+  /* Radius - 5.3. Every Tailwind radius name is pinned to one of the
+     two permitted values, so no component can invent a third. */
+  --radius-xs: var(--radius-control);
+  --radius-sm: var(--radius-control);
+  --radius-md: var(--radius-control);
+  --radius-lg: var(--radius-control);
+  --radius-xl: var(--radius-card);
+  --radius-2xl: var(--radius-card);
+  --radius-3xl: var(--radius-card);
+  --radius-4xl: var(--radius-control);
+
+  /* Control heights - 6.2. Used as h-control / size-control. */
+  --spacing-control: var(--h-control);
+  --spacing-control-sm: var(--h-control-sm);
+  --spacing-control-lg: var(--h-control-lg);
+
+  /* Search field - 11.1: fixed 260 to 320px, never full width. */
+  --spacing-search: 280px;
+
+  /* Field widths - 17. A field is as wide as the data it holds. */
+  --spacing-field-min: 160px;
+  --spacing-field-max: 480px;
+
+  /* Dialog widths - 24. Three exist. */
+  --spacing-dialog-sm: 400px;
+  --spacing-dialog-md: 560px;
+  --spacing-dialog-lg: 800px;
+
+  /* Application shell - 12. */
+  --spacing-sidebar: 260px;
+  --spacing-sidebar-rail: 64px;
+  --spacing-topbar: 52px;
+  --spacing-content-max: 1600px;
+  /* 12.1: the active navigation item's left accent bar. Named rather
+     than written inline because 3px is not on the section 5.1 spacing
+     scale and must not look like it is. It is an accent width, the
+     same kind of exception as the 2px active tab in 5.3. */
+  --spacing-accent-bar: 3px;
+  /* 11.5: the settings section menu, "about 200px". */
+  --spacing-settings-menu: 200px;
+
+  /* 31.1: the data entry grid's amount cell. MEASURED, not chosen -
+     Geist 14px tabular figures render "Rs12,45,680.00" at 94px, plus
+     24px of input padding and a 1.33px border. A truncated number is
+     worse than truncated text: there is no ellipsis convention that
+     reads as "more digits". Scoped to a repeating matrix (section 17). */
+  --spacing-grid-cell: 120px;
+  /* The frozen first column of that grid. */
+  --spacing-grid-head: 240px;
+
+  /* Menu height cap - 16.2: about seven rows, then it scrolls. */
+  --spacing-menu-max: 280px;
+
+  /* Toast width - 25. Fixed, never full width. */
+  --spacing-toast: 360px;
+
+  /* Notification centre panel - 12.2 and 7.3. Wide enough for a line
+     of neutral notification text without becoming a second page. */
+  --spacing-notifications: 360px;
+
+  /* Icon sizes - 23. Three exist: 16 in buttons and inputs, 18 in
+     navigation and toolbars, 22 in empty states. */
+  --spacing-icon: 16px;
+  --spacing-icon-nav: 18px;
+  --spacing-icon-empty: 22px;
+
+  /* Tooltip width cap - 19. */
+  --spacing-tooltip-max: 240px;
+
+  /* Colours, project vocabulary */
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-pressed: var(--primary-pressed);
+  --color-primary-ring: var(--primary-ring);
+  --color-primary-subtle: var(--primary-subtle);
+  --color-primary-border: var(--primary-border);
+  --color-primary-foreground: var(--primary-foreground);
+
+  --color-text-primary: var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
+  --color-text-muted: var(--text-muted);
+
+  --color-border: var(--border);
+  --color-border-light: var(--border-light);
+  --color-border-strong: var(--border-strong);
+
+  --color-surface: var(--surface);
+  --color-surface-sunken: var(--surface-sunken);
+  --color-surface-control: var(--surface-control);
+  --color-surface-control-hover: var(--surface-control-hover);
+  --color-surface-control-pressed: var(--surface-control-pressed);
+
+  --color-success: var(--success);
+  --color-success-bg: var(--success-bg);
+  --color-success-border: var(--success-border);
+  --color-warning: var(--warning);
+  --color-warning-bg: var(--warning-bg);
+  --color-warning-border: var(--warning-border);
+  --color-danger: var(--danger);
+  --color-danger-bg: var(--danger-bg);
+  --color-danger-border: var(--danger-border);
+  --color-danger-hover: var(--danger-hover);
+  --color-danger-pressed: var(--danger-pressed);
+
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-chart-6: var(--chart-6);
+
+  /* Colours, shadcn vocabulary (components/ui) */
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  html {
+    @apply font-sans;
+  }
+
+  body {
+    @apply bg-surface-sunken text-body text-text-primary antialiased;
+  }
+
+  /* Scrollbars - section 10. Styled everywhere; the browser default
+     is never used. 10px, fully rounded. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--scroll-thumb) var(--scroll-track);
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: var(--scroll-track);
+    border-radius: 9999px;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: var(--scroll-thumb);
+    border-radius: 9999px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--scroll-thumb-hover);
+  }
+
+  /* Section 18: numbers, amounts and dates line up in tables. */
+  th,
+  td {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Autofill. Chrome paints an autofilled field its own pale blue and
+     ignores `background-color`, so a signed-in-before user sees an
+     off-palette field on the sign-in screen — a colour arriving from
+     outside this file, which rule 1 exists to prevent.
+     `box-shadow` is the only property that reaches it, and the delay
+     keeps the browser from repainting over ours. */
+  input:-webkit-autofill,
+  input:-webkit-autofill:hover,
+  input:-webkit-autofill:focus,
+  input:-webkit-autofill:active {
+    -webkit-text-fill-color: var(--text-primary);
+    -webkit-box-shadow: 0 0 0 1000px var(--surface) inset;
+    box-shadow: 0 0 0 1000px var(--surface) inset;
+    transition: background-color 100000s ease-in-out 0s;
+    caret-color: var(--text-primary);
+  }
+}
+
+/* Toast - section 25. Fixed 360px, bottom right, close button on
+   every toast. Colours come from the tokens above. */
+@layer components {
+  [data-sonner-toaster] {
+    --width: var(--spacing-toast);
+  }
+
+}
+
+/* ----------------------------------------------------------------
+   FORCED STATES - the /kitchen-sink page only.
+   Hover, pressed and focus cannot be photographed without a pointer
+   or the keyboard, so the reference page replays them here. These
+   rules repeat only the state declarations from the components, and
+   only through the same tokens, so a token change still carries.
+   Nothing outside /kitchen-sink uses [data-force].
+
+   These sit OUTSIDE @layer on purpose. Tailwind's utilities layer
+   comes after components in the cascade, so a rule in @layer
+   components loses to bg-primary no matter how specific it is.
+   Unlayered CSS beats every layer, which is the only way a forced
+   state can override the utility that paints the resting one.
+   ---------------------------------------------------------------- */
+[data-force="hover"] [data-slot="button"][data-variant="primary"] {
+  background-color: var(--primary-hover);
+  border-color: var(--primary-hover);
+}
+[data-force="pressed"] [data-slot="button"][data-variant="primary"] {
+  background-color: var(--primary-pressed);
+  border-color: var(--primary-pressed);
+}
+[data-force="hover"] [data-slot="button"][data-variant="secondary"] {
+  background-color: var(--surface-control);
+}
+[data-force="pressed"] [data-slot="button"][data-variant="secondary"] {
+  background-color: var(--surface-control-pressed);
+}
+[data-force="hover"] [data-slot="button"][data-variant="ghost"] {
+  background-color: var(--surface-control-hover);
+  border-color: var(--border-strong);
+}
+[data-force="pressed"] [data-slot="button"][data-variant="ghost"] {
+  background-color: var(--surface-control-pressed);
+  border-color: var(--border-strong);
+}
+[data-force="hover"] [data-slot="button"][data-variant="danger"] {
+  background-color: var(--danger-hover);
+  border-color: var(--danger-hover);
+}
+[data-force="pressed"] [data-slot="button"][data-variant="danger"] {
+  background-color: var(--danger-pressed);
+  border-color: var(--danger-pressed);
+}
+
+[data-force="hover"] [data-slot="input"],
+[data-force="hover"] [data-slot="select-trigger"] {
+  background-color: var(--surface-control);
+}
+
+/* Section 6.4: the focus ring is primary-ring and is never removed. */
+[data-force="focus"] [data-slot="button"],
+[data-force="focus"] [data-slot="input"],
+[data-force="focus"] [data-slot="select-trigger"],
+[data-force="focus"] [data-slot="checkbox"],
+[data-force="focus"] [data-slot="radio-group-item"],
+[data-force="focus"] [data-slot="switch"] {
+  outline: 2px solid var(--primary-ring);
+  outline-offset: 2px;
+}
+[data-force="focus"] [data-slot="input"],
+[data-force="focus"] [data-slot="select-trigger"] {
+  border-color: var(--primary-ring);
+  outline-offset: 0;
+}

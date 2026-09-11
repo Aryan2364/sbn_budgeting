@@ -1,0 +1,628 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RGB Design Reference</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500&display=swap" rel="stylesheet">
+<style>
+/* ============================================================
+   TOKENS — the only place colours and sizes are defined.
+   Change the brand colour here and the whole page follows.
+   ============================================================ */
+:root{
+  /* Brand */
+  --primary:#174443;
+  --primary-hover:#1E5A58;
+  --primary-pressed:#0F3231;
+  --primary-ring:#2A6F6C;
+  --primary-subtle:#E8F2F1;
+  --primary-border:#C6DEDC;
+  --primary-foreground:#FFFFFF;
+
+  /* Neutrals */
+  --text-primary:#171717;
+  --text-secondary:#525252;
+  --text-muted:#737373;
+  --border:#D4D4D4;
+  --border-light:#E5E5E5;
+  --surface:#FFFFFF;
+  --surface-sunken:#FAFAFA;
+  --surface-control:#F5F5F5;
+  --surface-control-hover:#E5E5E5;
+  --surface-control-pressed:#D4D4D4;
+
+  /* Status */
+  --success:#166534; --success-bg:#DCFCE7; --success-border:#86EFAC;
+  --warning:#92400E; --warning-bg:#FEF3C7; --warning-border:#FCD34D;
+  --danger:#991B1B;  --danger-bg:#FEE2E2;  --danger-border:#FCA5A5;
+
+  /* Charts */
+  --chart-1:#174443; --chart-2:#C2841D; --chart-3:#3B5A9A;
+  --chart-4:#A34A5E; --chart-5:#6FA8A4; --chart-6:#7A7268;
+
+  /* Scrollbar */
+  --scroll-track:#F0F4F3;
+  --scroll-thumb:#A8BDBA;
+  --scroll-thumb-hover:#7D9895;
+
+  /* Type */
+  --fs-page-title:30px; --lh-page-title:1.25;
+  --fs-section:20px;    --lh-section:1.3;
+  --fs-card:16px;       --lh-card:1.4;
+  --fs-body:14px;       --lh-body:1.6;
+  --fs-label:13px;      --lh-label:1.5;
+  --fs-meta:12px;       --lh-meta:1.5;
+  --fw-normal:400; --fw-medium:500;
+
+  /* Spacing */
+  --space-1:4px;  --space-2:8px;  --space-3:12px;
+  --space-4:16px; --space-6:24px; --space-8:32px; --space-12:48px;
+
+  /* Radius, control heights */
+  --radius-control:8px; --radius-card:12px;
+  --h-control:36px; --h-control-sm:32px; --h-control-lg:40px;
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--surface-sunken); color:var(--text-primary);
+  font-family:Inter,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  font-size:var(--fs-body); line-height:var(--lh-body);
+}
+.wrap{max-width:1100px;margin:0 auto;padding:var(--space-8) var(--space-6) var(--space-12)}
+
+h1{font-size:var(--fs-page-title);line-height:var(--lh-page-title);font-weight:var(--fw-medium);margin:0 0 var(--space-2)}
+h2{font-size:var(--fs-section);line-height:var(--lh-section);font-weight:var(--fw-medium);margin:var(--space-12) 0 var(--space-2)}
+h3{font-size:var(--fs-card);line-height:var(--lh-card);font-weight:var(--fw-medium);margin:var(--space-6) 0 var(--space-2)}
+p{margin:0 0 var(--space-3)}
+.lead{color:var(--text-secondary)}
+.desc{color:var(--text-secondary);margin:0 0 var(--space-4);max-width:70ch}
+.meta{font-size:var(--fs-meta);color:var(--text-muted);line-height:var(--lh-meta);margin:0}
+.label{font-size:var(--fs-label);color:var(--text-secondary);line-height:var(--lh-label)}
+code{background:var(--surface-control);border:1px solid var(--border-light);border-radius:4px;padding:1px 5px;font-size:var(--fs-meta)}
+
+.panel{background:var(--surface);border:1px solid var(--border-light);border-radius:var(--radius-card);padding:var(--space-4);margin-bottom:var(--space-4)}
+.rule{background:var(--primary-subtle);border-left:3px solid var(--primary);border-radius:0 var(--radius-control) var(--radius-control) 0;padding:var(--space-3) var(--space-4);margin:var(--space-3) 0;color:var(--primary-pressed)}
+.rule p{margin:0 0 var(--space-1)} .rule p:last-child{margin:0}
+.row{display:flex;flex-wrap:wrap;gap:var(--space-2);align-items:center}
+.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:var(--space-4)}
+.grid12{display:grid;grid-template-columns:repeat(12,1fr);gap:var(--space-4)}
+
+/* Controls */
+.btn{height:var(--h-control);display:inline-flex;align-items:center;gap:var(--space-1);padding:0 var(--space-4);border-radius:var(--radius-control);font-size:var(--fs-body);border:1px solid transparent;cursor:pointer;font-family:inherit}
+.btn-primary{background:var(--primary);color:var(--primary-foreground);font-weight:var(--fw-medium)}
+.btn-primary:hover{background:var(--primary-hover)}
+.btn-primary:active{background:var(--primary-pressed)}
+.btn-secondary{background:var(--surface);border-color:var(--border);color:var(--text-primary)}
+.btn-secondary:hover{background:var(--surface-control)}
+.btn-danger{background:var(--danger);color:#fff;font-weight:var(--fw-medium)}
+.btn-sm{height:var(--h-control-sm);padding:0 var(--space-3);font-size:var(--fs-label)}
+.btn:disabled{background:var(--surface-sunken);border-color:var(--border-light);color:var(--text-muted);cursor:not-allowed}
+.icon-btn{width:var(--h-control);height:var(--h-control);display:inline-flex;align-items:center;justify-content:center;background:var(--surface-control);border:1px solid var(--border);border-radius:var(--radius-control);cursor:pointer;color:var(--text-primary)}
+.icon-btn:hover{background:var(--surface-control-hover);border-color:#A3A3A3}
+.icon-btn:active{background:var(--surface-control-pressed)}
+.icon-btn-primary{background:var(--primary);border-color:var(--primary);color:var(--primary-foreground)}
+.icon-btn-danger{background:var(--danger-bg);border-color:var(--danger-border);color:var(--danger)}
+.icon-btn-sm{width:var(--h-control-sm);height:var(--h-control-sm)}
+
+.field{height:var(--h-control);border:1px solid var(--border);border-radius:var(--radius-control);background:var(--surface);padding:0 var(--space-3);display:flex;align-items:center;justify-content:space-between;gap:var(--space-2);font-size:var(--fs-body)}
+.field-error{border-color:var(--danger)}
+.field-disabled{background:var(--surface-sunken);border-color:var(--border-light);color:var(--text-muted)}
+.field-label{display:block;font-size:var(--fs-label);color:var(--text-secondary);margin-bottom:6px}
+.req{color:var(--danger)}
+.err{margin:6px 0 0;font-size:var(--fs-label);color:var(--danger)}
+
+.badge{display:inline-flex;align-items:center;gap:var(--space-1);font-size:var(--fs-meta);padding:2px 8px;border-radius:6px}
+.badge-success{background:var(--success-bg);color:var(--success)}
+.badge-warning{background:var(--warning-bg);color:var(--warning)}
+.badge-danger{background:var(--danger-bg);color:var(--danger)}
+
+.chip{display:inline-flex;align-items:center;gap:5px;background:var(--surface-control);border:1px solid var(--border);border-radius:6px;padding:3px 8px;font-size:var(--fs-meta)}
+.preset{border:1px solid var(--border);border-radius:6px;padding:4px 9px;font-size:var(--fs-label);cursor:pointer;background:var(--surface)}
+.preset-active{border-color:var(--primary);background:var(--primary-subtle);color:var(--primary-pressed)}
+
+.card{background:var(--surface);border:1px solid var(--border-light);border-radius:var(--radius-card);overflow:hidden}
+.card-head{padding:var(--space-3) var(--space-4);border-bottom:1px solid var(--border-light);display:flex;align-items:center;justify-content:space-between;gap:var(--space-3)}
+.card-foot{padding:var(--space-3) var(--space-4);border-top:1px solid var(--border-light);background:var(--surface-sunken);display:flex;justify-content:flex-end;gap:var(--space-2)}
+
+.trow{display:flex;padding:var(--space-3) var(--space-4);border-bottom:1px solid var(--border-light);align-items:center;gap:var(--space-2)}
+.thead{background:var(--surface-sunken);padding:10px var(--space-4);font-size:var(--fs-label);color:var(--text-secondary)}
+.num{text-align:right;font-variant-numeric:tabular-nums}
+.selected-row{background:var(--primary-subtle)}
+
+.truncate{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.clamp2{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+
+.scroll{overflow-y:auto}
+.scroll::-webkit-scrollbar{width:10px;height:10px}
+.scroll::-webkit-scrollbar-track{background:var(--scroll-track);border-radius:8px}
+.scroll::-webkit-scrollbar-thumb{background:var(--scroll-thumb);border-radius:8px}
+.scroll::-webkit-scrollbar-thumb:hover{background:var(--scroll-thumb-hover)}
+
+.tick{width:15px;height:15px;border:1px solid #A3A3A3;border-radius:4px;background:var(--surface);display:inline-flex;align-items:center;justify-content:center;flex:none}
+.tick-on{border-color:var(--primary);background:var(--primary);color:#fff}
+
+.swatch{border:1px solid var(--border-light);border-radius:var(--radius-card);overflow:hidden}
+.swatch-fill{height:64px;display:flex;align-items:center;justify-content:center;font-size:var(--fs-label)}
+.swatch-meta{padding:8px 10px;background:var(--surface)}
+
+.dropzone{border:1px dashed var(--border);border-radius:var(--radius-card);background:var(--surface);padding:22px 16px;text-align:center}
+.dropzone-over{border:2px dashed var(--primary);background:var(--primary-subtle);padding:21px 15px}
+.progress{height:4px;border-radius:4px;background:var(--border-light);overflow:hidden;margin-top:6px}
+.progress span{display:block;height:100%;background:var(--primary)}
+
+svg.ico{width:18px;height:18px;stroke-width:2}
+.ico-sm{width:16px;height:16px}
+.ico-lg{width:22px;height:22px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>RGB Design Reference</h1>
+<p class="lead">Visual companion to <code>AGENTS.md</code>. Every pattern below is built only from the tokens declared at the top of this file. Change <code>--primary</code> there and the whole page re-themes, which is the swap requirement working.</p>
+<p class="meta">RGB Business Growth Consulting · 804, Avadh Kontina, VIP Road, Vesu, Surat 395007 · Phone 7878038514 · www.rgbindia.com · rakesh@rgbindia.com</p>
+
+<div class="rule" style="margin-top:var(--space-6)">
+<p><strong>How to use this file.</strong> Open it in a browser to see the patterns. Attach it, or a screenshot of the relevant section, alongside your prompt when asking an agent to build that screen. Words plus a picture gets far closer on the first attempt than words alone.</p>
+<p><strong>Do not copy this markup into the product.</strong> It is plain HTML for reference. The product is built from the React components in <code>components/ui</code>. Copy the structure and the spacing, never the markup.</p>
+</div>
+
+<!-- ===================================================== -->
+<h2>1. Colour tokens</h2>
+<p class="desc">Six brand shades derived from one colour. Components never name a colour, only a role. Hover goes lighter here because the brand green is dark; a light brand colour would reverse this.</p>
+<div class="panel">
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:var(--space-3)">
+  <div class="swatch"><div class="swatch-fill" style="background:var(--primary);color:#fff">white text</div><div class="swatch-meta"><div class="label" style="color:var(--text-primary)">primary</div><div class="meta">#174443</div></div></div>
+  <div class="swatch"><div class="swatch-fill" style="background:var(--primary-hover);color:#fff">white text</div><div class="swatch-meta"><div class="label" style="color:var(--text-primary)">primary-hover</div><div class="meta">#1E5A58</div></div></div>
+  <div class="swatch"><div class="swatch-fill" style="background:var(--primary-pressed);color:#fff">white text</div><div class="swatch-meta"><div class="label" style="color:var(--text-primary)">primary-pressed</div><div class="meta">#0F3231</div></div></div>
+  <div class="swatch"><div class="swatch-fill" style="background:var(--primary-ring);color:#fff">focus ring</div><div class="swatch-meta"><div class="label" style="color:var(--text-primary)">primary-ring</div><div class="meta">#2A6F6C</div></div></div>
+  <div class="swatch"><div class="swatch-fill" style="background:var(--primary-subtle);color:var(--primary-pressed)">dark text</div><div class="swatch-meta"><div class="label" style="color:var(--text-primary)">primary-subtle</div><div class="meta">#E8F2F1</div></div></div>
+  <div class="swatch"><div class="swatch-fill" style="background:var(--primary-border);color:var(--primary-pressed)">dark text</div><div class="swatch-meta"><div class="label" style="color:var(--text-primary)">primary-border</div><div class="meta">#C6DEDC</div></div></div>
+</div>
+</div>
+
+<h3>Status colours</h3>
+<p class="desc">These never change when the brand colour changes. They carry meaning, not brand. Each pairs a dark text shade with a pale background.</p>
+<div class="panel row">
+  <span class="badge badge-success">Paid</span>
+  <span class="badge badge-warning">Pending</span>
+  <span class="badge badge-danger">Overdue</span>
+  <span class="meta" style="margin-left:var(--space-4)">success · warning · danger</span>
+</div>
+
+<h3>Chart palette</h3>
+<p class="desc">A separate problem from brand colour. Positions 1 and 2 are maximally different because most charts have two or three series. Status colours never appear here unless the chart is about status.</p>
+<div class="panel row">
+  <span style="width:56px;height:36px;border-radius:6px;background:var(--chart-1)"></span>
+  <span style="width:56px;height:36px;border-radius:6px;background:var(--chart-2)"></span>
+  <span style="width:56px;height:36px;border-radius:6px;background:var(--chart-3)"></span>
+  <span style="width:56px;height:36px;border-radius:6px;background:var(--chart-4)"></span>
+  <span style="width:56px;height:36px;border-radius:6px;background:var(--chart-5)"></span>
+  <span style="width:56px;height:36px;border-radius:6px;background:var(--chart-6)"></span>
+</div>
+
+<!-- ===================================================== -->
+<h2>2. Type scale</h2>
+<p class="desc">Seven slots. Hierarchy comes from size, weight and colour moving together, never from size alone. Watch how the weight drops from 500 to 400 and the colour fades as the size shrinks.</p>
+<div class="panel">
+  <p style="font-size:var(--fs-page-title);line-height:var(--lh-page-title);font-weight:var(--fw-medium);margin:0 0 var(--space-2)">Page title · 30 / 500 / 1.25</p>
+  <p style="font-size:var(--fs-section);line-height:var(--lh-section);font-weight:var(--fw-medium);margin:0 0 var(--space-2)">Section heading · 20 / 500 / 1.3</p>
+  <p style="font-size:var(--fs-card);line-height:var(--lh-card);font-weight:var(--fw-medium);margin:0 0 var(--space-2)">Card heading · 16 / 500 / 1.4</p>
+  <p style="margin:0 0 var(--space-2)">Body · 14 / 400 / 1.6 — the default for all normal reading text.</p>
+  <p style="font-weight:var(--fw-medium);margin:0 0 var(--space-2)">Body strong · 14 / 500 — active nav, emphasis, table totals.</p>
+  <p class="label" style="margin:0 0 var(--space-2)">Label · 13 / 400 — always text-secondary, never text-primary.</p>
+  <p class="meta">Meta · 12 / 400 — timestamps and counts only. Never a price or a status.</p>
+</div>
+
+<!-- ===================================================== -->
+<h2>3. Spacing and grouping</h2>
+<p class="desc">Gaps tell the eye what belongs together. Left: every gap identical, so labels float between boxes. Right: label tight to its own field, wider gap before the next pair. Nothing changed but spacing.</p>
+<div class="grid2">
+  <div class="panel">
+    <p class="label" style="margin-bottom:var(--space-4)">Even gaps everywhere</p>
+    <p class="label" style="margin-bottom:14px">Client name</p><div class="field" style="margin-bottom:14px"></div>
+    <p class="label" style="margin-bottom:14px">Email address</p><div class="field" style="margin-bottom:14px"></div>
+    <p class="label" style="margin-bottom:14px">Phone number</p><div class="field"></div>
+  </div>
+  <div class="panel">
+    <p class="label" style="margin-bottom:var(--space-4)">Grouped gaps</p>
+    <p class="label" style="margin-bottom:6px">Client name</p><div class="field" style="margin-bottom:20px"></div>
+    <p class="label" style="margin-bottom:6px">Email address</p><div class="field" style="margin-bottom:20px"></div>
+    <p class="label" style="margin-bottom:6px">Phone number</p><div class="field"></div>
+  </div>
+</div>
+<div class="rule"><p>Space belongs above an element, not below. Related items sit closer than unrelated items.</p></div>
+
+<!-- ===================================================== -->
+<h2>4. Buttons</h2>
+<p class="desc">One primary per screen. Everything else secondary. Height is fixed at 36px regardless of label length, which is why the same action is the same size on every page.</p>
+<div class="panel row">
+  <button class="btn btn-primary">Save client</button>
+  <button class="btn btn-secondary">Cancel</button>
+  <button class="btn btn-danger">Delete</button>
+  <button class="btn btn-secondary" disabled>Disabled</button>
+</div>
+
+<h3>Icon buttons</h3>
+<p class="desc">Every icon-only button has a filled background, a border, and a 36 by 36 hit area. A transparent icon with no border is not a button, it is decoration the user cannot find.</p>
+<div class="panel">
+  <div class="row" style="background:var(--surface-sunken);padding:var(--space-2);border-radius:var(--radius-control);display:inline-flex">
+    <span class="icon-btn icon-btn-primary" title="Add"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></span>
+    <span class="icon-btn" title="Duplicate"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg></span>
+    <span class="icon-btn" title="Download"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 11l5 5 5-5M4 20h16"/></svg></span>
+    <span class="icon-btn icon-btn-danger" title="Delete"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13"/></svg></span>
+  </div>
+  <p class="meta" style="margin-top:var(--space-2)">One primary fill, the rest neutral, danger only for delete. Hover over each to see the tooltip.</p>
+</div>
+
+<!-- ===================================================== -->
+<h2>5. Messages</h2>
+<p class="desc">Toast for confirmations, inline for field errors, banner for ongoing conditions, dialog for destructive actions. Every message carries an icon as well as a colour, because colour alone is invisible to colour-blind users.</p>
+<div class="panel" style="display:flex;flex-direction:column;gap:var(--space-4)">
+  <div>
+    <p class="label" style="margin-bottom:6px">Toast — success</p>
+    <div style="display:flex;align-items:center;gap:10px;background:var(--success-bg);border:1px solid var(--success-border);border-radius:var(--radius-control);padding:12px 14px;max-width:360px">
+      <svg class="ico" style="color:var(--success);flex:none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="m8.5 12.5 2.5 2.5 4.5-5"/></svg>
+      <span style="color:var(--success)">Invoice INV-1001 saved</span>
+    </div>
+  </div>
+  <div>
+    <p class="label" style="margin-bottom:6px">Banner — error</p>
+    <div style="display:flex;gap:10px;background:var(--danger-bg);border:1px solid var(--danger-border);border-radius:var(--radius-control);padding:12px 14px">
+      <svg class="ico" style="color:var(--danger);flex:none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v6M12 16.5v.5"/></svg>
+      <div><p style="margin:0;font-weight:var(--fw-medium);color:var(--danger)">Could not connect to the server</p>
+      <p style="margin:2px 0 0;font-size:var(--fs-label);color:var(--danger)">Check your internet connection and try again.</p></div>
+    </div>
+  </div>
+  <div style="max-width:340px">
+    <p class="label" style="margin-bottom:6px">Inline field error</p>
+    <label class="field-label">Email address <span class="req">*</span></label>
+    <div class="field field-error">rakesh@rgbindia</div>
+    <p class="err">Enter a complete email address, like name@company.com</p>
+  </div>
+</div>
+<div class="rule"><p>Error text states the cause, then the next action. No exclamation marks, no "Error:" prefix, no raw technical messages.</p></div>
+
+<!-- ===================================================== -->
+<h2>6. Text overflow</h2>
+<p class="desc">Text never overflows its container. Which of the three behaviours applies depends on the container, not on the text.</p>
+<div class="panel" style="display:flex;flex-direction:column;gap:var(--space-4);max-width:400px">
+  <div>
+    <p class="label" style="margin-bottom:6px">Truncate — table cells, list rows, chips, buttons</p>
+    <div style="border:1px solid var(--border-light);border-radius:var(--radius-control);padding:10px 12px"><p class="truncate" style="margin:0">Prepare August compliance report for Umbrella Ltd and share with Nimesh</p></div>
+  </div>
+  <div>
+    <p class="label" style="margin-bottom:6px">Clamp — card descriptions, notification rows</p>
+    <div style="border:1px solid var(--border-light);border-radius:var(--radius-control);padding:10px 12px">
+      <p class="clamp2" style="margin:0">Prepare August compliance report for Umbrella Ltd, share the draft with Nimesh for review, and file the signed copy before the month end deadline.</p>
+      <p style="margin:4px 0 0;font-size:var(--fs-label);color:var(--primary)">Show more</p>
+    </div>
+  </div>
+</div>
+
+<!-- ===================================================== -->
+<h2>7. Application shell</h2>
+<p class="desc">The frame every page sits inside. It never changes between pages, and it never changes when the user drills into a record. Sidebar 260px open, 64px collapsed. Top bar carries only the toggle, search, notifications and the user menu.</p>
+<div class="panel" style="padding:0;overflow:hidden">
+<div style="display:flex;min-height:280px;background:var(--surface-sunken)">
+  <div style="width:190px;flex:none;background:var(--surface);border-right:1px solid var(--border-light);padding:var(--space-3) 0">
+    <div style="padding:0 14px 14px;font-weight:var(--fw-medium);color:var(--primary)">RGB Software</div>
+    <p class="meta" style="padding:0 14px;margin:0 0 6px">Work</p>
+    <div style="padding:8px 14px;color:var(--text-secondary)">Dashboard</div>
+    <div style="padding:8px 14px 8px 11px;font-weight:var(--fw-medium);color:var(--primary-pressed);background:var(--primary-subtle);border-left:3px solid var(--primary)">Clients</div>
+    <div style="padding:8px 14px;color:var(--text-secondary)">Tasks</div>
+    <p class="meta" style="padding:0 14px;margin:var(--space-4) 0 6px">Finance</p>
+    <div style="padding:8px 14px;color:var(--text-secondary)">Invoices</div>
+    <div style="padding:8px 14px;color:var(--text-secondary)">Reports</div>
+  </div>
+  <div style="flex:1;min-width:0">
+    <div style="height:52px;display:flex;align-items:center;justify-content:space-between;padding:0 var(--space-4);background:var(--surface);border-bottom:1px solid var(--border-light)">
+      <div class="row">
+        <span class="icon-btn icon-btn-sm" title="Collapse sidebar"><svg class="ico ico-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg></span>
+        <span class="field btn-sm" style="width:180px;justify-content:flex-start;color:var(--text-muted)">Search</span>
+      </div>
+      <div class="row">
+        <span class="icon-btn icon-btn-sm" title="Notifications"><svg class="ico ico-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M18 16v-5a6 6 0 1 0-12 0v5l-2 3h16z"/><path d="M10 21h4"/></svg></span>
+        <span style="width:32px;height:32px;border-radius:50%;background:var(--primary);color:#fff;display:inline-flex;align-items:center;justify-content:center;font-size:var(--fs-meta);font-weight:var(--fw-medium)">AJ</span>
+      </div>
+    </div>
+    <div style="padding:var(--space-4)">
+      <div style="display:flex;align-items:center;justify-content:space-between">
+        <div><p style="font-size:var(--fs-section);font-weight:var(--fw-medium);margin:0">Clients</p><p class="label" style="margin:2px 0 0">148 active accounts</p></div>
+        <button class="btn btn-primary">New client</button>
+      </div>
+      <div style="margin-top:var(--space-4);border:1px dashed var(--border);border-radius:var(--radius-card);height:90px;display:flex;align-items:center;justify-content:center;color:var(--text-muted);font-size:var(--fs-label)">Page content sits here</div>
+    </div>
+  </div>
+</div>
+</div>
+
+<!-- ===================================================== -->
+<h2>8. List page</h2>
+<p class="desc">Four zones. Only the data area scrolls, so the header, toolbar and pagination stay put while the user moves through 500 rows. Search is a fixed 260px, never full width.</p>
+<div class="card" style="margin-bottom:var(--space-4)">
+  <div class="card-head">
+    <div><p style="font-size:var(--fs-section);font-weight:var(--fw-medium);margin:0">Clients</p><p class="label" style="margin:2px 0 0">148 active accounts</p></div>
+    <button class="btn btn-primary">New client</button>
+  </div>
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:var(--space-2);padding:var(--space-3) var(--space-4);border-bottom:1px solid var(--border-light);background:var(--surface-sunken)">
+    <div class="row">
+      <span class="field" style="width:260px;justify-content:flex-start;color:var(--text-muted)">Search clients</span>
+      <span class="btn btn-secondary" style="background:var(--surface-control)">Filter</span>
+      <span class="btn btn-secondary" style="background:var(--surface-control)">Sort</span>
+    </div>
+    <div style="display:inline-flex;border:1px solid var(--border);border-radius:var(--radius-control);overflow:hidden">
+      <span style="width:36px;height:34px;display:inline-flex;align-items:center;justify-content:center;background:var(--primary-subtle);color:var(--primary-pressed)">≡</span>
+      <span style="width:36px;height:34px;display:inline-flex;align-items:center;justify-content:center;background:var(--surface);border-left:1px solid var(--border);color:var(--text-secondary)">⊞</span>
+    </div>
+  </div>
+  <div class="scroll" style="height:180px">
+    <div class="trow thead"><span style="flex:2">Client</span><span style="flex:1">Plan</span><span style="flex:1">Status</span><span style="flex:1" class="num">Outstanding</span></div>
+    <div class="trow"><span style="flex:2">Acme Corp</span><span style="flex:1">Enterprise</span><span style="flex:1"><span class="badge badge-success">Active</span></span><span style="flex:1" class="num">4,200.00</span></div>
+    <div class="trow"><span style="flex:2">Globex</span><span style="flex:1">Team</span><span style="flex:1"><span class="badge badge-warning">Pending</span></span><span style="flex:1" class="num">980.00</span></div>
+    <div class="trow"><span style="flex:2">Initech</span><span style="flex:1">Starter</span><span style="flex:1"><span class="badge badge-success">Active</span></span><span style="flex:1" class="num">120.00</span></div>
+    <div class="trow"><span style="flex:2">Umbrella Ltd</span><span style="flex:1">Team</span><span style="flex:1"><span class="badge badge-danger">Overdue</span></span><span style="flex:1" class="num">980.00</span></div>
+    <div class="trow"><span style="flex:2">Soylent Inc</span><span style="flex:1">Enterprise</span><span style="flex:1"><span class="badge badge-success">Active</span></span><span style="flex:1" class="num">4,200.00</span></div>
+  </div>
+  <div style="display:flex;align-items:center;justify-content:space-between;padding:10px var(--space-4);border-top:1px solid var(--border-light);background:var(--surface-sunken)">
+    <span class="label">Showing 1 to 25 of 148</span>
+    <div class="row"><span class="icon-btn icon-btn-sm">‹</span><span class="icon-btn icon-btn-sm">›</span></div>
+  </div>
+</div>
+
+<h3>Bulk selection</h3>
+<p class="desc">Selection persists across searches, so the user can build a set from several filters. Selected rows are never pinned above the results, because that buries what the user is searching for. The count and a review toggle carry the state instead.</p>
+<div class="card">
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:var(--space-2);padding:10px var(--space-4);background:var(--primary-subtle);border-bottom:1px solid var(--primary-border)">
+    <div class="row">
+      <span style="font-weight:var(--fw-medium);color:var(--primary-pressed)">14 of 100 selected</span>
+      <span class="btn btn-sm" style="background:var(--surface);border:1px solid var(--primary-border);color:var(--primary-pressed)">Show selected only</span>
+    </div>
+    <div class="row">
+      <span class="btn btn-sm btn-secondary">Assign</span>
+      <span class="btn btn-sm" style="background:var(--danger-bg);border:1px solid var(--danger-border);color:var(--danger)">Delete</span>
+      <span class="btn btn-sm" style="background:transparent;color:var(--text-secondary)">Clear</span>
+    </div>
+  </div>
+  <div style="padding:10px var(--space-4);border-bottom:1px solid var(--border-light);background:var(--surface-sunken)" class="row">
+    <span class="field btn-sm" style="width:200px;justify-content:flex-start">rishabh</span>
+    <span class="label">12 results</span>
+  </div>
+  <div class="trow thead"><span style="width:26px"><span class="tick"></span></span><span style="flex:2">Name</span><span style="flex:1">Team</span><span style="flex:1" class="num">Open tasks</span></div>
+  <div class="trow selected-row"><span style="width:26px"><span class="tick tick-on">✓</span></span><span style="flex:2">Rishabh Mehta</span><span style="flex:1">Delivery</span><span style="flex:1" class="num">6</span></div>
+  <div class="trow"><span style="width:26px"><span class="tick"></span></span><span style="flex:2">Rishabh Soni</span><span style="flex:1">Finance</span><span style="flex:1" class="num">2</span></div>
+  <div class="trow" style="border-bottom:none"><span style="width:26px"><span class="tick"></span></span><span style="flex:2">Rishabh Jain</span><span style="flex:1">Delivery</span><span style="flex:1" class="num">4</span></div>
+</div>
+
+<!-- ===================================================== -->
+<h2>9. Filters and date ranges</h2>
+<p class="desc">Active filters appear as removable chips below the toolbar, so the user always sees why the list is short. Without chips, people forget they filtered and report missing records as a bug.</p>
+<div class="grid2">
+  <div class="card">
+    <div style="padding:10px var(--space-4);background:var(--surface-sunken);border-bottom:1px solid var(--border-light)" class="row">
+      <span class="field btn-sm" style="width:180px;justify-content:space-between">rishabh <span style="color:var(--text-muted)">×</span></span>
+      <span class="btn btn-sm" style="background:var(--primary-subtle);border:1px solid var(--primary-border);color:var(--primary-pressed)">Filter <span style="background:var(--primary);color:#fff;border-radius:5px;padding:1px 5px;font-size:11px;margin-left:4px">2</span></span>
+    </div>
+    <div style="padding:10px var(--space-4);border-bottom:1px solid var(--border-light)" class="row">
+      <span class="chip">Team: Delivery ×</span>
+      <span class="chip">Date: Last 30 days ×</span>
+      <span style="font-size:var(--fs-meta);color:var(--primary)">Clear all</span>
+    </div>
+    <div style="padding:10px var(--space-4)" class="label">12 results</div>
+  </div>
+  <div class="card">
+    <div class="card-head"><span style="font-weight:var(--fw-medium)">Filters</span></div>
+    <div style="padding:var(--space-3) var(--space-4)">
+      <p class="label" style="margin-bottom:8px">Date range</p>
+      <div class="row" style="gap:6px">
+        <span class="preset">Today</span><span class="preset">Yesterday</span><span class="preset">Last 7 days</span>
+        <span class="preset preset-active">Last 30 days</span><span class="preset">This month</span><span class="preset">Last month</span>
+        <span class="preset">Last 3 months</span><span class="preset">This financial year</span><span class="preset">Custom range</span>
+      </div>
+    </div>
+    <div class="card-foot" style="justify-content:space-between"><span class="label">Clear all</span><span class="btn btn-sm btn-primary">Apply</span></div>
+  </div>
+</div>
+<div class="rule"><p>Financial year means April to March. A custom range always displays as readable text: "1 Aug 2026 to 29 Aug 2026", never only as "Custom".</p></div>
+
+<!-- ===================================================== -->
+<h2>10. Detail page</h2>
+<p class="desc">Breadcrumbs, not a back button. A back button does something different depending on how the user arrived, which is what makes people feel lost. A breadcrumb is the same every time.</p>
+<div class="card">
+  <div style="padding:var(--space-3) var(--space-4) 0" class="row" style="gap:6px">
+    <span style="color:var(--primary);font-size:var(--fs-label)">Clients</span>
+    <span style="color:var(--text-muted);font-size:var(--fs-label)">›</span>
+    <span class="label">Umbrella Ltd</span>
+  </div>
+  <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:var(--space-3);padding:10px var(--space-4) var(--space-4);border-bottom:1px solid var(--border-light)">
+    <div>
+      <div class="row"><p style="font-size:var(--fs-section);font-weight:var(--fw-medium);margin:0">Umbrella Ltd</p><span class="badge badge-danger">Overdue</span></div>
+      <p class="label" style="margin:3px 0 0">Team plan · Client since March 2024</p>
+    </div>
+    <div class="row"><button class="btn btn-primary">Edit</button><span class="icon-btn">⋯</span></div>
+  </div>
+  <div style="display:grid;grid-template-columns:2fr 1fr;gap:var(--space-4);padding:var(--space-4)">
+    <div class="panel" style="margin:0">
+      <p style="font-size:var(--fs-card);font-weight:var(--fw-medium);margin:0 0 var(--space-3)">Account details</p>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px 20px">
+        <div><p class="label" style="margin:0 0 2px">Contact person</p><p style="margin:0">Sunita Rao</p></div>
+        <div><p class="label" style="margin:0 0 2px">Email address</p><p style="margin:0">sunita@umbrella.in</p></div>
+        <div><p class="label" style="margin:0 0 2px">Phone number</p><p style="margin:0">98250 41122</p></div>
+        <div><p class="label" style="margin:0 0 2px">Location</p><p style="margin:0">Surat, Gujarat</p></div>
+      </div>
+    </div>
+    <div class="panel" style="margin:0">
+      <p style="font-size:var(--fs-card);font-weight:var(--fw-medium);margin:0 0 var(--space-3)">Summary</p>
+      <div><p class="label" style="margin:0 0 2px">Outstanding</p><p style="margin:0 0 var(--space-3);font-weight:var(--fw-medium)">980.00</p></div>
+      <div><p class="label" style="margin:0 0 2px">Open tasks</p><p style="margin:0 0 var(--space-3);font-weight:var(--fw-medium)">3</p></div>
+      <div><p class="label" style="margin:0 0 2px">Last contact</p><p style="margin:0">21 August 2026</p></div>
+    </div>
+  </div>
+</div>
+
+<!-- ===================================================== -->
+<h2>11. Form and field widths</h2>
+<p class="desc">A field is as wide as the data it holds. Seven different widths read as more organised, not less, because the eye uses width as a clue about what belongs in each box. Add and Edit are the same component; only the title and button label differ.</p>
+<div class="card" style="max-width:620px">
+  <div class="card-head"><span style="font-size:var(--fs-card);font-weight:var(--fw-medium)">Edit client</span><span class="icon-btn icon-btn-sm">×</span></div>
+  <div style="padding:var(--space-4)">
+    <p class="label" style="margin-bottom:var(--space-3)">Basic details</p>
+    <div class="grid12">
+      <div style="grid-column:span 6"><label class="field-label">Client name <span class="req">*</span></label><div class="field">Umbrella Ltd</div></div>
+      <div style="grid-column:span 6"><label class="field-label">Email address <span class="req">*</span></label><div class="field">sunita@umbrella.in</div></div>
+      <div style="grid-column:span 4"><label class="field-label">Phone number</label><div class="field">98250 41122</div></div>
+      <div style="grid-column:span 4"><label class="field-label">Due date</label><div class="field">12 Aug 2026 <span style="color:var(--text-muted)">▾</span></div></div>
+      <div style="grid-column:span 4"><label class="field-label">Plan <span class="req">*</span></label><div class="field">Team <span style="color:var(--text-muted)">▾</span></div></div>
+      <div style="grid-column:span 3"><label class="field-label">PIN code</label><div class="field">395007</div></div>
+      <div style="grid-column:span 3"><label class="field-label">Amount</label><div class="field" style="justify-content:flex-end">980.00</div></div>
+      <div style="grid-column:span 12"><label class="field-label">Street address</label><div class="field">804, Avadh Kontina, VIP Road, Vesu</div></div>
+    </div>
+  </div>
+  <div class="card-foot"><button class="btn btn-secondary">Cancel</button><button class="btn btn-primary">Save changes</button></div>
+</div>
+<div class="rule">
+<p>3 columns: PIN code, amount, quantity, year. 4 columns: phone, date, short dropdown. 6 columns: name, email, city. 12 columns: address, notes.</p>
+<p>Minimum 160px. Single-line fields never exceed 480px. Numbers align right.</p>
+</div>
+
+<!-- ===================================================== -->
+<h2>12. Dropdowns</h2>
+<p class="desc">Menu width matches the trigger exactly, caps at 280px height then scrolls. Selected and hovered must look different — selected is tinted with a tick, hovered is neutral grey. Sharing one style makes it impossible to tell what is actually chosen.</p>
+<div class="grid2">
+  <div>
+    <p class="label" style="margin-bottom:8px">Closed states</p>
+    <div class="field" style="margin-bottom:10px">Team <span style="color:var(--text-muted)">▾</span></div>
+    <div class="field" style="margin-bottom:10px;color:var(--text-muted)">Select a plan <span>▾</span></div>
+    <div class="field field-disabled">Team <span>▾</span></div>
+    <p class="meta" style="margin-top:8px">selected · empty · disabled</p>
+  </div>
+  <div>
+    <p class="label" style="margin-bottom:8px">Open menu</p>
+    <div class="field" style="border-color:var(--primary-ring)">Team <span style="color:var(--text-muted)">▴</span></div>
+    <div style="margin-top:4px;border:1px solid var(--border);border-radius:var(--radius-card);background:var(--surface);padding:4px;box-shadow:0 8px 20px rgba(0,0,0,.08)">
+      <div style="height:36px;display:flex;align-items:center;padding:0 12px;border-radius:var(--radius-control)">Starter</div>
+      <div style="height:36px;display:flex;align-items:center;justify-content:space-between;padding:0 12px;background:var(--primary-subtle);color:var(--primary-pressed);border-radius:var(--radius-control)">Team <span>✓</span></div>
+      <div style="height:36px;display:flex;align-items:center;padding:0 12px;background:var(--surface-control);border-radius:var(--radius-control)">Enterprise</div>
+      <div style="height:36px;display:flex;align-items:center;padding:0 12px;color:var(--text-muted);border-radius:var(--radius-control)">Custom</div>
+    </div>
+    <p class="meta" style="margin-top:8px">row 2 selected · row 3 hovered · row 4 disabled</p>
+  </div>
+</div>
+<div class="rule"><p>More than 6 options: add a search box fixed at the top. More than 20: it should not be a dropdown at all.</p></div>
+
+<!-- ===================================================== -->
+<h2>13. Empty, loading and destructive states</h2>
+<p class="desc">Three empty states, not one. Offering "Add your first client" to someone whose filter simply matched nothing makes the software look unintelligent.</p>
+<div class="grid2">
+  <div class="panel" style="text-align:center;padding:28px 20px">
+    <div style="width:44px;height:44px;background:var(--primary-subtle);border-radius:var(--radius-card);display:inline-flex;align-items:center;justify-content:center;margin-bottom:12px;color:var(--primary);font-size:20px">👥</div>
+    <p style="font-size:var(--fs-card);font-weight:var(--fw-medium);margin:0 0 4px">No clients yet</p>
+    <p class="label" style="margin:0 0 var(--space-4)">Add your first client to start tracking invoices and tasks.</p>
+    <button class="btn btn-primary">New client</button>
+  </div>
+  <div class="panel" style="text-align:center;padding:28px 20px">
+    <div style="width:44px;height:44px;background:var(--surface-control);border-radius:var(--radius-card);display:inline-flex;align-items:center;justify-content:center;margin-bottom:12px;color:var(--text-muted);font-size:20px">🔍</div>
+    <p style="font-size:var(--fs-card);font-weight:var(--fw-medium);margin:0 0 4px">No clients match 'finance'</p>
+    <p class="label" style="margin:0 0 var(--space-4)">No clients match the filters you have applied.</p>
+    <button class="btn btn-secondary">Clear filters</button>
+  </div>
+</div>
+
+<div class="grid2" style="margin-top:var(--space-4)">
+  <div class="panel">
+    <p class="label" style="margin-bottom:var(--space-3)">Skeleton while loading</p>
+    <div class="row" style="margin-bottom:14px"><span style="width:60%;height:12px;border-radius:6px;background:#EDEDED"></span><span style="width:25%;height:12px;border-radius:6px;background:#F2F2F2"></span></div>
+    <div class="row" style="margin-bottom:14px"><span style="width:45%;height:12px;border-radius:6px;background:#EDEDED"></span><span style="width:30%;height:12px;border-radius:6px;background:#F2F2F2"></span></div>
+    <div class="row"><span style="width:55%;height:12px;border-radius:6px;background:#EDEDED"></span><span style="width:20%;height:12px;border-radius:6px;background:#F2F2F2"></span></div>
+    <p class="meta" style="margin-top:var(--space-3)">Never a spinning wheel. The layout arrives first, so the page does not jump when data lands.</p>
+  </div>
+  <div class="card">
+    <div style="padding:var(--space-4)">
+      <p style="font-size:var(--fs-card);font-weight:var(--fw-medium);margin:0 0 4px">Delete Umbrella Ltd?</p>
+      <p class="label" style="margin:0">This will also remove 4 invoices and 3 open tasks. This cannot be undone.</p>
+    </div>
+    <div class="card-foot"><button class="btn btn-secondary">Cancel</button><button class="btn btn-danger">Delete client</button></div>
+  </div>
+</div>
+<div class="rule"><p>A confirmation that does not state the consequences is not a confirmation, it is a speed bump. Name what is being deleted and what else it affects.</p></div>
+
+<!-- ===================================================== -->
+<h2>14. File uploads</h2>
+<p class="desc">Uploads are not a global feature. A screen gets them only when explicitly asked for. When present, the drag-over state must be unmistakable, and a failed file must stay visible with a reason.</p>
+<div class="grid2">
+  <div>
+    <p class="label" style="margin-bottom:8px">Resting</p>
+    <div class="dropzone">
+      <p style="margin:0 0 2px">Drag files here</p>
+      <p class="label" style="margin:0 0 var(--space-3)">or</p>
+      <span class="btn btn-sm btn-secondary">Browse files</span>
+      <p class="meta" style="margin-top:var(--space-3)">PDF, JPG or PNG. Up to 10 MB.</p>
+    </div>
+  </div>
+  <div>
+    <p class="label" style="margin-bottom:8px">File dragged over</p>
+    <div class="dropzone dropzone-over">
+      <p style="margin:0 0 2px;font-weight:var(--fw-medium);color:var(--primary-pressed)">Drop to upload</p>
+      <p style="margin:0;color:var(--primary-pressed);font-size:var(--fs-label)">3 files</p>
+      <p style="margin:32px 0 0;font-size:var(--fs-meta);color:var(--primary-pressed)">PDF, JPG or PNG. Up to 10 MB.</p>
+    </div>
+  </div>
+</div>
+
+<div class="card" style="margin-top:var(--space-4)">
+  <div class="trow">
+    <span style="width:36px;height:36px;border-radius:var(--radius-control);background:var(--primary-border);flex:none"></span>
+    <div style="flex:1;min-width:0"><p class="truncate" style="margin:0">site-photo-front-elevation-august.jpg</p><p class="meta">2.4 MB</p></div>
+    <span class="icon-btn icon-btn-sm">↓</span><span class="icon-btn icon-btn-sm">×</span>
+  </div>
+  <div class="trow">
+    <span style="width:36px;height:36px;border-radius:var(--radius-control);background:var(--surface-control);flex:none"></span>
+    <div style="flex:1;min-width:0"><p class="truncate" style="margin:0">compliance-report-august-2026.pdf</p><div class="progress"><span style="width:62%"></span></div><p class="meta" style="margin-top:4px">62% · 1.1 MB of 1.8 MB</p></div>
+    <span class="icon-btn icon-btn-sm">×</span>
+  </div>
+  <div class="trow" style="border-bottom:none">
+    <span style="width:36px;height:36px;border-radius:var(--radius-control);background:var(--danger-bg);flex:none"></span>
+    <div style="flex:1;min-width:0"><p class="truncate" style="margin:0">scanned-agreement.tiff</p><p style="margin:1px 0 0;font-size:var(--fs-label);color:var(--danger)">TIFF files are not accepted. Use PDF, JPG or PNG.</p></div>
+    <span class="btn btn-sm btn-secondary">Retry</span><span class="icon-btn icon-btn-sm">×</span>
+  </div>
+</div>
+<div class="rule"><p>Progress lives on the file row, never as a page-wide overlay, so the user can carry on filling the form. A file that vanishes silently is the worst outcome, because the user thinks it worked.</p></div>
+
+<!-- ===================================================== -->
+<h2>15. Dialog sizes</h2>
+<p class="desc">Three widths only. The exact pixel numbers matter less than the fact that there are three, so every dialog in the software is not a slightly different size.</p>
+<div class="panel" style="display:flex;flex-direction:column;gap:var(--space-3)">
+  <div class="card" style="max-width:200px"><div class="card-head"><span style="font-weight:var(--fw-medium)">Small</span><span class="icon-btn icon-btn-sm">×</span></div><div style="padding:10px 14px" class="meta">400px — confirmations</div></div>
+  <div class="card" style="max-width:280px"><div class="card-head"><span style="font-weight:var(--fw-medium)">Medium</span><span class="icon-btn icon-btn-sm">×</span></div><div style="padding:10px 14px" class="meta">560px — short forms</div></div>
+  <div class="card" style="max-width:400px"><div class="card-head"><span style="font-weight:var(--fw-medium)">Large</span><span class="icon-btn icon-btn-sm">×</span></div><div style="padding:10px 14px" class="meta">800px — tabs or a table inside</div></div>
+</div>
+<div class="rule"><p>Never open a dialog from inside a dialog. If a dialog needs to lead somewhere else, it should be a page.</p></div>
+
+<!-- ===================================================== -->
+<h2>16. Scrollbar</h2>
+<p class="desc">The browser default scrollbar is an operating system default leaking into your software, exactly like unstyled hovers and tooltips. Scroll the box below to see the styled version.</p>
+<div class="card" style="max-width:420px">
+  <div class="card-head"><span style="font-size:var(--fs-card);font-weight:var(--fw-medium)">Recent activity</span></div>
+  <div class="scroll" style="height:150px;padding:4px var(--space-4)">
+    <p style="margin:12px 0">Rakesh assigned you a task</p>
+    <p style="margin:12px 0">Nimesh commented on INV-1004</p>
+    <p style="margin:12px 0">Payment received from Acme Corp</p>
+    <p style="margin:12px 0">Monthly backup failed</p>
+    <p style="margin:12px 0">New client added: Soylent Inc</p>
+    <p style="margin:12px 0">Invoice INV-1005 marked paid</p>
+    <p style="margin:12px 0">Compliance report submitted</p>
+  </div>
+</div>
+
+<p class="meta" style="margin-top:var(--space-12);padding-top:var(--space-4);border-top:1px solid var(--border-light)">
+RGB Business Growth Consulting · 804, Avadh Kontina, VIP Road, Vesu, Surat 395007 · Phone 7878038514<br>
+www.rgbindia.com · rakesh@rgbindia.com
+</p>
+
+</div>
+</body>
+</html>
