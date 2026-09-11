@@ -134,9 +134,13 @@ options=-c search_path=budgeting,shared,public
 ```
 
 `budgeting` is first, so that is where tables are created — including
-`schema_migrations`, the checksum ledger `migrate.js` maintains. `shared`
-and `public` are on the path for reading only; nothing here writes to
-them. Reordering that list would scatter the schema across two places
+`schema_migrations`, the checksum ledger `migrate.js` maintains, and
+`users`. `shared` and `public` are on the path for reading only; nothing
+here writes to them.
+
+`shared` is scaffolding for a later cross-app table and is deliberately
+empty. It is not a home for anything this app owns — `users` stays in
+`budgeting` with the rest of the schema. Reordering that list would scatter the schema across two places
 on the next migration, and the damage would not be visible until
 something queried the wrong one.
 
