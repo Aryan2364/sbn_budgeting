@@ -89,12 +89,21 @@ push to main ──▶ Actions: build & push ──▶ ghcr.io/aryan2364/sbn-bac
 
    - `/api/*` is forwarded **without** stripping the prefix. NestJS sets
      a global prefix of `api` (`backend/src/main.ts`), so the real route
-     is `/api/auth/login`. Caddy's `handle_path` strips the matched
-     prefix — using it here would 404 every API call. The block uses
-     `handle`.
-   - The `/api/*` block is written before the catch-all, because Caddy
-     evaluates `handle` blocks in order and the catch-all would
-     otherwise swallow the API too.
+     is `/api/auth/login`. `handle_path` or `uri strip_prefix` would
+     remove it and 404 every API call.
+   - The named matcher comes before the catch-all `reverse_proxy`,
+     matching the shape of the existing v2e block, which routes
+     `/socket.io/*` the same way.
+
+   Note this differs from v2e deliberately. v2e's frontend rewrites
+   `/api` itself through a baked-in `BACKEND_URL`, so its Caddy block
+   needs no API route. This frontend calls `https://sbn.rgbindia.com/api`
+   straight from the browser, so Caddy has to do the routing.
+
+   Ports follow the convention already in that file — frontend `3X00`,
+   backend `4X00`. hcrm holds 30xx, life/lbd 31xx and 41xx, gbd-webinar
+   32xx, v2e 33xx and 43xx; sbn takes **3400** and **4400**, which are
+   free.
 
    DNS already resolves `sbn.rgbindia.com` to Cloudflare, and today the
    host returns **HTTP 525** — Cloudflare reaching an origin that has no

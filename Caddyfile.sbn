@@ -1,40 +1,28 @@
 # Caddy site block for sbn.rgbindia.com.
 #
-# Append this to the server's Caddyfile (or drop it in the imported
-# conf.d directory if that is how the box is organised), then:
+# Append to /etc/caddy/Caddyfile — it follows the same shape as the
+# v2e block already in that file — then:
 #
 #   sudo caddy validate --config /etc/caddy/Caddyfile
 #   sudo systemctl reload caddy
 #
-# Caddy provisions the TLS certificate itself on first request. Nothing
-# here needs certbot.
+# Caddy issues the certificate itself on first request. No certbot.
+#
+# Ports follow the convention the rest of the file uses: frontend 3X00,
+# backend 4X00. hcrm is 30xx, life/lbd 31xx+41xx, gbd-webinar 32xx,
+# v2e 33xx+43xx, so sbn takes 3400 and 4400.
 
 sbn.rgbindia.com {
-	encode zstd gzip
-
-	# The API must arrive at the backend WITH the /api prefix intact:
-	# NestJS sets a global prefix of `api` (backend/src/main.ts), so
-	# /api/auth/login is the real route. `handle_path` would strip it
-	# and every call would 404 — use `handle`.
+	# Unlike v2e, this frontend does not rewrite /api itself — the
+	# browser calls https://sbn.rgbindia.com/api directly, because
+	# NEXT_PUBLIC_API_URL is baked into the bundle. So Caddy has to
+	# route it.
 	#
-	# This block comes first because Caddy matches handle blocks in
-	# order and the one below catches everything.
-	handle /api/* {
-		reverse_proxy 127.0.0.1:4400
-	}
+	# The prefix is NOT stripped: NestJS sets a global prefix of `api`
+	# (backend/src/main.ts), so /api/auth/login is the real route.
+	# `handle_path` or a `uri strip_prefix` here would 404 every call.
+	@api path /api/*
+	reverse_proxy @api localhost:4400
 
-	# Everything else is the Next.js app.
-	handle {
-		reverse_proxy 127.0.0.1:3400
-	}
-
-	# Cloudflare sits in front, so the connecting address is always a
-	# Cloudflare edge IP. This puts the real client address back in
-	# X-Forwarded-For for the logs.
-	request_header X-Real-IP {http.request.header.CF-Connecting-IP}
-
-	log {
-		output file /var/log/caddy/sbn.rgbindia.com.log
-		format json
-	}
+	reverse_proxy localhost:3400
 }
