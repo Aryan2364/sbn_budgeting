@@ -10,6 +10,13 @@ const BASE =
 
 const TOKEN_KEY = 'sadbhavna.token'
 
+/**
+ * Longer than any request this app makes on a warm path, short enough
+ * that a stalled one becomes a visible, retryable failure rather than
+ * a screen that never finishes loading.
+ */
+const REQUEST_TIMEOUT_MS = 20_000
+
 export function getToken(): string | null {
   if (typeof window === 'undefined') return null
   try {
@@ -74,10 +81,21 @@ async function request<T>(
         ...(token ? { authorization: `Bearer ${token}` } : {}),
       },
       body: body === undefined ? undefined : JSON.stringify(body),
+      /**
+       * fetch has no timeout of its own: a request that stalls never
+       * settles, so every `.then`/`.catch` downstream simply never
+       * runs and the screen waits forever. A promise that cannot
+       * reject cannot be shown as an error, however good the error
+       * state is. This makes the failure reachable.
+       */
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     })
-  } catch {
-    // Section 7.2 rule 3: never a raw technical error. This is the one
-    // failure the user can actually act on by retrying.
+  } catch (caught) {
+    // Section 7.2 rule 3: never a raw technical error. Both of these
+    // are failures the user can actually act on by retrying.
+    if (caught instanceof DOMException && caught.name === 'TimeoutError') {
+      throw new ApiError(0, 'The server took too long to answer. Try again.')
+    }
     throw new ApiError(0, 'Could not reach the server. Check your connection and try again.')
   }
 
@@ -192,6 +210,12 @@ export interface Site {
   locationName: string | null
   plannedTrees: number
   plantationStartDate: string
+  /**
+   * The period anchor when set; null until plantation finishes, and
+   * `plantationStartDate` is the fallback until then. See
+   * `periodAnchor` in lib/periods.ts — nothing decides this locally.
+   */
+  plantationCompleteDate: string | null
   managerId: string | null
   managerName: string | null
   supervisorId: string | null
@@ -326,4 +350,40 @@ export interface SiteVariance {
   /** One per cost head. Driven from `cost_heads`, not from the view. */
   rows: VarianceRow[]
   period: number | null
+}
+
+/** Phase 7b, Report 1. One period, at whatever scope was asked for. */
+export interface VariancePeriodRow {
+  /** null on a total row, where the period axis is collapsed. */
+  period: number | null
+  /** null means no budget rows exist — "Budget not set". */
+  budgetPaise: string | null
+  actualPaise: string
+  variancePaise: string | null
+  variancePct: string | null
+}
+
+/** `GET /reports/variance/periods-summary`. Five rows and a total. */
+export interface PeriodSummary {
+  rows: VariancePeriodRow[]
+  total: VariancePeriodRow
+}
+
+/** Phase 7b, Report 2. One cost head across the five periods. */
+export interface HeadPeriodRow {
+  costHeadId: string
+  costHeadName: string
+  /** Always five, in period order, whatever the data carries. */
+  cells: VariancePeriodRow[]
+  /** The head's row total, summed in SQL beside the cells. */
+  total: VariancePeriodRow
+}
+
+/** `GET /reports/variance/head-periods`. Heads down, periods across. */
+export interface HeadPeriodReport {
+  rows: HeadPeriodRow[]
+  /** The column totals, one per period. */
+  periodTotals: VariancePeriodRow[]
+  /** Where the row totals and the column totals meet. */
+  total: VariancePeriodRow
 }

@@ -512,8 +512,14 @@ settings. Use the matching template. Do not invent new arrangements.
 
 Four fixed zones, in this order, always. Only zone 3 scrolls.
 
+**A fifth zone is permitted and is optional: a section tab bar between
+the header and the toolbar, defined in section 33.** It is the only
+thing that may come between them, and a list page without one still
+has exactly the four zones below.
+
 1. **Header** — page title on the left, one primary action button on the
    right. Record count as meta text under the title. Does not scroll.
+1a. **Section tabs** — optional. Section 33. Does not scroll.
 2. **Toolbar** — search on the left at a fixed 260 to 320px width, never
    full width. Filter and sort as secondary buttons beside it. View
    switcher (list / card) on the far right as a joined pair, active side
@@ -1187,7 +1193,8 @@ Nothing outstanding. When a new pattern is needed, agree it first and add
 it to this file before building it.
 
 Agreed and moved out of this section: **the data entry grid**, now
-section 31, and **password fields**, now section 32.
+section 31, **password fields**, now section 32, and **section tabs**,
+now section 33.
 
 ---
 
@@ -1393,3 +1400,91 @@ persist it.
   confirmation unnecessary; adding both is asking the same question
   twice.
 
+
+
+---
+
+## 33. Section tabs
+
+Agreed 12 Sep 2026, before building, per section 30.
+
+**This is the product's first sub-navigation, and it is deliberately
+the only one.** It exists because the Reports section grew from one
+report to three, and three sibling screens that answer the same
+question differently are not three sidebar entries — section 12.1 caps
+the sidebar at seven items for a reason, and a report is not a
+destination in its own right.
+
+### 33.1 What it is, and what it is not
+
+**Section tabs switch between SIBLING VIEWS OF ONE SECTION.** Three
+reports over the same data. Not steps, not a wizard, not filters, and
+not a place to hide a screen that deserves its own sidebar entry.
+
+They are distinct from `tabs` on a detail page (section 11.2 zone 4),
+which switch between a record's **child collections** — its expenses,
+its variance. Same component, different job, and the difference is the
+test: a detail page's tabs are about **one record**, section tabs are
+about **one section of the product**.
+
+**Use the existing `tabs` component.** There is no second tab
+component and there will not be one (section 4 rule 3). What follows
+is where it sits and how it behaves on a list page, not a new
+appearance.
+
+### 33.2 Placement
+
+**Between the header and the toolbar. Nowhere else.**
+
+The header names the section and the tab bar divides it, so the tab
+must come after the title it qualifies. The toolbar comes after the
+tabs, because search, filters and sort belong to the **active tab**
+rather than to the section — a search box above a tab bar implies it
+searches all three, and it does not.
+
+**It does not scroll.** Like the header, the toolbar and the
+pagination bar, it is fixed chrome; only the data area scrolls beneath
+it. A tab bar that scrolls away is a tab bar the user has to hunt
+upward for, which is the failure section 11.1 exists to prevent.
+
+### 33.3 Appearance
+
+Inherited from the `tabs` component, restated here only so the numbers
+are checkable:
+
+- Tab height **36px**, matching every other control (section 6.2).
+- **24px** between tabs (`space-6`), on a 1px `border-light` rule
+  running the full content width.
+- Active tab carries **three signals together**: `primary` text,
+  weight 500, and a **2px** `primary` accent along its bottom edge —
+  the one place section 5.3 permits a border thicker than 1px.
+- Resting tabs are `text-secondary` and go `text-primary` on hover.
+- Keyboard focus shows the `primary-ring` outline. Arrow keys move
+  between tabs, as the component already provides.
+- **Sibling tabs are styled and behave identically.** If one carries a
+  count badge, they all do (section 4 rule 2 and the parallel-items
+  rule). A tab bar where one tab has a badge and its neighbour does
+  not reads as two kinds of control.
+
+### 33.4 State
+
+**The active tab lives in the URL**, as a query parameter, so a report
+can be linked to and the browser's own back button returns to the tab
+the user came from. That is the navigation this product has instead of
+a back button (section 1 rule 11).
+
+Switching tabs **replaces** the history entry rather than pushing one:
+flipping between three reports should not make the back button walk
+through every flip.
+
+**The toolbar's state belongs to its tab.** Search, filters and sort
+do not carry across, because they filter different columns on each.
+
+### 33.5 The limit
+
+**Maximum four section tabs.** Past that it is not a section with
+views, it is a section with a navigation problem, and the answer is
+different information architecture rather than a fifth tab.
+
+There is **one section tab bar per screen**, and it never nests inside
+another.

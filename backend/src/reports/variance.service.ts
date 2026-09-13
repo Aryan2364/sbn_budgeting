@@ -22,6 +22,35 @@ import { PG_POOL } from '../db/db.module';
 
 export const PERIODS = ['Initial', 'Year 1', 'Year 2', 'Year 3', 'Year 4'] as const;
 
+/** Phase 7b, Report 1. One period, at whatever scope was asked for. */
+export interface VariancePeriodRow {
+  /** null on the total row, where the period axis is collapsed. */
+  period: number | null;
+  /** null means no budget rows exist — "Budget not set". */
+  budgetPaise: string | null;
+  actualPaise: string;
+  variancePaise: string | null;
+  variancePct: string | null;
+}
+
+/** Phase 7b, Report 2. One cost head across the five periods. */
+export interface HeadPeriodRow {
+  costHeadId: string;
+  costHeadName: string;
+  /** Always five, in period order, whatever the data carries. */
+  cells: VariancePeriodRow[];
+  /** The head's own row total, summed in SQL beside the cells. */
+  total: VariancePeriodRow;
+}
+
+export interface HeadPeriodReport {
+  rows: HeadPeriodRow[];
+  /** The column totals, one per period. */
+  periodTotals: VariancePeriodRow[];
+  /** Where the row totals and the column totals meet. */
+  total: VariancePeriodRow;
+}
+
 export interface VarianceRow {
   siteId: string;
   siteName: string;
@@ -309,6 +338,236 @@ export class VarianceService {
   }
 
   /**
+   * Phase 7b, Report 1. One row per period, for a project or for one
+   * site inside it.
+   *
+   * CLIENT INSTRUCTION, 7 Sep 2026: "total year wise", which reads as a
+   * rollup, so a project is the default scope and a site narrows it.
+   *
+   * **This is a roll-up of the view's own rows, not a second
+   * definition.** It sums `variance` at the 'site_period' grain that
+   * migration 0004 added, so it cannot disagree with the site figures
+   * it is made of — SUM of those rows IS this answer. A project grain
+   * inside the view itself would have been the purer home for it, and
+   * it is not available cheaply: `planned_trees` is a GROUP BY column
+   * at every existing grain and would have to become a per-site
+   * DISTINCT sum at a project grain, which is not expressible in the
+   * same select list. That is a real reason, not a shortcut, and it is
+   * worth writing down so nobody re-attempts it.
+   *
+   * THE FIVE PERIODS ARE A SPINE, not whatever the data happens to
+   * carry. A project with nothing budgeted in Year 3 still shows a
+   * Year 3 row reading "Budget not set" — the same reason the head
+   * grain is driven from `cost_heads` rather than from the view.
+   */
+  async periods(params: {
+    projectId?: string;
+    siteId?: string;
+  }): Promise<{ rows: VariancePeriodRow[]; total: VariancePeriodRow }> {
+    const values: unknown[] = [];
+    const where: string[] = [`v.grain = 'site_period'`];
+    if (params.projectId) {
+      values.push(params.projectId);
+      where.push(`v.project_id = $${values.length}`);
+    }
+    if (params.siteId) {
+      values.push(params.siteId);
+      where.push(`v.site_id = $${values.length}`);
+    }
+
+    const { rows } = await this.pool.query(
+      `
+      with scoped as (
+        select v.period, v.budget_paise, v.actual_paise
+        from variance v
+        where ${where.join(' and ')}
+      ),
+      spine as (select generate_series(0, 4) as period)
+      select
+        spine.period                                as "period",
+        sum(scoped.budget_paise)                    as "budgetPaise",
+        coalesce(sum(scoped.actual_paise), 0)::text as "actualPaise",
+        (sum(scoped.budget_paise) - coalesce(sum(scoped.actual_paise), 0))::text
+                                                    as "variancePaise",
+        round(
+          ((sum(scoped.budget_paise) - coalesce(sum(scoped.actual_paise), 0)) * 100.0)
+            / nullif(sum(scoped.budget_paise), 0),
+          1
+        )::text                                     as "variancePct"
+      from spine
+      left join scoped on scoped.period = spine.period
+      group by spine.period
+      order by spine.period
+      `,
+      values,
+    );
+
+    // The total row is the same sum with the period axis collapsed,
+    // taken from the same scoped set. Not added up in JavaScript.
+    const { rows: totals } = await this.pool.query(
+      `
+      select
+        null::smallint                       as "period",
+        sum(v.budget_paise)::text            as "budgetPaise",
+        coalesce(sum(v.actual_paise), 0)::text as "actualPaise",
+        (sum(v.budget_paise) - coalesce(sum(v.actual_paise), 0))::text
+                                             as "variancePaise",
+        round(
+          ((sum(v.budget_paise) - coalesce(sum(v.actual_paise), 0)) * 100.0)
+            / nullif(sum(v.budget_paise), 0),
+          1
+        )::text                              as "variancePct"
+      from variance v
+      where ${where.join(' and ')}
+      `,
+      values,
+    );
+
+    return {
+      rows: rows.map(asPeriodRow),
+      total: asPeriodRow(totals[0] ?? {}),
+    };
+  }
+
+  /**
+   * Phase 7b, Report 2. Cost head down the side, period across the top.
+   *
+   * CLIENT INSTRUCTION, 7 Sep 2026, with the cell content settled on
+   * 12 Sep: **one measure at a time**, chosen on the screen. Five
+   * period columns, not a budget / actual / variance triple per period
+   * — that is fifteen columns and question 8 ruled it out by name. All
+   * four measures are returned for every cell and the screen picks; the
+   * alternative is a round trip every time somebody changes the
+   * dropdown, for data already in hand.
+   *
+   * **NO COLUMN GROUP PER SITE.** The per-site cross-tab was scoped out
+   * deliberately. A project scope sums its sites into one set of five
+   * columns; it does not widen the table.
+   *
+   * THE HEADS ARE A SPINE and so are the five periods. All nineteen
+   * heads appear whether or not they have a budget or an expense, and
+   * an inactive head still appears when it has data — it was
+   * deactivated rather than deleted precisely because expenses
+   * reference it, and hiding the row would hide the spend.
+   *
+   * ONE QUERY, four grains, from one GROUPING SETS: the cells, each
+   * head's row total, each period's column total, and the grand total
+   * where the two meet. They are sums of the same scoped set, so a row
+   * total cannot disagree with the cells it sits beside.
+   */
+  async headPeriods(params: {
+    projectId?: string;
+    siteId?: string;
+  }): Promise<HeadPeriodReport> {
+    const values: unknown[] = [];
+    const where: string[] = [`v.grain = 'site_head_period'`];
+    if (params.projectId) {
+      values.push(params.projectId);
+      where.push(`v.project_id = $${values.length}`);
+    }
+    if (params.siteId) {
+      values.push(params.siteId);
+      where.push(`v.site_id = $${values.length}`);
+    }
+
+    const { rows } = await this.pool.query(
+      `
+      with scoped as (
+        select v.cost_head_id, v.period, v.budget_paise, v.actual_paise
+        from variance v
+        where ${where.join(' and ')}
+      ),
+      heads as (
+        select ch.id, ch.name, ch.sort_order
+        from cost_heads ch
+        where ch.is_active
+           or exists (select 1 from scoped s where s.cost_head_id = ch.id)
+      ),
+      spine as (
+        select h.id as cost_head_id, h.name, h.sort_order, p.period
+        from heads h
+        cross join generate_series(0, 4) as p(period)
+      ),
+      cells as (
+        select
+          spine.cost_head_id, spine.name, spine.sort_order, spine.period,
+          scoped.budget_paise, scoped.actual_paise
+        from spine
+        left join scoped
+          on  scoped.cost_head_id = spine.cost_head_id
+          and scoped.period       = spine.period
+      )
+      select
+        cost_head_id                          as "costHeadId",
+        name                                  as "costHeadName",
+        sort_order                            as "sortOrder",
+        period                                as "period",
+        grouping(cost_head_id, name, sort_order) as "headGrouped",
+        grouping(period)                      as "periodGrouped",
+        sum(budget_paise)::text               as "budgetPaise",
+        coalesce(sum(actual_paise), 0)::text  as "actualPaise",
+        (sum(budget_paise) - coalesce(sum(actual_paise), 0))::text
+                                              as "variancePaise",
+        round(
+          ((sum(budget_paise) - coalesce(sum(actual_paise), 0)) * 100.0)
+            / nullif(sum(budget_paise), 0),
+          1
+        )::text                               as "variancePct"
+      from cells
+      group by grouping sets (
+        (cost_head_id, name, sort_order, period),
+        (cost_head_id, name, sort_order),
+        (period),
+        ()
+      )
+      order by sort_order nulls last, period nulls last
+      `,
+      values,
+    );
+
+    // Bucketing, not arithmetic. Every figure below was summed in SQL.
+    const byHead = new Map<string, HeadPeriodRow>();
+    const periodTotals: VariancePeriodRow[] = [];
+    let total: VariancePeriodRow | null = null;
+
+    for (const row of rows as Record<string, unknown>[]) {
+      const headGrouped = Number(row.headGrouped) !== 0;
+      const periodGrouped = Number(row.periodGrouped) !== 0;
+      const figures = asPeriodRow(row);
+
+      if (headGrouped && periodGrouped) {
+        total = figures;
+      } else if (headGrouped) {
+        periodTotals.push(figures);
+      } else {
+        const id = String(row.costHeadId);
+        let head = byHead.get(id);
+        if (!head) {
+          head = {
+            costHeadId: id,
+            costHeadName: String(row.costHeadName),
+            cells: [],
+            total: figures,
+          };
+          byHead.set(id, head);
+        }
+        if (periodGrouped) head.total = figures;
+        else head.cells.push(figures);
+      }
+    }
+
+    for (const head of byHead.values()) {
+      head.cells.sort((a, b) => (a.period ?? 0) - (b.period ?? 0));
+    }
+
+    return {
+      rows: [...byHead.values()],
+      periodTotals,
+      total: total ?? asPeriodRow({}),
+    };
+  }
+
+  /**
    * The site's own total, read from the same view.
    *
    * The tab's total row is this, not the sum of the rows above it — if
@@ -379,6 +638,25 @@ export interface DashboardSummary {
     spentOn: string;
     amountPaise: string;
   }[];
+}
+
+/**
+ * A period row, with the null budget preserved through the arithmetic.
+ *
+ * Postgres returns NULL for the variance and the percentage wherever
+ * the budget is NULL, because NULL minus a number is NULL — which is
+ * the "Budget not set" state travelling through the maths for free,
+ * exactly as it does in the view. The only thing needed here is to not
+ * coalesce it away.
+ */
+function asPeriodRow(row: Record<string, unknown>): VariancePeriodRow {
+  return {
+    period: row.period === null || row.period === undefined ? null : Number(row.period),
+    budgetPaise: (row.budgetPaise as string | null) ?? null,
+    actualPaise: (row.actualPaise as string | null) ?? '0',
+    variancePaise: (row.variancePaise as string | null) ?? null,
+    variancePct: (row.variancePct as string | null) ?? null,
+  };
 }
 
 function stripCount(row: Record<string, unknown>): VarianceRow {

@@ -50,7 +50,7 @@ export default function PeopleSettingsPage() {
         .then((response) => response.data),
     [],
   )
-  const { rows, loading, refresh } = useMasterRows(load)
+  const { rows, loading, error, refresh } = useMasterRows(load)
 
   const [editing, setEditing] = React.useState<Person | null>(null)
   const [creating, setCreating] = React.useState(false)
@@ -64,6 +64,8 @@ export default function PeopleSettingsPage() {
         canEdit={isAdmin}
         rows={rows}
         loading={loading}
+        error={error}
+        onRetry={refresh}
         columns={[
           {
             key: "name",

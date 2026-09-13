@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   ConflictException,
   Controller,
@@ -28,6 +29,8 @@ import {
   buildUpdate,
   findOneOrFail,
   isPgError,
+  pgConstraint,
+  PG_CHECK_VIOLATION,
   PG_FOREIGN_KEY_VIOLATION,
 } from '../common/crud';
 import { ListQueryDto } from '../common/list-query.dto';
@@ -52,12 +55,28 @@ export class SiteDto {
   @Min(1, { message: 'A site needs at least one tree' })
   plannedTrees!: number;
 
-  /** Required (question 6). The expense form derives a period from it. */
+  /** Required (question 6). The FALLBACK period anchor. */
   @IsDateString(
     {},
     { message: 'Enter the plantation start date, like 12 Aug 2026' },
   )
   plantationStartDate!: string;
+
+  /**
+   * The period anchor when it is set (client instruction, 7 Sep 2026).
+   *
+   * Optional, because a site still being planted has not got one, and
+   * the start date above is the client's own stated fallback until it
+   * does. An empty string from a cleared date field means "not set",
+   * not "invalid".
+   */
+  @IsOptional()
+  @Transform(({ value }) => (value === '' || value === null ? null : value))
+  @IsDateString(
+    {},
+    { message: 'Enter the plantation complete date, like 12 Aug 2026' },
+  )
+  plantationCompleteDate?: string | null;
 
   @IsOptional()
   @IsUUID()
@@ -77,11 +96,33 @@ export interface SiteRow {
   locationName: string | null;
   plannedTrees: number;
   plantationStartDate: string;
+  plantationCompleteDate: string | null;
   managerId: string | null;
   managerName: string | null;
   supervisorId: string | null;
   supervisorName: string | null;
   createdAt: string;
+}
+
+/**
+ * Section 7.2 rule 3: never a raw technical error.
+ *
+ * The database refuses a complete date before the start date, and
+ * without this the refusal reaches the user as a 500 reading "Internal
+ * server error" — which says nothing and offers nothing. The form
+ * checks the same thing before submitting, so this is the backstop for
+ * anything that does not go through the form.
+ */
+function rethrowPlantationDates(error: unknown): never {
+  if (
+    isPgError(error, PG_CHECK_VIOLATION) &&
+    pgConstraint(error) === 'sites_plantation_dates_ordered'
+  ) {
+    throw new BadRequestException(
+      'The plantation complete date cannot be before the start date. Check both dates and try again.',
+    );
+  }
+  throw error;
 }
 
 /** What the form shows when a site pushes its project over (question 5). */
@@ -98,6 +139,7 @@ const SITE_SELECT = `
   s.site_location_id as "siteLocationId", l.name as "locationName",
   s.planned_trees as "plannedTrees",
   s.plantation_start_date as "plantationStartDate",
+  s.plantation_complete_date as "plantationCompleteDate",
   s.manager_id as "managerId", m.name as "managerName",
   s.supervisor_id as "supervisorId", v.name as "supervisorName",
   s.created_at as "createdAt"`;
@@ -210,21 +252,25 @@ export class SitesController {
   async create(
     @Body() body: SiteDto,
   ): Promise<{ site: SiteRow; warning: AllocationWarning | null }> {
-    const { rows } = await this.pool.query(
-      `insert into sites
-         (project_id, name, site_location_id, planned_trees,
-          plantation_start_date, manager_id, supervisor_id)
-       values ($1, $2, $3, $4, $5, $6, $7) returning id`,
-      [
-        body.projectId,
-        body.name,
-        body.siteLocationId ?? null,
-        body.plannedTrees,
-        body.plantationStartDate,
-        body.managerId ?? null,
-        body.supervisorId ?? null,
-      ],
-    );
+    const { rows } = await this.pool
+      .query(
+        `insert into sites
+           (project_id, name, site_location_id, planned_trees,
+            plantation_start_date, plantation_complete_date,
+            manager_id, supervisor_id)
+         values ($1, $2, $3, $4, $5, $6, $7, $8) returning id`,
+        [
+          body.projectId,
+          body.name,
+          body.siteLocationId ?? null,
+          body.plannedTrees,
+          body.plantationStartDate,
+          body.plantationCompleteDate ?? null,
+          body.managerId ?? null,
+          body.supervisorId ?? null,
+        ],
+      )
+      .catch(rethrowPlantationDates);
     return {
       site: await this.get(rows[0].id),
       warning: await this.allocation(body.projectId),
@@ -242,6 +288,7 @@ export class SitesController {
       site_location_id: body.siteLocationId ?? null,
       planned_trees: body.plannedTrees,
       plantation_start_date: body.plantationStartDate,
+      plantation_complete_date: body.plantationCompleteDate ?? null,
       manager_id: body.managerId ?? null,
       supervisor_id: body.supervisorId ?? null,
     });
@@ -250,7 +297,7 @@ export class SitesController {
       `update sites set ${clause} where id = $${values.length + 1} returning id`,
       [...values, id],
       'site',
-    );
+    ).catch(rethrowPlantationDates);
     return {
       site: await this.get(id),
       warning: await this.allocation(body.projectId),

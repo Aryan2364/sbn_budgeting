@@ -65,6 +65,7 @@ export function SiteForm({ siteId }: { siteId?: string }) {
   const [siteLocationId, setSiteLocationId] = React.useState("")
   const [plannedTrees, setPlannedTrees] = React.useState("")
   const [startDate, setStartDate] = React.useState<Date | undefined>(undefined)
+  const [completeDate, setCompleteDate] = React.useState<Date | undefined>(undefined)
   const [managerId, setManagerId] = React.useState("")
   const [supervisorId, setSupervisorId] = React.useState("")
 
@@ -105,6 +106,11 @@ export function SiteForm({ siteId }: { siteId?: string }) {
           setSiteLocationId(site.siteLocationId ?? "")
           setPlannedTrees(String(site.plannedTrees))
           setStartDate(fromIsoDate(site.plantationStartDate))
+          setCompleteDate(
+            site.plantationCompleteDate
+              ? fromIsoDate(site.plantationCompleteDate)
+              : undefined,
+          )
           setManagerId(site.managerId ?? "")
           setSupervisorId(site.supervisorId ?? "")
         }
@@ -130,9 +136,17 @@ export function SiteForm({ siteId }: { siteId?: string }) {
     } else if (Number(plannedTrees) < 1) {
       found.plannedTrees = "A site needs at least one tree"
     }
-    // Required (question 6): the expense form derives a period from it.
+    // Required (question 6): the fallback period anchor, and the only
+    // one a site has while it is still being planted.
     if (!startDate) {
       found.startDate = "Enter the plantation start date, like 12 Aug 2026"
+    }
+    // A site cannot finish being planted before it started. The
+    // database carries the same check; this is so the person sees it
+    // beside the field rather than as a failed save (section 7.1).
+    if (startDate && completeDate && completeDate < startDate) {
+      found.completeDate =
+        "The plantation complete date cannot be before the start date"
     }
     return found
   }
@@ -154,6 +168,7 @@ export function SiteForm({ siteId }: { siteId?: string }) {
         siteLocationId: siteLocationId || null,
         plannedTrees: Number(plannedTrees),
         plantationStartDate: toIsoDate(startDate!),
+        plantationCompleteDate: completeDate ? toIsoDate(completeDate) : null,
         managerId: managerId || null,
         supervisorId: supervisorId || null,
       }
@@ -277,7 +292,7 @@ export function SiteForm({ siteId }: { siteId?: string }) {
                 label="Plantation start date"
                 required
                 htmlFor="startDate"
-                hint="Expenses use this to work out which budget period they fall in."
+                hint="Used to work out budget periods until the complete date is set."
                 error={fieldErrors.startDate}
               >
                 <DatePicker
@@ -286,6 +301,31 @@ export function SiteForm({ siteId }: { siteId?: string }) {
                   onValueChange={setStartDate}
                   disabled={loading}
                   invalid={Boolean(fieldErrors.startDate) || undefined}
+                />
+              </FormField>
+
+              {/*
+                Section 17: a date is 4 columns, so it sits on the same
+                row as the start date it belongs beside.
+
+                OPTIONAL, and section 11.3 rule 3 means it carries no
+                asterisk. A site still being planted has not got one,
+                and the start date above covers that case — which is
+                the client's own stated fallback, not an invention.
+              */}
+              <FormField
+                span={4}
+                label="Plantation complete date"
+                htmlFor="completeDate"
+                hint="Once set, budget periods are worked out from this date instead."
+                error={fieldErrors.completeDate}
+              >
+                <DatePicker
+                  id="completeDate"
+                  value={completeDate}
+                  onValueChange={setCompleteDate}
+                  disabled={loading}
+                  invalid={Boolean(fieldErrors.completeDate) || undefined}
                 />
               </FormField>
             </FormSection>

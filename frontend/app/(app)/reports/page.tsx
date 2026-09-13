@@ -1,36 +1,72 @@
 "use client"
 
 import * as React from "react"
+import { useSearchParams } from "next/navigation"
 
 import { api, query } from "@/lib/api"
 import type { ListResponse, Matchable, VarianceRow } from "@/lib/api"
 import { formatAmount, formatNumber } from "@/lib/format"
 import { Truncate } from "@/components/ui/truncate"
+import { PageFrame, PageHeader } from "@/components/templates/page"
+import { ListDataArea, ListToolbar } from "@/components/templates/list-page"
 import { RecordList, type RecordColumn } from "@/components/templates/record-list"
+import { SectionTabs, type SectionTab } from "@/components/templates/section-tabs"
 import {
   BudgetFigure,
   VarianceFigure,
   VariancePercentFigure,
 } from "@/components/forms/variance-figures"
+import { HeadPeriodGrid } from "@/components/forms/head-period-grid"
+import { PeriodSummaryTable } from "@/components/forms/period-summary-table"
+import {
+  ReportScopeControls,
+  useReportScope,
+} from "@/components/forms/report-scope"
 
 /**
- * Screen 1 of the variance report. Section 11.1's list page, and the
- * plan's locked report shape: a site list first, each row drilling
- * into that site's head-wise Variance tab.
+ * The Reports section. Three reports over the same variance
+ * definition, reached by the section 33 tab bar.
  *
- * NO PRIMARY ACTION — this screen is read-only, so the header carries
- * the title and the record count and nothing else.
+ *   By site              — Phase 7, screen 1. Every site, all-time.
+ *   By year              — Phase 7b, Report 1. Five periods.
+ *   By cost head and year — Phase 7b, Report 2. Nineteen heads × five
+ *                           periods, the same grid the site detail
+ *                           Variance tab uses.
  *
- * ALL-TIME, with no filter of any kind (question 8). No date range, no
- * period selector, no filter panel. The period selector belongs on the
- * site detail Variance tab and only there.
- *
- * Every figure comes from the one variance definition written in
- * Phase 3 — `GET /reports/variance` reads the `variance` view at the
- * 'site' grain. Nothing on this screen adds two amounts together.
+ * Every figure on all three comes from the one `variance` view written
+ * in Phase 3 and the grains migration 0004 added. Nothing here adds two
+ * amounts together.
  */
 
-/** What the list template needs on a row, and what the API sends. */
+const TABS: SectionTab[] = [
+  { value: "sites", label: "By site" },
+  { value: "years", label: "By year" },
+  { value: "heads", label: "By cost head and year" },
+]
+
+export default function ReportsPage() {
+  return (
+    <React.Suspense fallback={null}>
+      <Reports />
+    </React.Suspense>
+  )
+}
+
+function Reports() {
+  const searchParams = useSearchParams()
+  const requested = searchParams.get("view") ?? "sites"
+  const view = TABS.some((t) => t.value === requested) ? requested : "sites"
+
+  const tabs = <SectionTabs tabs={TABS} value={view} />
+
+  if (view === "sites") return <SitesReport tabs={tabs} />
+  return <YearReport view={view} tabs={tabs} />
+}
+
+// ---------------------------------------------------------------
+// Tab 1 — by site. Phase 7's screen 1, unchanged apart from the tabs.
+// ---------------------------------------------------------------
+
 type VarianceSiteRow = VarianceRow & { id: string }
 
 const COLUMNS: RecordColumn<VarianceSiteRow>[] = [
@@ -86,20 +122,17 @@ const COLUMNS: RecordColumn<VarianceSiteRow>[] = [
   },
 ]
 
-export default function ReportsPage() {
+function SitesReport({ tabs }: { tabs: React.ReactNode }) {
   /**
    * The variance endpoint predates the shared list convention's
-   * response shape and answers with `{ data, total, page, pageSize }`.
-   * The template needs `totalPages` for its page controls and a
-   * `matchedField` per row for section 27.1. Both are derived here
+   * response shape. `totalPages` and `matchedField` are derived here
    * rather than by widening the API, because the missing pieces are
    * presentation: the API already sent everything it knows.
    *
-   * `matchedField` is null throughout on purpose. The endpoint's
+   * `matchedField` is null throughout on purpose — the endpoint's
    * search covers the site name and the project name, and both are
-   * already columns on this table — there is no field the user could
-   * match on that they cannot see, so there is nothing to say about
-   * where the match landed.
+   * already columns, so there is no field a user could match on that
+   * they cannot see.
    */
   const load = React.useCallback(
     async ({
@@ -146,13 +179,13 @@ export default function ReportsPage() {
       }
       searchLabel="Search sites"
       searchPlaceholder="Search sites"
+      sectionTabs={tabs}
       columns={COLUMNS}
       /*
-       * Section 27.2 and the plan's locked report shape: variance
-       * ASCENDING, worst first, so the most overspent site is on
-       * screen without anyone touching a control. The API sorts
-       * NULLS LAST in both directions, so a site with no budget at
-       * all sits at the bottom rather than posing as the worst.
+       * Variance ASCENDING, worst first, so the most overspent site is
+       * on screen without anyone touching a control. The API sorts
+       * NULLS LAST in both directions, so a site with no budget sits at
+       * the bottom rather than posing as the worst.
        */
       defaultSort="variance"
       defaultDirection="asc"
@@ -163,5 +196,59 @@ export default function ReportsPage() {
       emptyActionLabel="New site"
       emptyActionHref="/sites/new"
     />
+  )
+}
+
+// ---------------------------------------------------------------
+// Tabs 2 and 3 — the year-wise reports. Same frame, same scope
+// controls, different table, so they are one component with a switch
+// rather than two that drift apart.
+// ---------------------------------------------------------------
+
+function YearReport({ view, tabs }: { view: string; tabs: React.ReactNode }) {
+  const scope = useReportScope()
+  const { projectId, siteId } = scope.scope
+
+  return (
+    <PageFrame>
+      <PageHeader
+        title="Variance report"
+        meta={
+          view === "years"
+            ? "Budget against actual for each budget period"
+            : "Budget against actual for each cost head, period by period"
+        }
+      />
+
+      {tabs}
+
+      {/*
+        Section 33.2: the toolbar belongs to the ACTIVE TAB, which is
+        why the scope controls sit here and not above the tab bar. The
+        by-site report has no scope — it is every site, all-time — so
+        its toolbar carries a search box instead.
+      */}
+      <ListToolbar>
+        <ReportScopeControls {...scope} />
+      </ListToolbar>
+
+      <ListDataArea>
+        {scope.failure !== null ? (
+          <p className="p-4 text-body text-text-secondary">{scope.failure}</p>
+        ) : view === "years" ? (
+          <PeriodSummaryTable
+            projectId={projectId || undefined}
+            siteId={siteId || undefined}
+          />
+        ) : (
+          /* The SAME grid the site detail Variance tab renders, scoped
+             to a project instead of to one site. Not a second version. */
+          <HeadPeriodGrid
+            projectId={projectId || undefined}
+            siteId={siteId || undefined}
+          />
+        )}
+      </ListDataArea>
+    </PageFrame>
   )
 }

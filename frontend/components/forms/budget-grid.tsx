@@ -25,6 +25,7 @@ import { errorMessage } from "@/components/shell/session"
 import { toast } from "@/components/ui/sonner"
 import { Button } from "@/components/ui/button"
 import { InlineFieldError } from "@/components/ui/inline-field-error"
+import { EmptyState } from "@/components/ui/empty-state"
 import { Skeleton } from "@/components/ui/skeleton"
 import { FormError } from "@/components/forms/form-error"
 import { PageColumn, PageHeader } from "@/components/templates/page"
@@ -70,6 +71,13 @@ export function BudgetGrid({
   const [errors, setErrors] = React.useState<Record<string, string>>({})
   const [saving, setSaving] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
+  /**
+   * Section 13: kept apart from `error`, which carries save failures.
+   * A failed load leaves `heads` null forever, and rendering the
+   * skeleton on null alone turns that into a grid that never arrives.
+   */
+  const [loadError, setLoadError] = React.useState<string | null>(null)
+  const [reloadTick, setReloadTick] = React.useState(0)
 
   React.useEffect(() => {
     let cancelled = false
@@ -92,12 +100,12 @@ export function BudgetGrid({
         setInitial(loaded)
       })
       .catch((caught: unknown) => {
-        if (!cancelled) setError(errorMessage(caught))
+        if (!cancelled) setLoadError(errorMessage(caught))
       })
     return () => {
       cancelled = true
     }
-  }, [siteId])
+  }, [siteId, reloadTick])
 
   /** Paise for one cell, or null when the cell is empty or unreadable. */
   const paiseAt = React.useCallback(
@@ -232,7 +240,21 @@ export function BudgetGrid({
 
           <FormError message={error} />
 
-          {heads === null ? (
+          {loadError !== null ? (
+            <div className="mt-8">
+              <EmptyState
+                variant="failed"
+                heading="Could not load this budget"
+                actionLabel="Retry"
+                onAction={() => {
+                  setLoadError(null)
+                  setReloadTick((t) => t + 1)
+                }}
+              >
+                {loadError}
+              </EmptyState>
+            </div>
+          ) : heads === null ? (
             <div className="mt-8 flex flex-col gap-3">
               <Skeleton className="h-9 w-full" />
               <Skeleton className="h-9 w-full" />

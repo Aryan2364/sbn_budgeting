@@ -16,7 +16,14 @@ import {
 } from "@/lib/api"
 import { formatDate } from "@/lib/format"
 import { parseRupeesToPaise, paiseToRupeeInput } from "@/lib/money"
-import { PERIODS, PERIOD_VALUES, derivePeriod, periodLabel } from "@/lib/periods"
+import {
+  PERIODS,
+  PERIOD_VALUES,
+  anchorLabel,
+  derivePeriod,
+  periodAnchor,
+  periodLabel,
+} from "@/lib/periods"
 import { errorMessage } from "@/components/shell/session"
 import { toast } from "@/components/ui/sonner"
 import { Button } from "@/components/ui/button"
@@ -169,13 +176,21 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
     }
   }, [siteId])
 
+  /**
+   * Which date the period is measured from (client instruction,
+   * 7 Sep 2026): the plantation COMPLETE date when the site has one,
+   * the start date until then. `periodAnchor` is the only place that
+   * chooses, so the hint below and the derivation cannot disagree.
+   */
+  const anchor = React.useMemo(() => (site ? periodAnchor(site) : null), [site])
+
   // Question 6: the form PRE-FILLS the period by deriving it from the
-  // date against the site's plantation start date. The value the user
-  // confirms is what gets stored; nothing re-derives it at read time.
+  // date against that anchor. The value the user confirms is what gets
+  // stored; nothing re-derives it at read time.
   const suggested = React.useMemo(() => {
-    if (!site || !spentOn) return null
-    return derivePeriod(toIsoDate(spentOn), site.plantationStartDate)
-  }, [site, spentOn])
+    if (!anchor || !spentOn) return null
+    return derivePeriod(toIsoDate(spentOn), anchor.date)
+  }, [anchor, spentOn])
 
   /**
    * Derived, not synced. Until the user overrides it the period simply
@@ -300,10 +315,14 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
                 required
                 htmlFor="period"
                 hint={
-                  site && spentOn && suggested !== null
+                  anchor && spentOn && suggested !== null
                     ? differsFromSuggestion
                       ? `The date suggests ${periodLabel(suggested)}. You have chosen ${periodLabel(period)}; that is what will be stored.`
-                      : `From the date against a plantation start of ${formatDate(site.plantationStartDate)}.`
+                      : /* The hint NAMES THE ANCHOR, not just the date.
+                           Two sites can suggest different periods for
+                           the same expense date, and without this the
+                           reason is invisible. */
+                        `From the date against a ${anchorLabel(anchor.source)} of ${formatDate(anchor.date)}.`
                     : "Choose the site and date and this fills itself in."
                 }
                 error={fieldErrors.period}

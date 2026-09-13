@@ -23,7 +23,7 @@ import {
 } from "@/lib/api"
 import { formatAmount, formatCurrency, formatDate, formatNumber } from "@/lib/format"
 import { multiplyPaise, sumPaise } from "@/lib/money"
-import { periodLabel } from "@/lib/periods"
+import { anchorLabel, periodAnchor, periodLabel } from "@/lib/periods"
 import { errorMessage, useSession } from "@/components/shell/session"
 import { Badge } from "@/components/ui/badge"
 import { Banner, BannerDescription, BannerTitle } from "@/components/ui/banner"
@@ -56,7 +56,7 @@ import {
   DetailFieldList,
 } from "@/components/templates/detail-page"
 import { RecordBreadcrumb } from "@/components/forms/record-breadcrumb"
-import { SiteVarianceTab } from "@/components/forms/site-variance-tab"
+import { HeadPeriodGrid } from "@/components/forms/head-period-grid"
 import { DeleteRecordDialog } from "@/components/forms/delete-record-dialog"
 
 /** Section 11.2. The detail template, with data. */
@@ -297,6 +297,47 @@ function SiteDetail({ params }: { params: Promise<{ id: string }> }) {
                 <DetailField label="Plantation started">
                   {site ? formatDate(site.plantationStartDate) : <Skeleton className="h-4 w-2/3" />}
                 </DetailField>
+                <DetailField label="Plantation completed">
+                  {site ? (
+                    site.plantationCompleteDate ? (
+                      formatDate(site.plantationCompleteDate)
+                    ) : (
+                      <span className="font-normal text-text-secondary">
+                        Not yet recorded
+                      </span>
+                    )
+                  ) : (
+                    <Skeleton className="h-4 w-2/3" />
+                  )}
+                </DetailField>
+                {/*
+                  WHICH DATE THE PERIODS ARE MEASURED FROM, said out
+                  loud. Client instruction, 7 Sep 2026: the complete
+                  date anchors them, with the start date as her own
+                  stated fallback until it exists.
+
+                  Two sites can put the same expense date in different
+                  periods, and without this the reason is invisible —
+                  somebody would have to know the rule AND know which
+                  of the two dates this site has. Section 19 is the
+                  same argument: if the only way to learn something is
+                  to already know it, nobody learns it.
+                */}
+                <DetailField label="Budget periods run from">
+                  {site ? (
+                    <>
+                      {formatDate(periodAnchor(site).date)}
+                      <span className="mt-0.5 block text-meta font-normal text-text-muted">
+                        the {anchorLabel(periodAnchor(site).source)}
+                        {periodAnchor(site).source === "start"
+                          ? " — until a complete date is recorded"
+                          : ""}
+                      </span>
+                    </>
+                  ) : (
+                    <Skeleton className="h-4 w-2/3" />
+                  )}
+                </DetailField>
                 <DetailField label="Site manager">
                   {site ? (site.managerName ?? "—") : <Skeleton className="h-4 w-2/3" />}
                 </DetailField>
@@ -421,11 +462,31 @@ function SiteDetail({ params }: { params: Promise<{ id: string }> }) {
           reading 0 until clicked would be worse than no badge at all.
         */}
         <TabsContent value="variance" keepMounted>
-          <SiteVarianceTab
-            siteId={id}
-            plannedTrees={site?.plannedTrees ?? null}
-            onRowCount={setVarianceRows}
-          />
+          <Card>
+            <CardHeader>
+              <div className="min-w-0">
+                <CardTitle>Variance by cost head and year</CardTitle>
+                {/*
+                  Section 3: every budget figure states its basis, and
+                  with five periods the basis names the period too —
+                  which here is the column the figure sits in. Stated
+                  once for the table rather than nineteen times.
+                */}
+                {site ? (
+                  <p className="mt-1 text-meta text-text-muted">
+                    Budgets are the per-tree amount ×{" "}
+                    {formatNumber(site.plannedTrees)} trees, per period.
+                    Tree counts are live — change one and these move.
+                  </p>
+                ) : null}
+              </div>
+            </CardHeader>
+            <CardContent className="p-0">
+              {/* The SAME component Report 2 uses, scoped to this site
+                  instead of to a project. Not a second version. */}
+              <HeadPeriodGrid siteId={id} onRowCount={setVarianceRows} />
+            </CardContent>
+          </Card>
         </TabsContent>
       </Tabs>
 

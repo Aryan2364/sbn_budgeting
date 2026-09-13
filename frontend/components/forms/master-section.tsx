@@ -54,6 +54,8 @@ export function MasterSection<T extends { id: string }>({
   columns,
   rows,
   loading,
+  error,
+  onRetry,
   canEdit,
   onCreate,
   onEdit,
@@ -71,6 +73,15 @@ export function MasterSection<T extends { id: string }>({
   columns: MasterColumn<T>[]
   rows: T[] | null
   loading: boolean
+  /**
+   * Section 13: "something failed" is its OWN state, not a quieter kind
+   * of loading. `rows` is null both before the first response and after
+   * a failed one, so rendering the skeleton on null alone leaves a
+   * failure spinning forever with the reason computed and discarded.
+   * That is exactly what happened on a cold first request.
+   */
+  error: string | null
+  onRetry: () => void
   /** Section 26: hide what the user cannot do, rather than failing after the click. */
   canEdit: boolean
   onCreate: () => void
@@ -103,7 +114,16 @@ export function MasterSection<T extends { id: string }>({
       </CardHeader>
 
       <CardContent className="p-0">
-        {loading || rows === null ? (
+        {error !== null && !loading ? (
+          <EmptyState
+            variant="failed"
+            heading="Could not load this list"
+            actionLabel="Retry"
+            onAction={onRetry}
+          >
+            {error}
+          </EmptyState>
+        ) : loading || rows === null ? (
           <div className="flex flex-col gap-3 p-4">
             <Skeleton className="h-4 w-full" />
             <Skeleton className="h-4 w-4/5" />

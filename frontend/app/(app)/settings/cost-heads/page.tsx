@@ -43,7 +43,7 @@ export default function CostHeadsSettingsPage() {
         .then((response) => response.data),
     [],
   )
-  const { rows, loading, refresh } = useMasterRows(load)
+  const { rows, loading, error, refresh } = useMasterRows(load)
 
   const [editing, setEditing] = React.useState<CostHead | null>(null)
   const [creating, setCreating] = React.useState(false)
@@ -57,6 +57,8 @@ export default function CostHeadsSettingsPage() {
         canEdit={isAdmin}
         rows={rows}
         loading={loading}
+        error={error}
+        onRetry={refresh}
         columns={[
           {
             key: "sortOrder",

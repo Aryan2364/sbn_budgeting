@@ -113,6 +113,11 @@ export interface RecordListProps<T> {
   emptyActionHref?: string
   /** Extra controls for the toolbar, between search and the far right. */
   toolbarExtra?: React.ReactNode
+  /**
+   * Section 33: the optional fifth zone, between the header and the
+   * toolbar. Nothing else may come between them.
+   */
+  sectionTabs?: React.ReactNode
   /** Bumping this refetches — used after a delete or a save elsewhere. */
   refreshKey?: number
 }
@@ -134,6 +139,7 @@ export function RecordList<T extends { id: string }>({
   emptyActionLabel,
   emptyActionHref,
   toolbarExtra,
+  sectionTabs,
   refreshKey = 0,
 }: RecordListProps<T>) {
   const router = useRouter()
@@ -235,6 +241,8 @@ export function RecordList<T extends { id: string }>({
           ) : undefined
         }
       />
+
+      {sectionTabs}
 
       <ListToolbar>
         <ListSearch

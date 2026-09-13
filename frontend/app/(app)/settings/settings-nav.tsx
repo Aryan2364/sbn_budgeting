@@ -13,7 +13,6 @@ import {
  * highlighted and does not move (section 12.1).
  */
 const SECTIONS = [
-  { label: "General", href: "/settings" },
   { label: "Cost heads", href: "/settings/cost-heads" },
   { label: "Site locations", href: "/settings/site-locations" },
   { label: "People", href: "/settings/people" },
@@ -28,11 +27,7 @@ export function SettingsNav() {
         <SettingsMenuItem
           key={section.href}
           href={section.href}
-          active={
-            section.href === "/settings"
-              ? pathname === "/settings"
-              : pathname.startsWith(section.href)
-          }
+          active={pathname.startsWith(section.href)}
         >
           {section.label}
         </SettingsMenuItem>

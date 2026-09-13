@@ -43,6 +43,8 @@ export async function findOneOrFail<T>(
  */
 export const PG_UNIQUE_VIOLATION = '23505';
 export const PG_FOREIGN_KEY_VIOLATION = '23503';
+/** A `check` constraint. Names the constraint in `error.constraint`. */
+export const PG_CHECK_VIOLATION = '23514';
 
 export function isPgError(error: unknown, code: string): boolean {
   return (
@@ -51,4 +53,11 @@ export function isPgError(error: unknown, code: string): boolean {
     'code' in error &&
     (error as { code?: string }).code === code
   );
+}
+
+/** Which `check` constraint failed, so a handler can word it. */
+export function pgConstraint(error: unknown): string | null {
+  return typeof error === 'object' && error !== null && 'constraint' in error
+    ? ((error as { constraint?: string }).constraint ?? null)
+    : null;
 }
