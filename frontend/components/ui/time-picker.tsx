@@ -93,19 +93,33 @@ function OptionList({
   return (
     <div className="flex flex-col">
       <p className="px-3 py-1 text-meta text-text-muted">{label}</p>
-      <div className="max-h-menu-max overflow-y-auto">
+      {/*
+        `aria-selected` is not valid on a plain button — a button's
+        implicit role does not support it, so a screen reader was told
+        nothing about which hour was chosen. The fix is the right role
+        rather than a suppression: a list of mutually exclusive values
+        IS a listbox, and `option` is the one role where `aria-selected`
+        means what it says. The styling is unchanged, because it keys on
+        the same attribute.
+      */}
+      <div
+        role="listbox"
+        aria-label={label}
+        className="max-h-menu-max overflow-y-auto"
+      >
         {options.map((option) => {
           const isSelected = option === selected
           return (
             <button
               key={option}
               type="button"
+              role="option"
               aria-selected={isSelected}
               onClick={() => onSelect(option)}
               className={cn(
                 "flex h-control w-full cursor-pointer items-center rounded-lg px-3 text-body outline-none",
                 "not-aria-selected:hover:bg-surface-control",
-                "focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-primary-ring",
+                "focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary-ring",
                 isSelected && "bg-primary-subtle text-primary-pressed"
               )}
             >

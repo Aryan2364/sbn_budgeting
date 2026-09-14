@@ -82,7 +82,6 @@ function useLongListWarning(children: React.ReactNode) {
 
     if (count > 6) {
       warned.current = true
-      // eslint-disable-next-line no-console
       console.warn(
         `[design-system] A Select was rendered with ${count} options. ` +
           `AGENTS.md section 16.3: past six options the menu needs a search ` +

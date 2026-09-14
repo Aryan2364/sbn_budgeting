@@ -470,6 +470,43 @@
   background-color: var(--surface-control);
 }
 
+/* Section 6.4 for the tick box, the radio and the switch. These were
+   absent from this block, which is why the kitchen sink's state matrix
+   reported them as passing: THE MATRIX CAN ONLY VERIFY WHAT IT FORCES,
+   and it was forcing nothing here. */
+[data-force="hover"] [data-slot="checkbox"]:not([data-checked]),
+[data-force="hover"] [data-slot="radio-group-item"]:not([data-checked]) {
+  background-color: var(--surface-control);
+  border-color: var(--border-strong);
+}
+[data-force="pressed"] [data-slot="checkbox"]:not([data-checked]),
+[data-force="pressed"] [data-slot="radio-group-item"]:not([data-checked]) {
+  background-color: var(--surface-control-pressed);
+  border-color: var(--border-strong);
+}
+[data-force="hover"] [data-slot="checkbox"][data-checked],
+[data-force="hover"] [data-slot="radio-group-item"][data-checked] {
+  background-color: var(--primary-hover);
+  border-color: var(--primary-hover);
+}
+[data-force="pressed"] [data-slot="checkbox"][data-checked],
+[data-force="pressed"] [data-slot="radio-group-item"][data-checked] {
+  background-color: var(--primary-pressed);
+  border-color: var(--primary-pressed);
+}
+[data-force="hover"] [data-slot="switch"][data-unchecked] {
+  background-color: var(--border);
+}
+[data-force="pressed"] [data-slot="switch"][data-unchecked] {
+  background-color: var(--border-strong);
+}
+[data-force="hover"] [data-slot="switch"][data-checked] {
+  background-color: var(--primary-hover);
+}
+[data-force="pressed"] [data-slot="switch"][data-checked] {
+  background-color: var(--primary-pressed);
+}
+
 /* Section 6.4: the focus ring is primary-ring and is never removed. */
 [data-force="focus"] [data-slot="button"][data-variant="in-field"] {
   outline: 2px solid var(--primary-ring);

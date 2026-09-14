@@ -549,7 +549,31 @@ function SiteDetail({ params }: { params: Promise<{ id: string }> }) {
                 ) : null}
               </div>
             </CardHeader>
-            <CardContent className="p-0">
+            {/*
+              `overflow-x-auto` because this host cannot scroll and the
+              grid is wider than it.
+
+              On /reports the grid sits in the list page's data area,
+              which scrolls both axes, so the seven columns are
+              reachable at 1024 and 768. Here it sits in a Card, and
+              Card is `overflow-hidden` — so at 768 the table stayed
+              960px wide inside a 709px box and the Total column was
+              simply cut off at 985px with no way to reach it. Section
+              34.3's frozen first column was present and useless:
+              nothing to freeze against.
+
+              Section 1 rule 8 permits this — the page scrolls
+              vertically, this scrolls horizontally, and two different
+              axes never compete for the same gesture.
+
+              The trade: on THIS screen the sticky header and total row
+              resolve against this container rather than the page, so
+              they do not pin as they do on /reports. Reachable content
+              beats a pinned total; if both are wanted, the tab needs a
+              height-constrained data area of its own, which is a
+              section 30 question rather than a class name.
+            */}
+            <CardContent className="overflow-x-auto p-0">
               {/* The SAME component Report 2 uses, scoped to this site
                   instead of to a project. Not a second version. */}
               <HeadPeriodGrid siteId={id} onRowCount={setVarianceRows} />

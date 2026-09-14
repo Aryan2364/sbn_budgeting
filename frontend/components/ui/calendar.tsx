@@ -222,7 +222,7 @@ function CalendarDayButton({
         // selected day filled with primary.
         "relative isolate z-10 flex aspect-square size-auto w-full min-w-(--cell-size) cursor-pointer flex-col items-center justify-center gap-1 rounded-(--cell-radius) border border-transparent bg-transparent text-body leading-none font-normal text-text-primary transition-colors",
         "hover:bg-surface-control",
-        "outline-none focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-primary-ring",
+        "outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary-ring",
         "data-[range-end=true]:rounded-r-(--cell-radius) data-[range-end=true]:bg-primary data-[range-end=true]:text-primary-foreground",
         "data-[range-middle=true]:rounded-none data-[range-middle=true]:bg-primary-subtle data-[range-middle=true]:text-primary-pressed",
         "data-[range-start=true]:rounded-l-(--cell-radius) data-[range-start=true]:bg-primary data-[range-start=true]:text-primary-foreground",
