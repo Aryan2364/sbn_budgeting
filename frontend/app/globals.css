@@ -465,8 +465,52 @@
   color: var(--text-primary);
 }
 
+/* These mirror what the components' own hover/active classes do. They
+   are a RESTATEMENT, not a source of truth: if a component's real
+   states and these ever disagree, the matrix shows a lie. The
+   self-check in /kitchen-sink exists because that already happened —
+   input, textarea and select-trigger were forced here while having no
+   hover styles of their own at all. */
 [data-force="hover"] [data-slot="input"],
+[data-force="hover"] [data-slot="textarea"],
 [data-force="hover"] [data-slot="select-trigger"] {
+  background-color: var(--surface-control);
+  border-color: var(--border-strong);
+}
+[data-force="pressed"] [data-slot="input"],
+[data-force="pressed"] [data-slot="textarea"],
+[data-force="pressed"] [data-slot="select-trigger"] {
+  background-color: var(--surface-control-pressed);
+  border-color: var(--border-strong);
+}
+
+/* The remaining interactive slots. */
+[data-force="hover"] [data-slot="tabs-trigger"] {
+  color: var(--text-primary);
+}
+[data-force="pressed"] [data-slot="tabs-trigger"] {
+  color: var(--primary-pressed);
+}
+[data-force="hover"] [data-slot="switch"][data-unchecked] {
+  background-color: var(--border);
+}
+[data-force="pressed"] [data-slot="switch"][data-unchecked] {
+  background-color: var(--border-strong);
+}
+[data-force="hover"] [data-slot="switch"][data-checked] {
+  background-color: var(--primary-hover);
+}
+[data-force="pressed"] [data-slot="switch"][data-checked] {
+  background-color: var(--primary-pressed);
+}
+[data-force="hover"] [data-slot="table-row"],
+[data-force="hover"] [data-slot="select-item"],
+[data-force="hover"] [data-slot="dropdown-menu-item"] {
+  background-color: var(--surface-sunken);
+}
+[data-force="pressed"] [data-slot="table-row"],
+[data-force="pressed"] [data-slot="select-item"],
+[data-force="pressed"] [data-slot="dropdown-menu-item"] {
   background-color: var(--surface-control);
 }
 
@@ -494,18 +538,6 @@
   background-color: var(--primary-pressed);
   border-color: var(--primary-pressed);
 }
-[data-force="hover"] [data-slot="switch"][data-unchecked] {
-  background-color: var(--border);
-}
-[data-force="pressed"] [data-slot="switch"][data-unchecked] {
-  background-color: var(--border-strong);
-}
-[data-force="hover"] [data-slot="switch"][data-checked] {
-  background-color: var(--primary-hover);
-}
-[data-force="pressed"] [data-slot="switch"][data-checked] {
-  background-color: var(--primary-pressed);
-}
 
 /* Section 6.4: the focus ring is primary-ring and is never removed. */
 [data-force="focus"] [data-slot="button"][data-variant="in-field"] {
@@ -514,10 +546,14 @@
 }
 [data-force="focus"] [data-slot="button"],
 [data-force="focus"] [data-slot="input"],
+[data-force="focus"] [data-slot="textarea"],
 [data-force="focus"] [data-slot="select-trigger"],
 [data-force="focus"] [data-slot="checkbox"],
 [data-force="focus"] [data-slot="radio-group-item"],
-[data-force="focus"] [data-slot="switch"] {
+[data-force="focus"] [data-slot="switch"],
+[data-force="focus"] [data-slot="tabs-trigger"],
+[data-force="focus"] [data-slot="select-item"],
+[data-force="focus"] [data-slot="dropdown-menu-item"] {
   outline: 2px solid var(--primary-ring);
   outline-offset: 2px;
 }

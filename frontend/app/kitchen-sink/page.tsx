@@ -117,6 +117,7 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
+import { StateMatrixCheck } from "@/components/ui/state-matrix-check"
 import { toast } from "@/components/ui/sonner"
 import { Switch } from "@/components/ui/switch"
 import {
@@ -587,6 +588,13 @@ export default function KitchenSinkPage() {
             cursor. The focus column is the ring a keyboard user sees; it is
             never removed.
           </Caption>
+          {/*
+            The matrix checking itself. Silence is the pass; anything it
+            finds is a control whose forced column is indistinguishable
+            from resting, which means that column proves nothing about
+            it. Development only.
+          */}
+          <StateMatrixCheck />
         </Section>
 
         {/* ---------------------------------------------------------- */}

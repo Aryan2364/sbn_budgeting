@@ -181,6 +181,121 @@ psql "host=database-1.cxoqkkq469da.ap-south-1.rds.amazonaws.com port=5432 \
       sslrootcert=./global-bundle.pem"
 ```
 
+## Resetting to empty, for handover
+
+**Production currently holds TEST data.** Before the client enters
+their first real record the database has to be empty, and doing it
+afterwards means picking through rows deciding which are real — which
+is not a judgement anybody can make reliably a month later.
+
+**This procedure is also the only test of something that has never been
+tested: that a deployment works from nothing.** Every deploy so far has
+landed on a database that already had a schema. A new client is exactly
+this path, so a failure here is a failure that reaches the next
+customer.
+
+### What gets destroyed
+
+Everything in the `budgeting` schema: projects, sites, budgets,
+expenses, cost heads, locations, users, and `schema_migrations`
+itself. **There is no undo.** RDS automated backups are on with a
+7-day retention window, so a point-in-time restore is the fallback —
+confirm the window covers the moment you are about to run this.
+
+### The steps
+
+Run on the server, from `/home/ubuntu/budget-tracking`.
+
+**1. Confirm you are pointed at the right database.** The one command
+worth double-checking, because every step after it is destructive:
+
+```bash
+docker compose --env-file .env.production -f docker-compose.deploy.yml   run --rm backend node -e   'const{Pool}=require("pg");const p=new Pool({connectionString:process.env.DATABASE_URL});
+   p.query("select current_database(), current_schema()").then(r=>{console.log(r.rows[0]);return p.end()})'
+```
+
+Expect `sadbhavna_prod` and `budgeting`.
+
+**2. Stop the app** so nothing writes while the schema is going:
+
+```bash
+docker compose --env-file .env.production -f docker-compose.deploy.yml down
+```
+
+**3. Drop and recreate the schema.** `cascade` takes the two views with
+it; recreating it empty is what makes the migration run a true
+from-nothing run:
+
+```bash
+psql "$DATABASE_URL" -c 'drop schema budgeting cascade; create schema budgeting;'
+```
+
+`DATABASE_URL` is in `.env.production`. If `psql` is not on the host,
+the same two statements run through the backend image the way step 1
+does.
+
+**4. Re-run every migration from empty:**
+
+```bash
+docker compose --env-file .env.production -f docker-compose.deploy.yml   run --rm migrate
+```
+
+**Expect all five to apply**, not "nothing to apply". If it says
+nothing to apply, step 3 did not take and you are about to seed on top
+of the old data.
+
+**5. Seed the 19 cost heads and the first admin:**
+
+```bash
+docker compose --env-file .env.production -f docker-compose.deploy.yml   run --rm seed
+```
+
+The cost heads come from `backend/src/db/cost-heads.data.ts`. The admin
+is created only when `SEED_ADMIN_EMAIL` and `SEED_ADMIN_PASSWORD` are
+set in `.env.production`; without them the seed skips it and says so,
+and you are left with a system nobody can sign in to.
+
+**6. Start the app:**
+
+```bash
+./deploy.sh
+```
+
+**7. Change the admin password off the seeded one.** Sign in as the
+seeded admin and change it in Settings → People. **The seeded password
+is in a file on the server and in whatever created it**, so it is a
+shared secret from the moment it exists and is not a password anybody
+should keep. Then remove `SEED_ADMIN_PASSWORD` from `.env.production`
+so a later re-seed cannot reinstate it.
+
+### Verify, do not assume
+
+```bash
+# five migrations, applied just now
+psql "$DATABASE_URL" -c 'select version, applied_at from budgeting.schema_migrations order by version;'
+# 19 cost heads, one admin, and nothing else
+psql "$DATABASE_URL" -c "select 'cost_heads' t, count(*) from budgeting.cost_heads
+  union all select 'users', count(*) from budgeting.users
+  union all select 'projects', count(*) from budgeting.projects
+  union all select 'sites', count(*) from budgeting.sites
+  union all select 'expenses', count(*) from budgeting.expenses
+  union all select 'site_budgets', count(*) from budgeting.site_budgets;"
+```
+
+Expect cost_heads 19, users 1, and **zero everywhere else**. Then load
+the site: the dashboard should show its "nothing yet" state offering
+to create the first project, not an error and not a row of zeroes.
+
+**Two things worth knowing before the day.** Production has **21** cost
+heads today, not 19 — `Accident expense` and `Tools and tackles` were
+added through Settings. A reset returns the list to the seeded 19, so
+if the client wants those two they must be re-added afterwards. And
+the budgets currently loaded do **not** match the reference table in
+section 2.1 of the plan: `Miscellenous` carries no budget, and the
+per-tree amounts for heads 2 to 6 are rotated by one. That is test
+data and goes away with the reset, but it is worth not carrying the
+same mistake into the real entry.
+
 ## Ports
 
 | Service  | Container | Host   |
