@@ -100,11 +100,26 @@ function GlobalSearch() {
       <InputGroupAddon>
         <SearchIcon />
       </InputGroupAddon>
-      <InputGroupInput
-        type="search"
-        aria-label="Search Sadbhavna"
-        placeholder="Search projects, sites and expenses"
-      />
+      {/*
+        Section 27.1: the placeholder names the record type; the field
+        LIST belongs in a tooltip on the field. "Search projects, sites
+        and expenses" is the list, and it also grows every time the
+        product does — a placeholder nobody remembers to update.
+      */}
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <InputGroupInput
+              type="search"
+              aria-label="Search Sadbhavna"
+              placeholder="Search"
+            />
+          }
+        />
+        <TooltipContent side="bottom">
+          Searches projects, sites and expenses
+        </TooltipContent>
+      </Tooltip>
     </InputGroup>
   )
 }

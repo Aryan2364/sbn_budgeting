@@ -4,6 +4,8 @@ import * as React from "react"
 
 import { PageHeader, PageScroller } from "@/components/templates/page"
 import { EmptyState } from "@/components/ui/empty-state"
+import { useRouter } from "next/navigation"
+
 import { useSession } from "@/components/shell/session"
 import { SettingsLayout } from "@/components/templates/settings-page"
 import { SettingsNav } from "./settings-nav"
@@ -21,6 +23,7 @@ export default function SettingsSectionLayout({
 }: {
   children: React.ReactNode
 }) {
+  const router = useRouter()
   const { isAdmin, status } = useSession()
 
   /**
@@ -31,7 +34,20 @@ export default function SettingsSectionLayout({
   if (status === "in" && !isAdmin) {
     return (
       <PageScroller>
-        <EmptyState variant="failed" heading="Settings is for administrators">
+        {/*
+          Section 13: every state offers a way FORWARD. The default
+          action for the failed variant is "Try again", and retrying a
+          permission denial can never succeed — an action that cannot
+          work is a dead end wearing a button. This is not a failure
+          that might pass on a second attempt; it is a boundary, so the
+          way forward is somewhere the user can actually go.
+        */}
+        <EmptyState
+          variant="failed"
+          heading="Settings is for administrators"
+          actionLabel="Go to the dashboard"
+          onAction={() => router.push("/dashboard")}
+        >
           Your account does not have access to this area. Ask an administrator
           if you need something changed here.
         </EmptyState>
