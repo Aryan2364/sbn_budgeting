@@ -44,4 +44,19 @@ async function bootstrap(): Promise<void> {
   console.log(`API listening on http://localhost:${port}/api`);
 }
 
+/**
+ * DEPLOY PIPELINE MARKER — 14 Sep 2026.
+ *
+ * Deliberately non-functional. It exists to prove that `deploy.sh`
+ * actually replaces the running backend container when the backend
+ * image changes: on 14 Sep the tag moved and the container did not,
+ * so a deploy reported success while production stayed on old code.
+ *
+ * `removeComments` is false in tsconfig, so this reaches `dist` and
+ * therefore changes the image. A change that got optimised away would
+ * have proved nothing.
+ *
+ * Safe to delete once somebody trusts the pipeline.
+ */
+
 void bootstrap();
