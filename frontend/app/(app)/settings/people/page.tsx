@@ -163,12 +163,23 @@ function PersonDialog({
   onSaved: () => void
 }) {
   const isEdit = person !== null
+  /**
+   * A password is required whenever this save would turn sign-in ON for
+   * somebody who did not have it.
+   *
+   * `!isEdit` alone was not enough: editing a person who could not sign
+   * in and switching them on left the field optional, the client let it
+   * through, and the SERVER refused it — "Someone who signs in needs a
+   * password" — which is a control that fails after being clicked.
+   * The server stays the authority; this stops the user meeting it.
+   */
   const [name, setName] = React.useState(person?.name ?? "")
   const [email, setEmail] = React.useState(person?.email ?? "")
   const [phone, setPhone] = React.useState(person?.phone ?? "")
   const [role, setRole] = React.useState<"admin" | "staff">(person?.role ?? "staff")
   const [canLogin, setCanLogin] = React.useState(person?.canLogin ?? false)
   const [password, setPassword] = React.useState("")
+  const passwordRequired = canLogin && !(person?.canLogin ?? false)
   /* No effect syncs these: the dialog is keyed by record and mounted
      only while open, so a fresh mount already has the right values. */
   const [saving, setSaving] = React.useState(false)
@@ -184,7 +195,7 @@ function PersonDialog({
     if (canLogin && email.trim() === "") {
       found.email = "Someone who signs in needs an email address"
     }
-    if (canLogin && !isEdit && password.trim() === "") {
+    if (passwordRequired && password.trim() === "") {
       found.password = "Set a password, or turn off sign-in"
     }
     if (password.trim() !== "" && password.trim().length < 8) {
@@ -313,7 +324,7 @@ function PersonDialog({
 
           {canLogin ? (
             <div className="flex flex-col gap-2">
-              <Label htmlFor="person-password" required={!isEdit}>
+              <Label htmlFor="person-password" required={passwordRequired}>
                 Password
               </Label>
               {/* Section 32 applies here as well as on sign-in: an
@@ -324,9 +335,26 @@ function PersonDialog({
                 autoComplete="new-password"
                 value={password}
                 aria-invalid={Boolean(fieldErrors.password) || undefined}
-                placeholder={isEdit ? "Leave blank to keep the current one" : ""}
                 onChange={(event) => setPassword(event.target.value)}
               />
+              {/*
+                Section 11.3 rule 9: a placeholder shows an example
+                format and is never instructions. "Leave blank to keep
+                the current one" was living in the placeholder, where it
+                disappeared the moment somebody typed — so the one
+                sentence explaining that blank is safe vanished exactly
+                when it stopped being true.
+
+                A password has no example format worth showing, and a
+                specimen password is worse than none, so this field
+                carries no placeholder at all. What it needs said is
+                said here, where it stays put.
+              */}
+              <p className="text-label text-text-secondary">
+                {passwordRequired
+                  ? "At least 8 characters."
+                  : "Leave blank to keep the current password."}
+              </p>
               <InlineFieldError>{fieldErrors.password}</InlineFieldError>
             </div>
           ) : null}
