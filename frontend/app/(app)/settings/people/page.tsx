@@ -65,6 +65,7 @@ export default function PeopleSettingsPage() {
         description="One list. Someone who manages a site and someone who signs in are the same kind of record."
         createLabel="New person"
         canEdit={isAdmin}
+        cannotEditReason="Only an administrator can change people"
         rows={rows}
         loading={loading}
         error={error}

@@ -58,6 +58,7 @@ export default function CostHeadsSettingsPage() {
         description="Every expense is booked against a cost head, and budgets are set per tree per head per period."
         createLabel="New cost head"
         canEdit={isAdmin}
+        cannotEditReason="Only an administrator can change cost heads"
         rows={rows}
         loading={loading}
         error={error}

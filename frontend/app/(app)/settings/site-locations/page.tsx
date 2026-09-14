@@ -50,6 +50,7 @@ export default function SiteLocationsSettingsPage() {
         description="The list a site's location is chosen from."
         createLabel="New location"
         canEdit={isAdmin}
+        cannotEditReason="Only an administrator can change site locations"
         rows={rows}
         loading={loading}
         error={error}

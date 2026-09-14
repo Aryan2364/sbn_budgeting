@@ -36,6 +36,7 @@ import {
 } from "@/components/ui/table"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { DeleteRecordDialog } from "@/components/forms/delete-record-dialog"
+import { PermissionTooltip } from "@/components/forms/permission-tooltip"
 
 /** Section 10 rule 4, applied the same way `record-list` applies it. */
 const PRIORITY_CLASS = {
@@ -83,6 +84,7 @@ export function MasterSection<T extends { id: string }>({
   error,
   onRetry,
   canEdit,
+  cannotEditReason,
   onCreate,
   onEdit,
   onDelete,
@@ -112,8 +114,13 @@ export function MasterSection<T extends { id: string }>({
    */
   error: string | null
   onRetry: () => void
-  /** Section 26: hide what the user cannot do, rather than failing after the click. */
+  /**
+   * Section 26: the user SEES the action and cannot use it. Disabled
+   * with a reason, never hidden and never failing after the click.
+   */
   canEdit: boolean
+  /** Why, in §26's own shape: "Only an administrator can ...". */
+  cannotEditReason: string
   onCreate: () => void
   onEdit: (row: T) => void
   onDelete: (row: T) => Promise<void>
@@ -138,14 +145,24 @@ export function MasterSection<T extends { id: string }>({
           <CardTitle>{title}</CardTitle>
           <CardDescription>{description}</CardDescription>
         </div>
-        {canEdit ? (
-          <CardAction>
-            <Button variant="secondary" size="sm" onClick={onCreate}>
+        {/*
+          Section 26: shown and DISABLED, not hidden. Two people looking
+          at this screen see the same software; only one of them can use
+          this button, and the tooltip is what tells the other why.
+        */}
+        <CardAction>
+          <PermissionTooltip allowed={canEdit} reason={cannotEditReason}>
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={!canEdit}
+              onClick={onCreate}
+            >
               <PlusIcon />
               {createLabel}
             </Button>
-          </CardAction>
-        ) : null}
+          </PermissionTooltip>
+        </CardAction>
       </CardHeader>
 
       <CardContent className="p-0">
@@ -186,11 +203,9 @@ export function MasterSection<T extends { id: string }>({
                     {column.label}
                   </TableHead>
                 ))}
-                {canEdit ? (
-                  <TableHead className="w-grid-cell text-right">
-                    <span className="sr-only">Actions</span>
-                  </TableHead>
-                ) : null}
+                <TableHead className="w-grid-cell text-right">
+                  <span className="sr-only">Actions</span>
+                </TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -208,45 +223,55 @@ export function MasterSection<T extends { id: string }>({
                       {column.render(row)}
                     </TableCell>
                   ))}
-                  {canEdit ? (
-                    <TableCell className="text-right">
+                  <TableCell className="text-right">
                       {/* Section 6.3: an icon-only button carries a
                           hidden label and a tooltip. An icon alone is a
                           guess. */}
                       <span className="inline-flex items-center gap-2">
-                        <Tooltip>
-                          <TooltipTrigger
-                            render={
-                              <Button
-                                variant="ghost"
-                                size="icon-sm"
-                                aria-label={`Edit ${deleteName(row)}`}
-                                onClick={() => onEdit(row)}
-                              />
-                            }
-                          >
-                            <PencilIcon />
-                          </TooltipTrigger>
-                          <TooltipContent>Edit</TooltipContent>
-                        </Tooltip>
-                        <Tooltip>
-                          <TooltipTrigger
-                            render={
-                              <Button
-                                variant="ghost"
-                                size="icon-sm"
-                                aria-label={`Delete ${deleteName(row)}`}
-                                onClick={() => setDeleting(row)}
-                              />
-                            }
-                          >
-                            <TrashIcon />
-                          </TooltipTrigger>
-                          <TooltipContent>Delete</TooltipContent>
-                        </Tooltip>
+                        <PermissionTooltip
+                          allowed={canEdit}
+                          reason={cannotEditReason}
+                        >
+                          <Tooltip>
+                            <TooltipTrigger
+                              render={
+                                <Button
+                                  variant="ghost"
+                                  size="icon-sm"
+                                  aria-label={`Edit ${deleteName(row)}`}
+                                  disabled={!canEdit}
+                                  onClick={() => onEdit(row)}
+                                />
+                              }
+                            >
+                              <PencilIcon />
+                            </TooltipTrigger>
+                            <TooltipContent>Edit</TooltipContent>
+                          </Tooltip>
+                        </PermissionTooltip>
+                        <PermissionTooltip
+                          allowed={canEdit}
+                          reason={cannotEditReason}
+                        >
+                          <Tooltip>
+                            <TooltipTrigger
+                              render={
+                                <Button
+                                  variant="ghost"
+                                  size="icon-sm"
+                                  aria-label={`Delete ${deleteName(row)}`}
+                                  disabled={!canEdit}
+                                  onClick={() => setDeleting(row)}
+                                />
+                              }
+                            >
+                              <TrashIcon />
+                            </TooltipTrigger>
+                            <TooltipContent>Delete</TooltipContent>
+                          </Tooltip>
+                        </PermissionTooltip>
                       </span>
                     </TableCell>
-                  ) : null}
                 </TableRow>
               ))}
             </TableBody>

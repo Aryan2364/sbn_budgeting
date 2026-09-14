@@ -67,6 +67,7 @@ import {
 import { RecordBreadcrumb } from "@/components/forms/record-breadcrumb"
 import { HeadPeriodGrid } from "@/components/forms/head-period-grid"
 import { DeleteRecordDialog } from "@/components/forms/delete-record-dialog"
+import { PermissionTooltip } from "@/components/forms/permission-tooltip"
 
 /** Section 11.1: the product's page size is 25 everywhere. */
 const EXPENSES_PAGE_SIZE = 25
@@ -206,8 +207,7 @@ function SiteDetail({ params }: { params: Promise<{ id: string }> }) {
               <PencilIcon />
               Edit
             </Button>
-            {isAdmin ? (
-              <DropdownMenu>
+            <DropdownMenu>
                 <Tooltip>
                   <TooltipTrigger
                     render={
@@ -224,14 +224,27 @@ function SiteDetail({ params }: { params: Promise<{ id: string }> }) {
                 </Tooltip>
                 <DropdownMenuContent align="end">
                   <DropdownMenuGroup>
-                    <DropdownMenuItem variant="danger" onClick={() => setDeleting(true)}>
-                      <TrashIcon />
-                      Delete site
-                    </DropdownMenuItem>
+                    {/*
+                      Section 26: DISABLED with the reason, not hidden.
+                      A staff member who cannot find this does not know
+                      whether it exists; greyed and explained, they do.
+                    */}
+                    <PermissionTooltip
+                      allowed={isAdmin}
+                      reason="Only an administrator can delete a site"
+                    >
+                      <DropdownMenuItem
+                        variant="danger"
+                        disabled={!isAdmin}
+                        onClick={() => setDeleting(true)}
+                      >
+                        <TrashIcon />
+                        Delete site
+                      </DropdownMenuItem>
+                    </PermissionTooltip>
                   </DropdownMenuGroup>
                 </DropdownMenuContent>
-              </DropdownMenu>
-            ) : null}
+            </DropdownMenu>
           </>
         }
       />

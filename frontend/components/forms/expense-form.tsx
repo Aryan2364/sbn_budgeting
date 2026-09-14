@@ -3,6 +3,7 @@
 import * as React from "react"
 import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
+import { TrashIcon } from "lucide-react"
 
 import {
   api,
@@ -14,7 +15,7 @@ import {
   type Matchable,
   type Site,
 } from "@/lib/api"
-import { formatDate } from "@/lib/format"
+import { formatCurrency, formatDate } from "@/lib/format"
 import { parseRupeesToPaise, paiseToRupeeInput } from "@/lib/money"
 import {
   PERIODS,
@@ -24,7 +25,7 @@ import {
   periodAnchor,
   periodLabel,
 } from "@/lib/periods"
-import { errorMessage } from "@/components/shell/session"
+import { errorMessage, useSession } from "@/components/shell/session"
 import { toast } from "@/components/ui/sonner"
 import { Button } from "@/components/ui/button"
 import { DatePicker } from "@/components/ui/date-picker"
@@ -49,6 +50,8 @@ import {
 } from "@/components/templates/form-page"
 import { RecordBreadcrumb } from "@/components/forms/record-breadcrumb"
 import { FormError, FormLoadFailed } from "@/components/forms/form-error"
+import { DeleteRecordDialog } from "@/components/forms/delete-record-dialog"
+import { PermissionTooltip } from "@/components/forms/permission-tooltip"
 
 function toIsoDate(date: Date): string {
   const year = date.getFullYear()
@@ -75,6 +78,7 @@ function fromIsoDate(text: string | undefined): Date | undefined {
  */
 export function ExpenseForm({ expenseId }: { expenseId?: string }) {
   const router = useRouter()
+  const { isAdmin } = useSession()
   const params = useSearchParams()
   const isEdit = expenseId !== undefined
 
@@ -93,6 +97,9 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
   const [loading, setLoading] = React.useState(true)
   const [saving, setSaving] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
+  const [deleting, setDeleting] = React.useState(false)
+  /** Names the record in the confirmation, so nobody deletes the wrong one. */
+  const [expenseName, setExpenseName] = React.useState<string | null>(null)
   /**
    * Section 13: a failed LOAD is its own state, not a failed save.
    * Kept apart from `error`, which carries save failures only.
@@ -136,6 +143,15 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
           setAmount(paiseToRupeeInput(expense.amountPaise))
           setBillNumber(expense.billNumber ?? "")
           setApprovedBy(expense.approvedBy ?? "")
+          /*
+            Section 15: the confirmation names what is being deleted, so
+            nobody removes the wrong row. An expense has no name of its
+            own, so it is identified the way a person would read it off
+            the list — amount, head and date.
+          */
+          setExpenseName(
+            `${formatCurrency(expense.amountPaise)} — ${expense.costHeadName}, ${formatDate(expense.spentOn)}`,
+          )
         }
         setLoading(false)
       })
@@ -455,6 +471,30 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
       </FormScrollArea>
 
       <FormFooter>
+        {/*
+          Delete sits on the LEFT, away from the primary action, and
+          only when editing — there is nothing to delete on a new
+          expense. `DELETE /expenses/:id` is admin-only, so a staff user
+          sees it disabled with the reason rather than not at all
+          (section 26).
+        */}
+        {isEdit ? (
+          <div className="mr-auto">
+            <PermissionTooltip
+              allowed={isAdmin}
+              reason="Only an administrator can delete an expense"
+            >
+              <Button
+                variant="danger"
+                disabled={!isAdmin || saving || loading}
+                onClick={() => setDeleting(true)}
+              >
+                <TrashIcon />
+                Delete
+              </Button>
+            </PermissionTooltip>
+          </div>
+        ) : null}
         <Button
           variant="secondary"
           render={<Link href={siteId ? `/sites/${siteId}` : "/expenses"} />}
@@ -465,6 +505,33 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
           {saving ? "Saving…" : isEdit ? "Save expense" : "Record expense"}
         </Button>
       </FormFooter>
+
+      {/*
+        Section 15: an irreversible action opens a confirmation that
+        names the record and states the consequence. The confirm button
+        carries the danger style and the real verb, and Cancel is the
+        safer option on the left — all of which DeleteRecordDialog
+        already does, which is why this is not a second dialog.
+      */}
+      {isEdit && expenseId ? (
+        <DeleteRecordDialog
+          open={deleting}
+          onOpenChange={setDeleting}
+          recordName={expenseName ?? "this expense"}
+          what="expense"
+          consequences={
+            <>
+              The amount comes off this site&rsquo;s actual spend
+              immediately, so every variance figure that includes it
+              changes. The budget is not affected.
+            </>
+          }
+          onConfirm={() => api.delete(`/expenses/${expenseId}`)}
+          onDeleted={() =>
+            router.push(siteId ? `/sites/${siteId}?tab=expenses` : "/expenses")
+          }
+        />
+      ) : null}
     </FormFrame>
   )
 }

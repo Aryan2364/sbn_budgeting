@@ -39,6 +39,7 @@ import {
 } from "@/components/templates/detail-page"
 import { RecordBreadcrumb } from "@/components/forms/record-breadcrumb"
 import { DeleteRecordDialog } from "@/components/forms/delete-record-dialog"
+import { PermissionTooltip } from "@/components/forms/permission-tooltip"
 
 /** Section 11.2. The detail template, with data. */
 export default function ProjectDetailPage({
@@ -134,10 +135,7 @@ export default function ProjectDetailPage({
               <PencilIcon />
               Edit
             </Button>
-            {/* Section 26: an action the user cannot perform is not
-                shown. Only an admin may delete. */}
-            {isAdmin ? (
-              <DropdownMenu>
+            <DropdownMenu>
                 <Tooltip>
                   <TooltipTrigger
                     render={
@@ -154,17 +152,27 @@ export default function ProjectDetailPage({
                 </Tooltip>
                 <DropdownMenuContent align="end">
                   <DropdownMenuGroup>
-                    <DropdownMenuItem
-                      variant="danger"
-                      onClick={() => setDeleting(true)}
+                    {/*
+                      Section 26: DISABLED with the reason, not hidden.
+                      A staff member who cannot find this does not know
+                      whether it exists; greyed and explained, they do.
+                    */}
+                    <PermissionTooltip
+                      allowed={isAdmin}
+                      reason="Only an administrator can delete a project"
                     >
-                      <TrashIcon />
-                      Delete project
-                    </DropdownMenuItem>
+                      <DropdownMenuItem
+                        variant="danger"
+                        disabled={!isAdmin}
+                        onClick={() => setDeleting(true)}
+                      >
+                        <TrashIcon />
+                        Delete project
+                      </DropdownMenuItem>
+                    </PermissionTooltip>
                   </DropdownMenuGroup>
                 </DropdownMenuContent>
-              </DropdownMenu>
-            ) : null}
+            </DropdownMenu>
           </>
         }
       />

@@ -188,113 +188,183 @@ their first real record the database has to be empty, and doing it
 afterwards means picking through rows deciding which are real — which
 is not a judgement anybody can make reliably a month later.
 
-**This procedure is also the only test of something that has never been
+**This procedure is also the only test of something otherwise never
 tested: that a deployment works from nothing.** Every deploy so far has
 landed on a database that already had a schema. A new client is exactly
-this path, so a failure here is a failure that reaches the next
-customer.
+this path.
+
+**It was rehearsed on 14 Sep 2026** against a throwaway
+`budgeting_rehearsal` schema on the same instance, and **found three
+faults in its own first draft**. Every one of them would have surfaced
+on handover day. The commands below are the corrected ones; the faults
+are named because each is a trap the next person would otherwise fall
+into.
+
+### Two things about this environment that break the obvious commands
+
+**1. `.env.production` cannot be sourced by bash.** `DATABASE_URL`
+contains an unquoted `&`, so `set -a; . ./.env.production` silently
+leaves it EMPTY — and `psql "$DATABASE_URL"` then quietly tries a local
+socket and fails with a message about `/var/run/postgresql` that looks
+like a different problem entirely. Read it with `grep` instead:
+
+```bash
+DB="$(grep -m1 '^DATABASE_URL=' .env.production | cut -d= -f2-)"
+```
+
+**2. The URL's `sslrootcert` is a path INSIDE the container**
+(`/app/certs/rds-global-bundle.pem`). Host `psql` cannot see it. The
+host has its own copy, so redirect it for host-side commands:
+
+```bash
+DBH="$(printf '%s' "$DB" | sed 's#/app/certs/rds-global-bundle.pem#/home/ubuntu/rds-global-bundle.pem#')"
+```
+
+Use `$DBH` for anything run with the host's `psql`, and `$DB` for
+anything run inside a container. The backend image has **no psql** —
+container-side queries go through `node -e` with `pg`.
 
 ### What gets destroyed
 
 Everything in the `budgeting` schema: projects, sites, budgets,
-expenses, cost heads, locations, users, and `schema_migrations`
-itself. **There is no undo.** RDS automated backups are on with a
-7-day retention window, so a point-in-time restore is the fallback —
-confirm the window covers the moment you are about to run this.
+expenses, cost heads, locations, users, and `schema_migrations` itself,
+plus the `variance` and `variance_cell` views. **There is no undo.** RDS
+automated backups are on with 7-day retention, so a point-in-time
+restore is the fallback — confirm the window covers the moment before
+you start.
 
 ### The steps
 
-Run on the server, from `/home/ubuntu/budget-tracking`.
+On the server, from `/home/ubuntu/budget-tracking`, with `$DB` and
+`$DBH` set as above.
 
-**1. Confirm you are pointed at the right database.** The one command
-worth double-checking, because every step after it is destructive:
+**1. Confirm the target.** The one command worth double-checking,
+because everything after it is destructive:
 
 ```bash
-docker compose --env-file .env.production -f docker-compose.deploy.yml   run --rm backend node -e   'const{Pool}=require("pg");const p=new Pool({connectionString:process.env.DATABASE_URL});
-   p.query("select current_database(), current_schema()").then(r=>{console.log(r.rows[0]);return p.end()})'
+psql "$DBH" -At -c 'select current_database(), current_schema()'
 ```
 
 Expect `sadbhavna_prod` and `budgeting`.
 
-**2. Stop the app** so nothing writes while the schema is going:
+**2. Set the admin password BEFORE you start.** This is the fault that
+would have bitten hardest: **`SEED_ADMIN_PASSWORD` is currently empty in
+`.env.production`**, because it was cleared after the first seed — which
+step 7 below tells you to do. With it empty the seed prints
+
+```
+first admin: skipped (set SEED_ADMIN_EMAIL and SEED_ADMIN_PASSWORD to create one)
+```
+
+and carries on with exit code 0. **That line is the only warning, it
+scrolls past in a deploy log, and the result is an empty system nobody
+can sign in to.** Set a value now:
+
+```bash
+$EDITOR .env.production      # SEED_ADMIN_PASSWORD=<a real one>
+```
+
+**3. Stop the app** so nothing writes while the schema is going:
 
 ```bash
 docker compose --env-file .env.production -f docker-compose.deploy.yml down
 ```
 
-**3. Drop and recreate the schema.** `cascade` takes the two views with
-it; recreating it empty is what makes the migration run a true
-from-nothing run:
+**4. Drop and recreate the schema, empty:**
 
 ```bash
-psql "$DATABASE_URL" -c 'drop schema budgeting cascade; create schema budgeting;'
+psql "$DBH" -c 'drop schema budgeting cascade; create schema budgeting;'
 ```
 
-`DATABASE_URL` is in `.env.production`. If `psql` is not on the host,
-the same two statements run through the backend image the way step 1
-does.
-
-**4. Re-run every migration from empty:**
+**5. Re-run every migration from nothing:**
 
 ```bash
 docker compose --env-file .env.production -f docker-compose.deploy.yml   run --rm migrate
 ```
 
-**Expect all five to apply**, not "nothing to apply". If it says
-nothing to apply, step 3 did not take and you are about to seed on top
+**Expect `5 migration(s) applied`, not "nothing to apply".** If it says
+nothing to apply, step 4 did not take and you are about to seed on top
 of the old data.
 
-**5. Seed the 19 cost heads and the first admin:**
+**6. Seed the 19 cost heads and the first admin:**
 
 ```bash
 docker compose --env-file .env.production -f docker-compose.deploy.yml   run --rm seed
 ```
 
-The cost heads come from `backend/src/db/cost-heads.data.ts`. The admin
-is created only when `SEED_ADMIN_EMAIL` and `SEED_ADMIN_PASSWORD` are
-set in `.env.production`; without them the seed skips it and says so,
-and you are left with a system nobody can sign in to.
+**Read both lines it prints.** Expect `cost heads: 19 seeded, 19 in
+table` **and** `first admin: <email> created`. Anything saying
+`skipped` means step 2 was missed.
 
-**6. Start the app:**
+**7. Start the app:**
 
 ```bash
 ./deploy.sh
 ```
 
-**7. Change the admin password off the seeded one.** Sign in as the
-seeded admin and change it in Settings → People. **The seeded password
-is in a file on the server and in whatever created it**, so it is a
-shared secret from the moment it exists and is not a password anybody
-should keep. Then remove `SEED_ADMIN_PASSWORD` from `.env.production`
-so a later re-seed cannot reinstate it.
+**8. Change the admin password off the seeded one.** Sign in and change
+it in Settings → People. **The seeded password sits in a file on the
+server**, so it is a shared secret from the moment it exists. Then blank
+`SEED_ADMIN_PASSWORD` in `.env.production` again — and note that doing
+so is what makes step 2 necessary next time. The two instructions are a
+loop on purpose; the alternative is leaving a usable password on disk.
 
 ### Verify, do not assume
 
 ```bash
-# five migrations, applied just now
-psql "$DATABASE_URL" -c 'select version, applied_at from budgeting.schema_migrations order by version;'
-# 19 cost heads, one admin, and nothing else
-psql "$DATABASE_URL" -c "select 'cost_heads' t, count(*) from budgeting.cost_heads
-  union all select 'users', count(*) from budgeting.users
-  union all select 'projects', count(*) from budgeting.projects
-  union all select 'sites', count(*) from budgeting.sites
-  union all select 'expenses', count(*) from budgeting.expenses
-  union all select 'site_budgets', count(*) from budgeting.site_budgets;"
+psql "$DBH" -At -c 'select version, applied_at from budgeting.schema_migrations order by version'
+psql "$DBH" -At -F'|' -c "select 'cost_heads',count(*) from budgeting.cost_heads
+  union all select 'users',count(*) from budgeting.users
+  union all select 'projects',count(*) from budgeting.projects
+  union all select 'sites',count(*) from budgeting.sites
+  union all select 'expenses',count(*) from budgeting.expenses
+  union all select 'site_budgets',count(*) from budgeting.site_budgets"
+psql "$DBH" -At -c "select table_name from information_schema.views where table_schema='budgeting' order by 1"
 ```
 
-Expect cost_heads 19, users 1, and **zero everywhere else**. Then load
-the site: the dashboard should show its "nothing yet" state offering
-to create the first project, not an error and not a row of zeroes.
+**From the rehearsal, this is exactly what a correct fresh install
+looks like:**
 
-**Two things worth knowing before the day.** Production has **21** cost
-heads today, not 19 — `Accident expense` and `Tools and tackles` were
-added through Settings. A reset returns the list to the seeded 19, so
-if the client wants those two they must be re-added afterwards. And
-the budgets currently loaded do **not** match the reference table in
-section 2.1 of the plan: `Miscellenous` carries no budget, and the
-per-tree amounts for heads 2 to 6 are rotated by one. That is test
-data and goes away with the reset, but it is worth not carrying the
-same mistake into the real entry.
+```
+schema_migrations  5
+cost_heads        19
+users              1        <- role admin, can_login true, password_hash set
+projects           0
+sites              0
+expenses           0
+site_budgets       0
+views              variance, variance_cell
+```
+
+Then load the site. The dashboard should show its "nothing yet" state
+offering to create the first project — not an error, and not a row of
+zeroes.
+
+### Two things about the current data that a reset removes
+
+Both are **data-entry errors in the test data, not code defects.** The
+variance maths was proved exact on 14 Sep — every cell equals
+`per_tree_paise` × `planned_trees`, and all four roll-up grains agree to
+the paise. Recorded here because someone comparing production against
+section 2.1 of the plan will otherwise report them as bugs:
+
+- **`Miscellenous` carries no budget.** Section 2.1 gives it 5 per year.
+  That is the entire discrepancy between section 2.1's per-tree total of
+  3,432 and production's 3,412 — 5 × 4 = 20 — and why each year column
+  reads 613 rather than 618.
+- **The per-tree amounts for cost heads 2 to 6 are rotated by one
+  position.** Production reads Tree bore 100, Tree cage 450, Nameplate
+  50, Sapling 150, Sapling transport 25; section 2.1 says 450, 50, 150,
+  25, 100. **The same six values, shifted one place.** Because it is a
+  rotation, every total is unchanged — which is precisely why no
+  arithmetic check catches it and why it looks like a code fault when
+  somebody finally notices a cost head with the wrong rate. It is an
+  off-by-one made during entry or import.
+
+Production also has **21 cost heads, not 19** — `Accident expense` and
+`Tools and tackles` were added through Settings. A reset returns the
+list to the seeded 19, so re-add those two afterwards if the client
+still wants them.
 
 ## Ports
 
