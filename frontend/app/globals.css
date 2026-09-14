@@ -454,12 +454,27 @@
   border-color: var(--danger-pressed);
 }
 
+/* Section 6.3.1: an icon button inside a field. Its states live on the
+   background, not the border, because it has no border of its own. */
+[data-force="hover"] [data-slot="button"][data-variant="in-field"] {
+  background-color: var(--surface-control);
+  color: var(--text-primary);
+}
+[data-force="pressed"] [data-slot="button"][data-variant="in-field"] {
+  background-color: var(--surface-control-pressed);
+  color: var(--text-primary);
+}
+
 [data-force="hover"] [data-slot="input"],
 [data-force="hover"] [data-slot="select-trigger"] {
   background-color: var(--surface-control);
 }
 
 /* Section 6.4: the focus ring is primary-ring and is never removed. */
+[data-force="focus"] [data-slot="button"][data-variant="in-field"] {
+  outline: 2px solid var(--primary-ring);
+  outline-offset: 0;
+}
 [data-force="focus"] [data-slot="button"],
 [data-force="focus"] [data-slot="input"],
 [data-force="focus"] [data-slot="select-trigger"],

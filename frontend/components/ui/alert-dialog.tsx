@@ -82,6 +82,16 @@ function AlertDialogContent({
         data-slot="alert-dialog-content"
         className={cn(
           "fixed top-1/2 left-1/2 z-50 flex w-[calc(100%-2rem)] max-w-dialog-sm -translate-x-1/2 -translate-y-1/2 flex-col",
+          /*
+           * Section 24 applies to this component too, and it had NO
+           * height cap at all — not a weaker one, none. A confirmation
+           * is required to state its consequences (section 15 rule 2),
+           * and a long enough consequence list on a short viewport
+           * pushed the footer, and therefore Cancel and the delete
+           * button, off the bottom of the screen. A confirmation whose
+           * Cancel cannot be reached is worse than no confirmation.
+           */
+          "max-h-[80vh] overflow-hidden",
           "rounded-xl border border-border-light bg-surface text-body text-text-primary shadow-lg outline-none",
           "data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0",
           className
@@ -99,7 +109,12 @@ function AlertDialogHeader({
   return (
     <div
       data-slot="alert-dialog-header"
-      className={cn("flex flex-col gap-2 p-4", className)}
+      /*
+       * This is the zone that scrolls. An alert dialog has no separate
+       * body — the title and the consequences live here — so this is
+       * what has to flex and scroll, while the footer stays pinned.
+       */
+      className={cn("flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-4", className)}
       {...props}
     />
   )
@@ -113,7 +128,7 @@ function AlertDialogFooter({
     <div
       data-slot="alert-dialog-footer"
       className={cn(
-        "flex items-center justify-end gap-2 border-t border-border-light bg-surface-sunken px-4 py-3",
+        "flex shrink-0 items-center justify-end gap-2 border-t border-border-light bg-surface-sunken px-4 py-3",
         className
       )}
       {...props}

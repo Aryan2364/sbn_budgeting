@@ -48,7 +48,7 @@ import {
   FormSection,
 } from "@/components/templates/form-page"
 import { RecordBreadcrumb } from "@/components/forms/record-breadcrumb"
-import { FormError } from "@/components/forms/form-error"
+import { FormError, FormLoadFailed } from "@/components/forms/form-error"
 
 function toIsoDate(date: Date): string {
   const year = date.getFullYear()
@@ -93,6 +93,12 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
   const [loading, setLoading] = React.useState(true)
   const [saving, setSaving] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
+  /**
+   * Section 13: a failed LOAD is its own state, not a failed save.
+   * Kept apart from `error`, which carries save failures only.
+   */
+  const [loadError, setLoadError] = React.useState<string | null>(null)
+  const [reloadTick, setReloadTick] = React.useState(0)
   const [fieldErrors, setFieldErrors] = React.useState<Record<string, string>>({})
 
   /**
@@ -135,13 +141,13 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
       })
       .catch((caught: unknown) => {
         if (cancelled) return
-        setError(errorMessage(caught))
+        setLoadError(errorMessage(caught))
         setLoading(false)
       })
     return () => {
       cancelled = true
     }
-  }, [expenseId])
+  }, [expenseId, reloadTick])
 
   const site = sites.find((s) => s.id === siteId) ?? null
 
@@ -270,6 +276,17 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
             className="mt-4"
             title={loading && isEdit ? <Skeleton className="h-8 w-64" /> : isEdit ? "Edit expense" : "New expense"}
           />
+
+          {loadError !== null ? (
+            <FormLoadFailed
+              message={loadError}
+              onRetry={() => {
+                setLoadError(null)
+                setLoading(true)
+                setReloadTick((t) => t + 1)
+              }}
+            />
+          ) : null}
 
           <FormError message={error} />
 

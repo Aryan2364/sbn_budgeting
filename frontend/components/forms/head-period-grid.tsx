@@ -52,6 +52,19 @@ import { VarianceFigure } from "@/components/forms/variance-figures"
  * ROWS COME FROM THE COST-HEAD SPINE, never from the query result. All
  * nineteen heads appear whether or not they carry a budget or an
  * expense. The API does that join; this file relies on it.
+ *
+ * COLUMN PRIORITY (section 10 rule 4): **every column is essential and
+ * none may be dropped.** That is the declaration, not an omission.
+ * Each of the five is a period carrying real money, no period is
+ * optional, and hiding one hides a figure the Total still includes —
+ * the same argument section 31.4 makes for the data entry grid. A
+ * screen where a column CAN be dropped must drop it instead of
+ * scrolling.
+ *
+ * Because nothing can be dropped, the table scrolls sideways under
+ * section 10 rule 2, and section 34.3 freezes the first column so the
+ * numbers never lose their label. Measured at 1024 and 768: 959px of
+ * table against 901 and 709 of container.
  */
 
 type Measure = "budget" | "actual" | "variance" | "variancePct"
@@ -193,7 +206,16 @@ export function HeadPeriodGrid({
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead>Cost head</TableHead>
+            {/*
+              Section 34.3: the first column freezes so scrolling
+              sideways never leaves the numbers unlabelled. z-30 because
+              this cell is the intersection of two sticky axes — the
+              header row and the frozen column — and has to sit above
+              both.
+            */}
+            <TableHead className="sticky left-0 z-30 w-grid-head min-w-grid-head border-r border-border-light bg-surface-sunken">
+              Cost head
+            </TableHead>
             {PERIODS.map((label) => (
               <TableHead key={label} numeric>
                 {label}
@@ -210,7 +232,7 @@ export function HeadPeriodGrid({
                  is the known row count. */
               Array.from({ length: 19 }, (_, row) => (
                 <TableRow key={`skeleton-${row}`}>
-                  <TableCell>
+                  <TableCell className="sticky left-0 z-10 w-grid-head min-w-grid-head border-r border-border-light bg-surface">
                     <Skeleton className="h-4 w-3/4" />
                   </TableCell>
                   {Array.from({ length: 6 }, (_, cell) => (
@@ -222,7 +244,7 @@ export function HeadPeriodGrid({
               ))
             : result.rows.map((row) => (
                 <TableRow key={row.costHeadId}>
-                  <TableCell>
+                  <TableCell className="sticky left-0 z-10 w-grid-head min-w-grid-head border-r border-border-light bg-surface">
                     <Truncate>{row.costHeadName}</Truncate>
                   </TableCell>
                   {row.cells.map((cell) => (
@@ -239,9 +261,11 @@ export function HeadPeriodGrid({
         {/* Section 3 rule 5: a total row carries body-strong weight,
             which TableFooter supplies. Every figure in it was summed in
             SQL beside the cells above, not added up here. */}
-        <TableFooter>
+        <TableFooter sticky>
           <TableRow>
-            <TableCell>Total</TableCell>
+            <TableCell className="sticky left-0 z-30 w-grid-head min-w-grid-head border-r border-border-light bg-surface-sunken">
+              Total
+            </TableCell>
             {result === null
               ? Array.from({ length: 6 }, (_, cell) => (
                   <TableCell key={cell} numeric>

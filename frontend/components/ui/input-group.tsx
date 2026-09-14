@@ -83,10 +83,14 @@ const inputGroupButtonVariants = cva(
   }
 )
 
+/**
+ * A button that sits INSIDE the field, so section 6.3.1: no fill and
+ * no border of its own. The input group is the container.
+ */
 function InputGroupButton({
   className,
   type = "button",
-  variant = "ghost",
+  variant = "in-field",
   size = "xs",
   ...props
 }: Omit<React.ComponentProps<typeof Button>, "size" | "type"> &

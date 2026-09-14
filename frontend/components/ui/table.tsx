@@ -51,13 +51,32 @@ function TableBody({ className, ...props }: React.ComponentProps<"tbody">) {
   )
 }
 
-/** Section 3 rule 5: a total row carries body-strong weight. */
-function TableFooter({ className, ...props }: React.ComponentProps<"tfoot">) {
+/**
+ * Section 3 rule 5: a total row carries body-strong weight.
+ *
+ * `sticky` is section 34.1: on a REPORT table the total row is pinned
+ * the same way the column header is. A header tells you what a column
+ * means; a total tells you what the report concluded, and losing the
+ * second is worse — the answer ends up below the fold with nothing on
+ * screen saying it exists.
+ *
+ * Opt-in rather than always-on, because it is a property of report
+ * tables and not of every table that happens to have a footer.
+ */
+function TableFooter({
+  className,
+  sticky,
+  ...props
+}: React.ComponentProps<"tfoot"> & { sticky?: boolean }) {
   return (
     <tfoot
       data-slot="table-footer"
+      data-sticky={sticky || undefined}
       className={cn(
         "border-t border-border-light bg-surface-sunken font-medium [&>tr]:last:border-b-0",
+        // Applied to the cells as well: several engines still ignore
+        // position:sticky on <tfoot> itself but honour it on the cells.
+        sticky && "sticky bottom-0 z-20 [&_td]:sticky [&_td]:bottom-0",
         className
       )}
       {...props}

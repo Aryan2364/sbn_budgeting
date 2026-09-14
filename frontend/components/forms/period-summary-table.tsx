@@ -137,7 +137,7 @@ export function PeriodSummaryTable({
       </TableBody>
       {/* Section 3 rule 5. Summed in SQL with the period axis
           collapsed, not added up from the rows above it. */}
-      <TableFooter>
+      <TableFooter sticky>
         <TableRow>
           <TableCell>Total</TableCell>
           <TableCell numeric>

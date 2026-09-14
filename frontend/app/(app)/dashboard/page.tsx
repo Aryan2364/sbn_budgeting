@@ -177,14 +177,39 @@ export default function DashboardPage() {
    * Month over month, computed from two figures the API summed in SQL.
    * `null` where there is no previous month to compare against — a
    * change indicator against zero is a meaningless "infinity up".
+   *
+   * **A REAL ZERO MUST NOT READ AS A FAILURE.** A tile showing ₹0.00
+   * under "100.0% on last month" is indistinguishable from one whose
+   * request died: both are an empty number and a red-looking drop. It
+   * is not a failure — early in a month there is genuinely nothing
+   * booked yet, which is the ordinary case for the first few days of
+   * every month and was the live state on 7 Sep.
+   *
+   * So zero gets its own words. The percentage is arithmetically
+   * correct and still useless here: "-100%" describes the maths, not
+   * what happened.
    */
   const spendChange = (() => {
     if (!data) return null
     const now = BigInt(data.spendThisMonthPaise)
     const before = BigInt(data.spendLastMonthPaise)
-    if (before === 0n) return null
+    if (now === 0n) {
+      return {
+        label:
+          before === 0n
+            ? "Nothing booked yet"
+            : `Nothing booked yet · ${formatCurrency(data.spendLastMonthPaise)} last month`,
+        direction: undefined,
+      }
+    }
+    if (before === 0n) {
+      return { label: "Nothing booked last month", direction: undefined }
+    }
     const pct = Number(((now - before) * 1000n) / before) / 10
-    return { pct, direction: now >= before ? ("up" as const) : ("down" as const) }
+    return {
+      label: `${Math.abs(pct).toFixed(1)}% on last month`,
+      direction: now >= before ? ("up" as const) : ("down" as const),
+    }
   })()
 
   return (
@@ -221,13 +246,7 @@ export default function DashboardPage() {
               <Skeleton className="h-8 w-28" />
             )
           }
-          change={
-            spendChange
-              ? `${Math.abs(spendChange.pct).toFixed(1)}% on last month`
-              : data
-                ? "No spend last month"
-                : undefined
-          }
+          change={spendChange?.label}
           direction={spendChange?.direction}
         />
         <MetricTile

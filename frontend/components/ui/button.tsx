@@ -5,11 +5,20 @@ import { cn } from "@/lib/utils"
 
 /**
  * Section 6.
- * Four levels: primary, secondary, ghost, danger.
+ * Four levels: primary, secondary, ghost, danger, plus `in-field`.
  * Exactly one primary button per screen or per dialog; everything
  * else is secondary. Ghost is allowed only for icon-only buttons
  * inside a toolbar, which is why it still carries a fill and a
  * border - a button the user cannot see is a button is broken.
+ *
+ * `in-field` is section 6.3.1: an icon button INSIDE an input, a
+ * select or any other bordered field. It is the one variant with no
+ * fill and no border, because the field around it already is the
+ * visible container and a bordered button inside a bordered input
+ * draws a box inside a box. It is NOT a general-purpose quiet button
+ * - used anywhere else it is exactly the invisible control section
+ * 6.1 rule 4 forbids. Same shape as the calendar day cell: a control
+ * nested inside another container does not bring its own border.
  *
  * Height is fixed at 36 / 32 / 40. Width grows with the label,
  * height never does, so two buttons on different screens are always
@@ -35,6 +44,29 @@ const buttonVariants = cva(
           "border-border bg-surface-control text-text-primary hover:border-border-strong hover:bg-surface-control-hover active:border-border-strong active:bg-surface-control-pressed",
         danger:
           "border-danger bg-danger font-medium text-primary-foreground hover:border-danger-hover hover:bg-danger-hover active:border-danger-pressed active:bg-danger-pressed",
+        /*
+         * Section 6.3.1. All four states plus focus, moved from the
+         * border to the background:
+         *   resting  - nothing; the field is the container
+         *   hover    - a surface-control tint behind the icon
+         *   pressed  - the pressed tint
+         *   disabled - reduced contrast, and the base already removes
+         *              the pointer; its fill and border are overridden
+         *              back to nothing here
+         *   focus    - the primary-ring outline at offset 0, so it
+         *              hugs the icon INSIDE the field rather than
+         *              straddling the field's own border
+         *
+         * The focus ring is the only cue a keyboard user gets that the
+         * icon is what Enter will press. It is never removed.
+         */
+        "in-field": [
+          "border-transparent bg-transparent text-text-secondary",
+          "hover:bg-surface-control hover:text-text-primary",
+          "active:bg-surface-control-pressed active:text-text-primary",
+          "disabled:border-transparent disabled:bg-transparent disabled:text-text-muted",
+          "focus-visible:outline-offset-0",
+        ].join(" "),
       },
       size: {
         default: "h-control px-4 text-body",

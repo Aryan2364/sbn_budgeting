@@ -250,6 +250,7 @@ export function RecordList<T extends { id: string }>({
           placeholder={searchPlaceholder}
           value={searchInput}
           onChange={(event) => setSearchInput(event.target.value)}
+          onClear={() => setSearchInput("")}
         />
         {/* Section 27.1: the result count sits beside the field. */}
         {isFiltered && state === "ready" ? (

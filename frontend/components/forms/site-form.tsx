@@ -31,7 +31,7 @@ import {
   FormSection,
 } from "@/components/templates/form-page"
 import { RecordBreadcrumb } from "@/components/forms/record-breadcrumb"
-import { FormError } from "@/components/forms/form-error"
+import { FormError, FormLoadFailed } from "@/components/forms/form-error"
 
 /** `Date` to the `YYYY-MM-DD` the API stores. Never through toISOString, which shifts by timezone. */
 function toIsoDate(date: Date): string {
@@ -76,6 +76,12 @@ export function SiteForm({ siteId }: { siteId?: string }) {
   const [loading, setLoading] = React.useState(true)
   const [saving, setSaving] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
+  /**
+   * Section 13: a failed LOAD is its own state, not a failed save.
+   * Kept apart from `error`, which carries save failures only.
+   */
+  const [loadError, setLoadError] = React.useState<string | null>(null)
+  const [reloadTick, setReloadTick] = React.useState(0)
   const [fieldErrors, setFieldErrors] = React.useState<Record<string, string>>({})
 
   React.useEffect(() => {
@@ -118,13 +124,13 @@ export function SiteForm({ siteId }: { siteId?: string }) {
       })
       .catch((caught: unknown) => {
         if (cancelled) return
-        setError(errorMessage(caught))
+        setLoadError(errorMessage(caught))
         setLoading(false)
       })
     return () => {
       cancelled = true
     }
-  }, [siteId])
+  }, [siteId, reloadTick])
 
   function validate(): Record<string, string> {
     const found: Record<string, string> = {}
@@ -214,6 +220,17 @@ export function SiteForm({ siteId }: { siteId?: string }) {
             className="mt-4"
             title={loading && isEdit ? <Skeleton className="h-8 w-64" /> : title}
           />
+
+          {loadError !== null ? (
+            <FormLoadFailed
+              message={loadError}
+              onRetry={() => {
+                setLoadError(null)
+                setLoading(true)
+                setReloadTick((t) => t + 1)
+              }}
+            />
+          ) : null}
 
           <FormError message={error} />
 

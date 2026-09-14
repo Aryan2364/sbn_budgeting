@@ -60,6 +60,49 @@ function DialogContent({
   size?: "sm" | "md" | "lg"
   showCloseButton?: boolean
 }) {
+  /**
+   * Section 24, enforced HERE rather than trusted to the caller.
+   *
+   * The height cap and the internal scroll only work if everything
+   * between the header and the footer sits in one `min-h-0 flex-1
+   * overflow-y-auto` box. That was `DialogBody`, and it was the
+   * caller's job to remember it — so three of the four dialogs in this
+   * product did not, and every one of them broke the same way on a
+   * short viewport: the popup clamped to 80vh, the unwrapped content
+   * kept its natural height, and the overflow painted OUTSIDE the
+   * rounded panel. The header scrolled away, a field was sliced in
+   * half with its helper text floating on the backdrop, and the footer
+   * sat below the fold with both buttons clipped.
+   *
+   * **A component that silently breaks when a caller forgets one
+   * wrapper is the component's bug, not the caller's.** So the body is
+   * assembled here: header first, everything else wrapped, footer
+   * last, in that order whatever order they arrive in. A caller that
+   * already uses `DialogBody` is passed through untouched.
+   */
+  const items = React.Children.toArray(children)
+  const isType = (child: React.ReactNode, type: unknown) =>
+    React.isValidElement(child) && child.type === type
+
+  const header = items.filter((c) => isType(c, DialogHeader))
+  const footer = items.filter((c) => isType(c, DialogFooter))
+  const rest = items.filter(
+    (c) => !isType(c, DialogHeader) && !isType(c, DialogFooter)
+  )
+  const alreadyWrapped = rest.length === 1 && isType(rest[0], DialogBody)
+
+  /**
+   * Only assemble when there is something to pin.
+   *
+   * A dialog with neither a header nor a footer among its children has
+   * nothing to hold fixed and nothing to scroll against — the command
+   * palette is one, and it brings its own full-height layout and its
+   * own scrolling list. Wrapping that would add padding it explicitly
+   * turns off and put a second scroll container around a list that
+   * already has one, which is section 1 rule 8. Left alone.
+   */
+  const assemble = header.length > 0 || footer.length > 0
+
   return (
     <DialogPortal>
       <DialogOverlay />
@@ -68,6 +111,10 @@ function DialogContent({
         data-size={size}
         className={cn(
           "fixed top-1/2 left-1/2 z-50 flex max-h-[80vh] w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 flex-col",
+          // Nothing may paint outside the panel. Without this the
+          // overflow above was not merely unscrollable, it was visible
+          // on the backdrop.
+          "overflow-hidden",
           "rounded-xl border border-border-light bg-surface text-body text-text-primary shadow-lg outline-none",
           "data-[size=sm]:max-w-dialog-sm data-[size=md]:max-w-dialog-md data-[size=lg]:max-w-dialog-lg",
           "data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0",
@@ -75,7 +122,19 @@ function DialogContent({
         )}
         {...props}
       >
-        {children}
+        {assemble ? (
+          <>
+            {header}
+            {rest.length > 0
+              ? alreadyWrapped
+                ? rest
+                : <DialogBody>{rest}</DialogBody>
+              : null}
+            {footer}
+          </>
+        ) : (
+          children
+        )}
         {showCloseButton && (
           <DialogPrimitive.Close
             data-slot="dialog-close"

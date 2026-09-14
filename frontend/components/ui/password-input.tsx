@@ -78,7 +78,7 @@ function PasswordInput({
           render={
             <Button
               type="button"
-              variant="ghost"
+              variant="in-field"
               size="icon-sm"
               disabled={disabled}
               aria-label={label}

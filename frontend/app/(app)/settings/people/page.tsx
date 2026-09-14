@@ -29,7 +29,11 @@ import {
 import { Switch } from "@/components/ui/switch"
 import { Truncate } from "@/components/ui/truncate"
 import { FormError } from "@/components/forms/form-error"
-import { MasterSection, useMasterRows } from "@/components/forms/master-section"
+import {
+  MASTER_PAGE_SIZE,
+  MasterSection,
+  useMasterRows,
+} from "@/components/forms/master-section"
 
 /**
  * The people master. Section 11.5, admin only (section 26).
@@ -42,15 +46,14 @@ export default function PeopleSettingsPage() {
   const { isAdmin, user } = useSession()
 
   const load = React.useCallback(
-    () =>
-      api
-        .get<ListResponse<Person & Matchable>>(
-          `/users${query({ pageSize: 100, sort: "name", direction: "asc" })}`,
-        )
-        .then((response) => response.data),
+    (page: number) =>
+      api.get<ListResponse<Person & Matchable>>(
+        `/users${query({ page, pageSize: MASTER_PAGE_SIZE, sort: "name", direction: "asc" })}`,
+      ),
     [],
   )
-  const { rows, loading, error, refresh } = useMasterRows(load)
+  const { rows, loading, error, refresh, page, setPage, total, totalPages } =
+    useMasterRows(load)
 
   const [editing, setEditing] = React.useState<Person | null>(null)
   const [creating, setCreating] = React.useState(false)
@@ -66,6 +69,10 @@ export default function PeopleSettingsPage() {
         loading={loading}
         error={error}
         onRetry={refresh}
+        page={page}
+        totalPages={totalPages}
+        total={total}
+        onPageChange={setPage}
         columns={[
           {
             key: "name",
@@ -74,6 +81,7 @@ export default function PeopleSettingsPage() {
           },
           {
             key: "email",
+            priority: "secondary",
             label: "Email",
             className: "hidden md:table-cell",
             render: (row) => <Truncate>{row.email ?? "—"}</Truncate>,
@@ -90,6 +98,7 @@ export default function PeopleSettingsPage() {
           },
           {
             key: "canLogin",
+            priority: "secondary",
             label: "Signs in",
             render: (row) => (row.canLogin ? "Yes" : "No"),
           },

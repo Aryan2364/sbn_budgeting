@@ -20,22 +20,25 @@ import { InlineFieldError } from "@/components/ui/inline-field-error"
 import { Label } from "@/components/ui/label"
 import { Truncate } from "@/components/ui/truncate"
 import { FormError } from "@/components/forms/form-error"
-import { MasterSection, useMasterRows } from "@/components/forms/master-section"
+import {
+  MASTER_PAGE_SIZE,
+  MasterSection,
+  useMasterRows,
+} from "@/components/forms/master-section"
 
 /** Section 11.5. The site locations master, admin only (section 26). */
 export default function SiteLocationsSettingsPage() {
   const { isAdmin } = useSession()
 
   const load = React.useCallback(
-    () =>
-      api
-        .get<ListResponse<SiteLocation & Matchable>>(
-          `/site-locations${query({ pageSize: 100, sort: "name", direction: "asc" })}`,
-        )
-        .then((response) => response.data),
+    (page: number) =>
+      api.get<ListResponse<SiteLocation & Matchable>>(
+        `/site-locations${query({ page, pageSize: MASTER_PAGE_SIZE, sort: "name", direction: "asc" })}`,
+      ),
     [],
   )
-  const { rows, loading, error, refresh } = useMasterRows(load)
+  const { rows, loading, error, refresh, page, setPage, total, totalPages } =
+    useMasterRows(load)
 
   const [editing, setEditing] = React.useState<SiteLocation | null>(null)
   const [creating, setCreating] = React.useState(false)
@@ -51,6 +54,10 @@ export default function SiteLocationsSettingsPage() {
         loading={loading}
         error={error}
         onRetry={refresh}
+        page={page}
+        totalPages={totalPages}
+        total={total}
+        onPageChange={setPage}
         columns={[
           {
             key: "name",
@@ -59,6 +66,7 @@ export default function SiteLocationsSettingsPage() {
           },
           {
             key: "siteCount",
+            priority: "secondary",
             label: "Sites",
             numeric: true,
             render: (row) => formatNumber(row.siteCount),

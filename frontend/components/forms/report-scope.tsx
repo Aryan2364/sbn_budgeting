@@ -49,6 +49,7 @@ export function useReportScope(): {
   sites: Record<string, string>
   loading: boolean
   failure: string | null
+  retry: () => void
 } {
   const [projects, setProjects] = React.useState<Record<string, string>>({})
   const [allSites, setAllSites] = React.useState<Site[]>([])
@@ -56,6 +57,7 @@ export function useReportScope(): {
   const [siteId, setSiteIdState] = React.useState("")
   const [loading, setLoading] = React.useState(true)
   const [failure, setFailure] = React.useState<string | null>(null)
+  const [attempt, setAttempt] = React.useState(0)
 
   React.useEffect(() => {
     let cancelled = false
@@ -86,7 +88,7 @@ export function useReportScope(): {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [attempt])
 
   // Derived in render, not synced in an effect: the sites a project has
   // are a function of the project, never a separate piece of state.
@@ -113,6 +115,11 @@ export function useReportScope(): {
     sites,
     loading,
     failure,
+    retry: () => {
+      setFailure(null)
+      setLoading(true)
+      setAttempt((a) => a + 1)
+    },
   }
 }
 

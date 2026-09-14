@@ -6,6 +6,7 @@ import { useSearchParams } from "next/navigation"
 import { api, query } from "@/lib/api"
 import type { ListResponse, Matchable, VarianceRow } from "@/lib/api"
 import { formatAmount, formatNumber } from "@/lib/format"
+import { EmptyState } from "@/components/ui/empty-state"
 import { Truncate } from "@/components/ui/truncate"
 import { PageFrame, PageHeader } from "@/components/templates/page"
 import { ListDataArea, ListToolbar } from "@/components/templates/list-page"
@@ -234,7 +235,15 @@ function YearReport({ view, tabs }: { view: string; tabs: React.ReactNode }) {
 
       <ListDataArea>
         {scope.failure !== null ? (
-          <p className="p-4 text-body text-text-secondary">{scope.failure}</p>
+          /* Section 13: this was a bare paragraph — a failure with no
+             way forward, which is the state the variant exists for. */
+          <EmptyState
+            variant="failed"
+            heading="The report scope could not be loaded"
+            onAction={scope.retry}
+          >
+            {scope.failure}
+          </EmptyState>
         ) : view === "years" ? (
           <PeriodSummaryTable
             projectId={projectId || undefined}

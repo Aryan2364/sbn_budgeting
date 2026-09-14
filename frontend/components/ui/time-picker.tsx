@@ -203,7 +203,7 @@ function TimePicker({
         <PopoverTrigger
           render={
             <Button
-              variant="ghost"
+              variant="in-field"
               size="icon-sm"
               disabled={disabled}
               aria-label="Choose a time"

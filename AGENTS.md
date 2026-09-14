@@ -41,7 +41,14 @@ These are absolute. Breaking any of them is a bug, not a style choice.
    tooltips, scrollbars, or dialogs. Every one of these is styled.
 6. Never let text overflow its container.
 7. Never render an unbounded list. Everything is paginated.
-8. Never nest a scrollable area inside another scrollable area.
+8. Never nest a scrollable area inside another scrollable area **that
+   scrolls the same axis**. The prohibition is about a collision: two
+   same-axis scrollers trap the pointer in the inner one and the page
+   underneath stops responding, so the user loses the page without
+   understanding why. A vertical outer with a horizontal inner has no
+   such collision — the two never compete for the same gesture — and
+   is permitted. Section 31.4's data entry grid is exactly that shape
+   and is correct.
 9. Never use a spacing value outside the spacing scale in section 5.
 10. Never install a new package without asking first.
 11. Never place a back arrow button on a page. Use breadcrumbs.
@@ -231,6 +238,7 @@ behind is worse than no table, because it is believed.
 | A tooltip | `tooltip` | 400ms delay |
 | Where the user is | `breadcrumb` | No back buttons anywhere |
 | Switching views of one record | `tabs` | |
+| Switching views of one section | `section-tabs` | Section 33. The list page's fifth zone |
 | A person | `avatar` | |
 | A divider | `separator` | |
 | Loading | `skeleton` | Renders a block `<span>` |
@@ -261,7 +269,10 @@ behind is worse than no table, because it is believed.
 | A save that failed | `form-error` |
 | A record breadcrumb | `record-breadcrumb` |
 | A budget / actual / variance figure | `variance-figures` | The zero-budget ruling, written once |
-| A site's head-wise variance | `site-variance-tab` | Screen 2 of the report |
+| Cost head × period, at any scope | `head-period-grid` | Report 2 **and** the site Variance tab. One component |
+| Period-wise budget vs variance | `period-summary-table` | Report 1 |
+| A report's project / site scope | `report-scope` | `useReportScope` + the toolbar controls |
+| A form whose options failed to load | `form-error` | `FormLoadFailed`, beside `FormError` |
 
 #### The shell — `components/shell`
 
@@ -364,6 +375,65 @@ danger fill only for delete.
 
 Every icon-only button must carry a hidden text label for screen readers
 and show a tooltip on hover. An icon alone is a guess.
+
+**One exception: the close button in a dialog corner.** An X in the top
+right of a dialog is the single icon in this product with no ambiguity
+— there is nothing else it could mean and nowhere else it could take
+you. Section 19 forbids a tooltip that carries information available
+nowhere else, and here the information is available from the shape
+itself, from Escape, and from clicking the backdrop. **The hidden text
+label stays**, because a screen reader has none of those cues.
+
+### 6.3.1 The exception: an icon button INSIDE a field
+
+**An icon button rendered inside an input, a select, or any other
+bordered field takes no fill and no border of its own.** The calendar
+trigger on `date-picker`, the clock on `time-picker`, the eye toggle on
+`password-input`, a clear button inside a search box: all of them, and
+anything added later that sits inside a field.
+
+**The reason is that the field is already the visible container.** A
+bordered button inside a bordered input draws a box inside a box, and
+the two borders sit two or three pixels apart — which reads as a
+rendering fault rather than as a control.
+
+**This does not weaken §6.1 rule 4.** That rule governs a control that
+has to read as a button *on its own*, against a page background, where
+a transparent shape with no border genuinely is invisible. An icon
+inside a field is never on its own: the field around it is what says
+"this is somewhere you interact". §6.3's filled-and-bordered treatment
+is for **standalone** icon buttons — toolbars, page headers, table
+rows.
+
+**This is the same shape as the calendar day cell**, and that is the
+precedent to reason from rather than treating this as a second special
+case. In Phase 1 the day cells in `calendar` borrowed `Button`'s
+`ghost` variant, inherited its fill and border for the same §6.1 rule 4
+reason, and turned every day of the month into a grey box. The lesson
+recorded then was that `ghost` is right for a button and wrong for
+something nested inside another container. A field is another
+container. **When a control lives inside something that already has a
+border, it does not bring its own.**
+
+**All four states still exist, plus focus (§6.4). They move to the
+background rather than the border:**
+
+| State | Treatment |
+|---|---|
+| resting | no fill, no border, icon in `text-secondary` |
+| hover | subtle `surface-control` tint behind the icon, icon to `text-primary` |
+| pressed | `surface-control-pressed` tint |
+| disabled | icon to `text-muted`, no fill, pointer cursor removed |
+| focus | **the `primary-ring` outline, fully visible, inset so the field does not clip it** |
+
+**The focus ring is not optional here and not decorative.** Every other
+state has a pointer behind it. A keyboard user has no pointer, so the
+ring is the *only* signal that the icon inside the field is what Enter
+will activate — and a field that swallows it leaves them unable to tell
+whether focus is in the text or on the button.
+
+The `in-field` variant on `button` carries all of this. Use it; do not
+hand-roll the states, and do not reach for `ghost` inside a field.
 
 ### 6.4 States
 
@@ -479,7 +549,9 @@ Rules:
    at narrower widths. Only a genuinely wide table, such as a ledger with
    more than eight columns at desktop width, may scroll sideways, and then
    the first column must be frozen.
-3. Never nest a scrollable area inside another scrollable area.
+3. Never nest a scrollable area inside another scrollable area **on
+   the same axis** (section 1 rule 8). A horizontal scroller inside a
+   vertical one is allowed.
 4. Every table declares which columns are essential, which are secondary
    (hidden below 1024px), and which are tertiary (hidden below 768px).
 
@@ -1193,8 +1265,8 @@ Nothing outstanding. When a new pattern is needed, agree it first and add
 it to this file before building it.
 
 Agreed and moved out of this section: **the data entry grid**, now
-section 31, **password fields**, now section 32, and **section tabs**,
-now section 33.
+section 31, **password fields**, now section 32, **section tabs**, now
+section 33, and **report tables**, now section 34.
 
 ---
 
@@ -1359,10 +1431,12 @@ a setting.
 
 ### The toggle
 
-- An **icon-only button** and therefore all of section 6.3: filled
-  background, 1px border, a hidden text label for screen readers, and a
-  tooltip on hover. The `ghost` variant supplies all four states
-  (resting, hover, pressed, disabled) — do not restate them.
+- An **icon-only button**, and therefore section 6.3 — but it sits
+  inside a field, so **§6.3.1 governs it**: no fill and no border of
+  its own, because the input already provides the container. It still
+  carries a hidden text label for screen readers and a tooltip on
+  hover. The **`in-field`** variant supplies all four states plus the
+  focus ring — do not restate them, and do not use `ghost` here.
 - **`eye` to show, `eye-off` to hide** (section 23.1). One pair, never a
   padlock, never a different icon per screen.
 - The label and tooltip state the **action**, not the state: `Show
@@ -1488,3 +1562,71 @@ different information architecture rather than a fifth tab.
 
 There is **one section tab bar per screen**, and it never nests inside
 another.
+
+
+---
+
+## 34. Report tables
+
+Agreed 14 Sep 2026, before building, per section 30.
+
+A **report table** is a read-only table whose purpose is a conclusion:
+one row per thing being compared, and a **total row** that is the
+answer the screen exists to produce. The variance report's two
+year-wise screens are the ones that exist today.
+
+It is not a list page. A list page shows records you might open; a
+report shows figures you read together. That difference decides both
+rules below.
+
+### 34.1 The total row is pinned, like the header
+
+**On a report table carrying a total row, the total is sticky in the
+same way the column header is sticky.**
+
+The header and the total are not the same kind of information and that
+is exactly why both have to stay: **a header tells you what a column
+means; a total tells you what the report concluded.** Losing the header
+leaves you reading unlabelled numbers. Losing the total leaves you
+reading a table whose answer is somewhere below the fold — which is
+worse, because the answer is the thing you came for and nothing on
+screen tells you it exists.
+
+Measured on the head-wise report before this rule: at 21 cost heads in
+a 503px data area, **thirteen rows and the entire total row sat below
+the fold**, and the grand total was off-screen the moment the report
+opened. The header was already pinned. The asymmetry was the bug.
+
+### 34.2 Do not paginate a report table
+
+**A report shows every row, and scrolls.** Splitting the rows across
+pages breaks the comparison the screen is for: the cost-head report
+exists to show all heads against all periods, and a total that covers
+only the rows on page 2 is not a total.
+
+This is the narrow exception to section 1 rule 7. **It is bought by the
+total row**, which is what makes an unpaginated table honest — the
+reader can always see the full answer even when they cannot see every
+row. A report table without a pinned total may not use this exception.
+
+The row count is bounded by master data, not by transactions. Nineteen
+cost heads at seed, twenty-one today; it grows by admin edits, not by
+use. **A table whose rows grow with USE is a list and paginates.**
+
+### 34.3 The first column freezes when the table scrolls sideways
+
+Where a report table is wider than its container, it scrolls
+horizontally under section 10 rule 2 and **the first column freezes**,
+carrying a 1px right border so the cells sliding underneath read as a
+boundary rather than as clipping.
+
+Section 31.4 already established this for the data entry grid and the
+reasoning is identical: scrolling sideways into unlabelled numbers is
+the precise failure section 10 rule 2 exists to prevent. Measured on
+the head-wise report at 1024 and 768, the table is 959px against 901
+and 709 of container — it scrolls at both, and without a frozen column
+the cost head name is the first thing to leave.
+
+**Measure it in the browser after any change to the column set.**
+Section 31.4 carries two wrong width tables written from arithmetic
+before the screen existed; this section is not going to be a third.

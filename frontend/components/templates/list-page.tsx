@@ -1,9 +1,10 @@
 "use client"
 
 import * as React from "react"
-import { LayoutGridIcon, ListIcon, SearchIcon } from "lucide-react"
+import { LayoutGridIcon, ListIcon, SearchIcon, XIcon } from "lucide-react"
 
 import { cn } from "@/lib/utils"
+import { Button } from "@/components/ui/button"
 import {
   InputGroup,
   InputGroupAddon,
@@ -52,24 +53,62 @@ function ListSearch({
   label,
   placeholder,
   className,
+  onClear,
   ...props
 }: Omit<React.ComponentProps<"input">, "placeholder"> & {
   /** "Search projects". Names the record type. */
   placeholder: string
   /** The accessible name. The placeholder is never the label. */
   label: string
+  /** Clears the field. Without it no clear button is drawn. */
+  onClear?: () => void
 }) {
+  /**
+   * Section 27.1: "A clear button appears inside the field once there
+   * is text."
+   *
+   * It used to be `type="search"`, which hands the job to the browser's
+   * own clear affordance — a control this product does not style, does
+   * not size, cannot give a focus ring, and which Firefox does not draw
+   * at all. Section 1 rule 5 forbids relying on a browser default for
+   * exactly this reason, so the field is `type="text"` now and the
+   * button is ours.
+   *
+   * Section 6.3.1: it sits inside a field, so no fill and no border.
+   */
+  const hasText = String(props.value ?? "").length > 0
+
   return (
     <InputGroup className={cn("w-search max-w-full", className)}>
       <InputGroupAddon>
         <SearchIcon />
       </InputGroupAddon>
       <InputGroupInput
-        type="search"
+        type="text"
         aria-label={label}
         placeholder={placeholder}
         {...props}
       />
+      {hasText && onClear ? (
+        <InputGroupAddon align="inline-end">
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  type="button"
+                  variant="in-field"
+                  size="icon-sm"
+                  aria-label="Clear search"
+                  onClick={onClear}
+                />
+              }
+            >
+              <XIcon />
+            </TooltipTrigger>
+            <TooltipContent side="bottom">Clear search</TooltipContent>
+          </Tooltip>
+        </InputGroupAddon>
+      ) : null}
     </InputGroup>
   )
 }

@@ -22,7 +22,11 @@ import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
 import { Truncate } from "@/components/ui/truncate"
 import { FormError } from "@/components/forms/form-error"
-import { MasterSection, useMasterRows } from "@/components/forms/master-section"
+import {
+  MASTER_PAGE_SIZE,
+  MasterSection,
+  useMasterRows,
+} from "@/components/forms/master-section"
 
 /**
  * The cost heads master. Section 11.5, admin only (section 26).
@@ -35,15 +39,14 @@ export default function CostHeadsSettingsPage() {
   const { isAdmin } = useSession()
 
   const load = React.useCallback(
-    () =>
-      api
-        .get<ListResponse<CostHead & Matchable>>(
-          `/cost-heads${query({ pageSize: 100, sort: "sortOrder", direction: "asc" })}`,
-        )
-        .then((response) => response.data),
+    (page: number) =>
+      api.get<ListResponse<CostHead & Matchable>>(
+        `/cost-heads${query({ page, pageSize: MASTER_PAGE_SIZE, sort: "sortOrder", direction: "asc" })}`,
+      ),
     [],
   )
-  const { rows, loading, error, refresh } = useMasterRows(load)
+  const { rows, loading, error, refresh, page, setPage, total, totalPages } =
+    useMasterRows(load)
 
   const [editing, setEditing] = React.useState<CostHead | null>(null)
   const [creating, setCreating] = React.useState(false)
@@ -59,6 +62,10 @@ export default function CostHeadsSettingsPage() {
         loading={loading}
         error={error}
         onRetry={refresh}
+        page={page}
+        totalPages={totalPages}
+        total={total}
+        onPageChange={setPage}
         columns={[
           {
             key: "sortOrder",
@@ -74,6 +81,7 @@ export default function CostHeadsSettingsPage() {
           },
           {
             key: "isActive",
+            priority: "secondary",
             label: "Status",
             render: (row) =>
               row.isActive ? (

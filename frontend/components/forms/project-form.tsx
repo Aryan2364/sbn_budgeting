@@ -18,7 +18,7 @@ import {
   FormSection,
 } from "@/components/templates/form-page"
 import { RecordBreadcrumb } from "@/components/forms/record-breadcrumb"
-import { FormError } from "@/components/forms/form-error"
+import { FormError, FormLoadFailed } from "@/components/forms/form-error"
 
 /**
  * Add and Edit, in ONE component (section 4 rule 1).
@@ -38,6 +38,12 @@ export function ProjectForm({ projectId }: { projectId?: string }) {
   const [loading, setLoading] = React.useState(isEdit)
   const [saving, setSaving] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
+  /**
+   * Section 13: a failed LOAD is its own state, not a failed save.
+   * Kept apart from `error`, which carries save failures only.
+   */
+  const [loadError, setLoadError] = React.useState<string | null>(null)
+  const [reloadTick, setReloadTick] = React.useState(0)
   const [fieldErrors, setFieldErrors] = React.useState<Record<string, string>>({})
 
   React.useEffect(() => {
@@ -54,13 +60,13 @@ export function ProjectForm({ projectId }: { projectId?: string }) {
       })
       .catch((caught: unknown) => {
         if (cancelled) return
-        setError(errorMessage(caught))
+        setLoadError(errorMessage(caught))
         setLoading(false)
       })
     return () => {
       cancelled = true
     }
-  }, [projectId])
+  }, [projectId, reloadTick])
 
   /**
    * Section 11.3 rule 6: validation runs when the user leaves a field,
@@ -132,6 +138,17 @@ export function ProjectForm({ projectId }: { projectId?: string }) {
           />
 
           <PageHeader className="mt-4" title={loading ? <Skeleton className="h-8 w-64" /> : title} />
+
+          {loadError !== null ? (
+            <FormLoadFailed
+              message={loadError}
+              onRetry={() => {
+                setLoadError(null)
+                setLoading(true)
+                setReloadTick((t) => t + 1)
+              }}
+            />
+          ) : null}
 
           <FormError message={error} />
 

@@ -37,6 +37,15 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { EmptyState } from "@/components/ui/empty-state"
+import {
+  Pagination,
+  PaginationBar,
+  PaginationContent,
+  PaginationCount,
+  PaginationItem,
+  PaginationNext,
+  PaginationPrevious,
+} from "@/components/ui/pagination"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
   Table,
@@ -58,6 +67,9 @@ import {
 import { RecordBreadcrumb } from "@/components/forms/record-breadcrumb"
 import { HeadPeriodGrid } from "@/components/forms/head-period-grid"
 import { DeleteRecordDialog } from "@/components/forms/delete-record-dialog"
+
+/** Section 11.1: the product's page size is 25 everywhere. */
+const EXPENSES_PAGE_SIZE = 25
 
 /** Section 11.2. The detail template, with data. */
 export default function SiteDetailPage({
@@ -93,7 +105,19 @@ function SiteDetail({ params }: { params: Promise<{ id: string }> }) {
   const [site, setSite] = React.useState<Site | null>(null)
   const [project, setProject] = React.useState<Project | null>(null)
   const [budget, setBudget] = React.useState<BudgetGrid | null>(null)
+  /**
+   * The expenses PAGE, plus the API's own total.
+   *
+   * It used to keep only `data` from a `pageSize: 25` fetch and render
+   * all of it with no page controls — so a site with 200 expenses
+   * showed 25 rows, no way to reach the rest, and **a tab badge reading
+   * 25**, which is a wrong number a user has every reason to trust.
+   * The badge now shows `total`; the rows are a page.
+   */
   const [expenses, setExpenses] = React.useState<Expense[] | null>(null)
+  const [expenseTotal, setExpenseTotal] = React.useState(0)
+  const [expensePage, setExpensePage] = React.useState(1)
+  const [expensePages, setExpensePages] = React.useState(1)
   const [varianceRows, setVarianceRows] = React.useState(0)
   const [error, setError] = React.useState<string | null>(null)
   const [deleting, setDeleting] = React.useState(false)
@@ -109,13 +133,17 @@ function SiteDetail({ params }: { params: Promise<{ id: string }> }) {
           api.get<Project>(`/projects/${found.projectId}`),
           api.get<BudgetGrid>(`/sites/${id}/budget`),
           api.get<ListResponse<Expense & Matchable>>(
-            `/expenses${query({ siteId: id, pageSize: 25, sort: "spentOn", direction: "desc" })}`,
+            `/expenses${query({ siteId: id, page: expensePage, pageSize: EXPENSES_PAGE_SIZE, sort: "spentOn", direction: "desc" })}`,
           ),
         ])
         if (cancelled) return
         setProject(proj)
         setBudget(grid)
         setExpenses(expenseList.data)
+        setExpenseTotal(expenseList.total)
+        setExpensePages(
+          Math.max(1, Math.ceil(expenseList.total / (expenseList.pageSize || EXPENSES_PAGE_SIZE))),
+        )
       })
       .catch((caught: unknown) => {
         if (!cancelled) setError(errorMessage(caught))
@@ -123,7 +151,7 @@ function SiteDetail({ params }: { params: Promise<{ id: string }> }) {
     return () => {
       cancelled = true
     }
-  }, [id])
+  }, [id, expensePage])
 
   React.useEffect(() => reload(), [reload])
 
@@ -365,7 +393,7 @@ function SiteDetail({ params }: { params: Promise<{ id: string }> }) {
         <TabsList>
           <TabsTrigger value="expenses">
             Expenses
-            <Badge variant="neutral">{formatNumber(expenses?.length ?? 0)}</Badge>
+            <Badge variant="neutral">{formatNumber(expenseTotal)}</Badge>
           </TabsTrigger>
           <TabsTrigger value="variance">
             Variance
@@ -453,6 +481,46 @@ function SiteDetail({ params }: { params: Promise<{ id: string }> }) {
                 </Table>
               )}
             </CardContent>
+
+            {/* Section 1 rule 7: the rest of the expenses are reachable. */}
+            {expenses !== null && expensePages > 1 ? (
+              <PaginationBar>
+                <PaginationCount>
+                  {formatNumber(expenseTotal)} in total
+                </PaginationCount>
+                <Pagination>
+                  <PaginationContent>
+                    <PaginationItem>
+                      <PaginationPrevious
+                        href="#"
+                        aria-disabled={expensePage <= 1}
+                        className={expensePage <= 1 ? "pointer-events-none opacity-50" : undefined}
+                        onClick={(event) => {
+                          event.preventDefault()
+                          setExpensePage((p) => Math.max(1, p - 1))
+                        }}
+                      />
+                    </PaginationItem>
+                    <PaginationItem>
+                      <span className="px-3 text-label text-text-secondary">
+                        Page {formatNumber(expensePage)} of {formatNumber(expensePages)}
+                      </span>
+                    </PaginationItem>
+                    <PaginationItem>
+                      <PaginationNext
+                        href="#"
+                        aria-disabled={expensePage >= expensePages}
+                        className={expensePage >= expensePages ? "pointer-events-none opacity-50" : undefined}
+                        onClick={(event) => {
+                          event.preventDefault()
+                          setExpensePage((p) => Math.min(expensePages, p + 1))
+                        }}
+                      />
+                    </PaginationItem>
+                  </PaginationContent>
+                </Pagination>
+              </PaginationBar>
+            ) : null}
           </Card>
         </TabsContent>
 
