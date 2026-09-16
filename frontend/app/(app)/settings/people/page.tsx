@@ -3,12 +3,14 @@
 import * as React from "react"
 
 import { api, query, type ListResponse, type Matchable, type Person } from "@/lib/api"
+import { formatNumber } from "@/lib/format"
 import { errorMessage, useSession } from "@/components/shell/session"
 import { toast } from "@/components/ui/sonner"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -109,17 +111,43 @@ export default function PeopleSettingsPage() {
         onDelete={(row) => api.delete(`/users/${row.id}`)}
         deleteWhat="person"
         deleteName={(row) => row.name}
-        deleteConsequences={(row) =>
-          row.id === user?.id ? (
-            <>This is your own account. It cannot be deleted.</>
-          ) : (
-            <>
-              Someone named on a site or who has booked expenses cannot be
-              deleted — those links have to be changed first. Removing a person
-              cannot be undone.
-            </>
-          )
-        }
+        /*
+         * Checked BEFORE the dialog opens. Two separate refusals live
+         * on the server — your own account, and a person something
+         * points at — and both used to reach the user as a red error
+         * after they had confirmed a deletion (§26). Neither has an
+         * alternative this screen can offer, so the control is disabled
+         * and the reason is its tooltip.
+         */
+        deleteBlocked={(row) => {
+          if (row.id === user?.id) {
+            return "This is your own account. Another administrator has to remove it."
+          }
+          const parts: string[] = []
+          if (row.siteCount > 0) {
+            parts.push(
+              `${formatNumber(row.siteCount)} ${
+                row.siteCount === 1 ? "site names" : "sites name"
+              } this person`,
+            )
+          }
+          if (row.expenseCount > 0) {
+            parts.push(
+              `${formatNumber(row.expenseCount)} ${
+                row.expenseCount === 1 ? "expense was" : "expenses were"
+              } booked by them`,
+            )
+          }
+          if (parts.length === 0) return null
+          return `${parts.join(" and ")}. Change those records first.`
+        }}
+        /* §15 rule 2, and only ever read on a person nothing points at. */
+        deleteConsequences={() => (
+          <>
+            No site names this person and they have booked no expenses, so
+            nothing else changes. Removing them cannot be undone.
+          </>
+        )}
         emptyHeading="No people yet"
         emptyBody="People are named on sites as managers and supervisors, and are who signs in."
         onChanged={refresh}
@@ -238,7 +266,7 @@ function PersonDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="flex flex-col gap-6 px-4">
+        <DialogBody className="flex flex-col gap-6">
           <FormError message={error} />
 
           <div className="flex flex-col gap-2">
@@ -358,7 +386,7 @@ function PersonDialog({
               <InlineFieldError>{fieldErrors.password}</InlineFieldError>
             </div>
           ) : null}
-        </div>
+        </DialogBody>
 
         <DialogFooter>
           <Button variant="secondary" onClick={() => onOpenChange(false)} disabled={saving}>

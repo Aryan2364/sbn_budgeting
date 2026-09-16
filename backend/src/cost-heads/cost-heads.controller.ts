@@ -36,11 +36,40 @@ export interface CostHeadRow {
   name: string;
   sortOrder: number;
   isActive: boolean;
+  /**
+   * What points at this head. `remove` below refuses while either is
+   * above zero, and the SCREEN has to know that before it offers the
+   * delete — section 26 forbids a control that fails after being
+   * clicked, and the only way to honour it is for the row to say
+   * whether deletion is possible. Counted rather than returned as a
+   * boolean so the dialog can name the consequence (section 15 rule 2).
+   */
+  budgetCount: number;
+  expenseCount: number;
 }
 
 @Controller('cost-heads')
 export class CostHeadsController {
   constructor(@Inject(PG_POOL) private readonly pool: Pool) {}
+
+  /**
+   * The two counts that decide whether a head can be deleted, attached
+   * to every read of one. `site_budgets.cost_head_id` and
+   * `expenses.cost_head_id` are both indexed, and this table is master
+   * data bounded by admin edits rather than by use.
+   */
+  private static readonly USAGE = `
+    left join lateral (
+      select
+        (select count(*)::int from site_budgets b where b.cost_head_id = ch.id)
+          as budget_count,
+        (select count(*)::int from expenses e where e.cost_head_id = ch.id)
+          as expense_count
+    ) u on true`;
+
+  private static readonly SELECT = `
+    ch.id, ch.name, ch.sort_order as "sortOrder", ch.is_active as "isActive",
+    u.budget_count as "budgetCount", u.expense_count as "expenseCount"`;
 
   /**
    * The master list, read through the shared list convention so that
@@ -59,9 +88,8 @@ export class CostHeadsController {
     return runListQuery<CostHeadRow>(
       this.pool,
       {
-        from: 'cost_heads ch',
-        select:
-          'ch.id, ch.name, ch.sort_order as "sortOrder", ch.is_active as "isActive"',
+        from: `cost_heads ch${CostHeadsController.USAGE}`,
+        select: CostHeadsController.SELECT,
         titleField: { sql: 'ch.name', label: 'Name' },
         // A cost head has exactly one meaningful text field. Nothing is
         // excluded from search here; there is nothing else to exclude.
@@ -84,8 +112,9 @@ export class CostHeadsController {
   get(@Param('id', new ParseUUIDPipe()) id: string): Promise<CostHeadRow> {
     return findOneOrFail<CostHeadRow>(
       this.pool,
-      `select id, name, sort_order as "sortOrder", is_active as "isActive"
-       from cost_heads where id = $1`,
+      `select ${CostHeadsController.SELECT}
+       from cost_heads ch${CostHeadsController.USAGE}
+       where ch.id = $1`,
       [id],
       'cost head',
     );

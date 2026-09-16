@@ -236,6 +236,13 @@ export interface CostHead {
   name: string
   sortOrder: number
   isActive: boolean
+  /**
+   * What points at this head. The API refuses to delete one while
+   * either is above zero, so the SCREEN reads these and never offers a
+   * delete that will fail (§26).
+   */
+  budgetCount: number
+  expenseCount: number
 }
 
 export interface SiteLocation {
@@ -251,6 +258,14 @@ export interface Person {
   phone: string | null
   role: 'admin' | 'staff'
   canLogin: boolean
+  /**
+   * What points at this person — sites they manage or supervise, and
+   * expenses they booked. The API refuses to delete one while either is
+   * above zero, so the screen reads these rather than finding out after
+   * the click (§26).
+   */
+  siteCount: number
+  expenseCount: number
 }
 
 export interface BudgetCell {

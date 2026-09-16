@@ -9,6 +9,7 @@ import { toast } from "@/components/ui/sonner"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -78,18 +79,27 @@ export default function SiteLocationsSettingsPage() {
         onDelete={(row) => api.delete(`/site-locations/${row.id}`)}
         deleteWhat="location"
         deleteName={(row) => row.name}
-        deleteConsequences={(row) =>
-          row.siteCount > 0 ? (
-            <>
-              {formatNumber(row.siteCount)}{" "}
-              {row.siteCount === 1 ? "site uses" : "sites use"} this location.
-              Change {row.siteCount === 1 ? "it" : "them"} first — the location
-              cannot be removed while it is in use.
-            </>
-          ) : (
-            <>No sites use this location. Removing it cannot be undone.</>
-          )
+        /*
+         * Checked BEFORE the dialog opens, off the count the list
+         * already carries. The server refuses while a site points here,
+         * and there is no alternative to offer — a location is not
+         * deactivatable, and the fix is on the sites — so the control
+         * is disabled and this sentence is its tooltip (§26), rather
+         * than a dialog whose only outcome is "no".
+         */
+        deleteBlocked={(row) =>
+          row.siteCount > 0
+            ? `${formatNumber(row.siteCount)} ${
+                row.siteCount === 1 ? "site uses" : "sites use"
+              } this location. Change ${
+                row.siteCount === 1 ? "that site's" : "those sites'"
+              } location first.`
+            : null
         }
+        /* §15 rule 2, and only ever read on a location no site uses. */
+        deleteConsequences={() => (
+          <>No sites use this location. Removing it cannot be undone.</>
+        )}
         emptyHeading="No locations yet"
         emptyBody="A location is where a site physically is. Sites can be created without one."
         onChanged={refresh}
@@ -170,7 +180,7 @@ function LocationDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="flex flex-col gap-6 px-4">
+        <DialogBody className="flex flex-col gap-6">
           <FormError message={error} />
           <div className="flex flex-col gap-2">
             <Label htmlFor="location-name" required>
@@ -187,7 +197,7 @@ function LocationDialog({
             />
             <InlineFieldError>{fieldError}</InlineFieldError>
           </div>
-        </div>
+        </DialogBody>
 
         <DialogFooter>
           <Button variant="secondary" onClick={() => onOpenChange(false)} disabled={saving}>

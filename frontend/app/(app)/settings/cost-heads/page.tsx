@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -97,11 +98,57 @@ export default function CostHeadsSettingsPage() {
         onDelete={(row) => api.delete(`/cost-heads/${row.id}`)}
         deleteWhat="cost head"
         deleteName={(row) => row.name}
+        /*
+         * The check runs BEFORE the dialog opens, off counts the list
+         * already carries. The server refuses a head that any budget
+         * row or expense points at, and a delete that ends in that
+         * refusal is §26's control that fails after being clicked.
+         */
+        deleteBlocked={(row) => {
+          const used = row.budgetCount + row.expenseCount
+          if (used === 0) return null
+          const parts: string[] = []
+          if (row.budgetCount > 0) {
+            parts.push(
+              `${formatNumber(row.budgetCount)} budget ${row.budgetCount === 1 ? "row" : "rows"}`,
+            )
+          }
+          if (row.expenseCount > 0) {
+            parts.push(
+              `${formatNumber(row.expenseCount)} ${row.expenseCount === 1 ? "expense" : "expenses"}`,
+            )
+          }
+          const uses = `${parts.join(" and ")} ${used === 1 ? "is" : "are"} booked against this cost head`
+          return row.isActive
+            ? `${uses}, so deleting it would take money that has already been recorded. Deactivating it keeps every figure it carries and stops it being offered on new budgets and expenses.`
+            : `${uses}, so deleting it would take money that has already been recorded. It is already inactive, so nothing further is needed.`
+        }}
+        /*
+         * Deactivation is the next action §7.2 rule 2 asks for, and it
+         * is offered here rather than described and left for the user
+         * to find behind Edit. It runs out when the head is already
+         * inactive — then there is nothing to offer and the delete goes
+         * back to disabled with the reason as its tooltip.
+         */
+        deleteAlternative={(row) =>
+          row.isActive
+            ? {
+                label: "Deactivate cost head",
+                run: async () => {
+                  await api.patch(`/cost-heads/${row.id}`, {
+                    name: row.name,
+                    isActive: false,
+                  })
+                },
+                done: `${row.name} deactivated`,
+              }
+            : null
+        }
+        /* §15 rule 2, and only ever read on a head nothing points at. */
         deleteConsequences={() => (
           <>
-            A cost head used by any budget or expense cannot be deleted —
-            deactivate it instead, which keeps the money it already carries
-            while removing it from new entry.
+            No budget row or expense uses this cost head, so nothing else
+            changes. Removing it cannot be undone.
           </>
         )}
         emptyHeading="No cost heads yet"
@@ -188,7 +235,7 @@ function CostHeadDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="flex flex-col gap-6 px-4">
+        <DialogBody className="flex flex-col gap-6">
           <FormError message={error} />
 
           <div className="flex flex-col gap-2">
@@ -223,7 +270,7 @@ function CostHeadDialog({
               </div>
             </div>
           ) : null}
-        </div>
+        </DialogBody>
 
         <DialogFooter>
           <Button variant="secondary" onClick={() => onOpenChange(false)} disabled={saving}>

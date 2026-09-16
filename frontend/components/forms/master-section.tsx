@@ -91,6 +91,8 @@ export function MasterSection<T extends { id: string }>({
   deleteWhat,
   deleteName,
   deleteConsequences,
+  deleteBlocked,
+  deleteAlternative,
   emptyHeading,
   emptyBody,
   onChanged,
@@ -126,7 +128,43 @@ export function MasterSection<T extends { id: string }>({
   onDelete: (row: T) => Promise<void>
   deleteWhat: string
   deleteName: (row: T) => string
+  /**
+   * Section 15 rule 2: what ELSE a real deletion takes with it. It is
+   * not the place to explain that a deletion is impossible — that is
+   * `deleteBlocked`, and the two were conflated until 15 Sep 2026.
+   */
   deleteConsequences: (row: T) => React.ReactNode
+  /**
+   * Why the SERVER will refuse to delete this row, or null when it will
+   * not. Section 26: never show a control that fails after being
+   * clicked — and the only thing that knows is the row, so the API
+   * carries the counts and this turns them into the sentence.
+   *
+   * Cause then next action (§7.2 rule 2), and one sentence used twice:
+   * as the disabled control's tooltip, and as the body of the dialog
+   * when there is an alternative worth opening one for.
+   */
+  deleteBlocked?: (row: T) => string | null
+  /**
+   * What to do INSTEAD, where the product has an answer — deactivating
+   * a cost head is one, and changing a site's location is not.
+   *
+   * Per ROW, because the answer can run out: a cost head that is
+   * already inactive has nothing left to offer, and its delete goes
+   * back to disabled-with-a-reason.
+   *
+   * With it, the delete control stays enabled on a blocked row and
+   * opens a dialog that explains and offers this. Without it, the
+   * control is disabled and the reason is the tooltip, which §26 and
+   * the brief both prefer: a dialog whose only outcome is "no" is a
+   * click that led nowhere.
+   */
+  deleteAlternative?: (row: T) => {
+    label: string
+    run: () => Promise<void>
+    /** The toast after it succeeds (§7.1). */
+    done: string
+  } | null
   emptyHeading: string
   emptyBody: string
   onChanged: () => void
@@ -209,7 +247,33 @@ export function MasterSection<T extends { id: string }>({
               </TableRow>
             </TableHeader>
             <TableBody>
-              {rows.map((row) => (
+              {rows.map((row) => {
+                /*
+                 * Three different reasons a delete may not happen, and
+                 * they are not interchangeable:
+                 *
+                 *   - the user may not act at all      -> disabled, §26
+                 *   - the record refuses and there is
+                 *     something to do instead          -> enabled, opens
+                 *                                         the explaining
+                 *                                         dialog
+                 *   - the record refuses and there is
+                 *     nothing to do from here          -> disabled, §26
+                 *
+                 * Only the middle one leaves the control live, and it
+                 * is not a control that fails: clicking it reaches the
+                 * next action rather than an error.
+                 */
+                const blockedReason = deleteBlocked?.(row) ?? null
+                const hasAlternative =
+                  blockedReason !== null && deleteAlternative?.(row) != null
+                const deleteDenial = !canEdit
+                  ? cannotEditReason
+                  : blockedReason !== null && !hasAlternative
+                    ? blockedReason
+                    : null
+
+                return (
                 <TableRow key={row.id}>
                   {columns.map((column) => (
                     <TableCell
@@ -250,8 +314,8 @@ export function MasterSection<T extends { id: string }>({
                           </Tooltip>
                         </PermissionTooltip>
                         <PermissionTooltip
-                          allowed={canEdit}
-                          reason={cannotEditReason}
+                          allowed={deleteDenial === null}
+                          reason={deleteDenial ?? ""}
                         >
                           <Tooltip>
                             <TooltipTrigger
@@ -260,7 +324,7 @@ export function MasterSection<T extends { id: string }>({
                                   variant="ghost"
                                   size="icon-sm"
                                   aria-label={`Delete ${deleteName(row)}`}
-                                  disabled={!canEdit}
+                                  disabled={deleteDenial !== null}
                                   onClick={() => setDeleting(row)}
                                 />
                               }
@@ -273,7 +337,8 @@ export function MasterSection<T extends { id: string }>({
                       </span>
                     </TableCell>
                 </TableRow>
-              ))}
+                )
+              })}
             </TableBody>
           </Table>
         )}
@@ -335,6 +400,20 @@ export function MasterSection<T extends { id: string }>({
           recordName={deleteName(deleting)}
           what={deleteWhat}
           consequences={deleteConsequences(deleting)}
+          /* Recomputed here rather than carried in state: the row is
+             the same object the control read, so the two can never
+             disagree about whether this is a confirmation. */
+          blocked={(() => {
+            const reason = deleteBlocked?.(deleting) ?? null
+            const alternative = reason === null ? null : deleteAlternative?.(deleting)
+            if (reason === null || !alternative) return undefined
+            return {
+              reason,
+              actionLabel: alternative.label,
+              run: alternative.run,
+              done: alternative.done,
+            }
+          })()}
           onConfirm={() => onDelete(deleting)}
           onDeleted={() => {
             setDeleting(null)

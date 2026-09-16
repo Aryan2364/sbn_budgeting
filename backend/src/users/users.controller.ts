@@ -51,6 +51,15 @@ export interface UserRow {
   phone: string | null;
   role: 'admin' | 'staff';
   canLogin: boolean;
+  /**
+   * What points at this person. `remove` below refuses while either is
+   * above zero, and the SCREEN has to know that before it offers the
+   * delete — section 26 forbids a control that fails after being
+   * clicked. Counted rather than a boolean so the reason can name the
+   * number, the way the site-location master already does.
+   */
+  siteCount: number;
+  expenseCount: number;
 }
 
 /**
@@ -70,6 +79,25 @@ export interface UserRow {
 export class UsersController {
   constructor(@Inject(PG_POOL) private readonly pool: Pool) {}
 
+  /**
+   * The two counts that decide whether a person can be deleted. A
+   * person is "named on a site" as either its manager or its
+   * supervisor, and both columns block the delete identically, so they
+   * are one number rather than two.
+   */
+  private static readonly USAGE = `
+    left join lateral (
+      select
+        (select count(*)::int from sites s
+          where s.manager_id = u.id or s.supervisor_id = u.id) as site_count,
+        (select count(*)::int from expenses e where e.created_by = u.id)
+          as expense_count
+    ) c on true`;
+
+  private static readonly SELECT = `
+    u.id, u.name, u.email, u.phone, u.role, u.can_login as "canLogin",
+    c.site_count as "siteCount", c.expense_count as "expenseCount"`;
+
   @Get()
   list(
     @Query() query: ListQueryDto,
@@ -79,9 +107,8 @@ export class UsersController {
     return runListQuery<UserRow>(
       this.pool,
       {
-        from: 'users u',
-        select:
-          'u.id, u.name, u.email, u.phone, u.role, u.can_login as "canLogin"',
+        from: `users u${UsersController.USAGE}`,
+        select: UsersController.SELECT,
         titleField: { sql: 'u.name', label: 'Name' },
         // Section 27.1: search covers every meaningful text field by
         // default. password_hash is excluded for the obvious reason and
@@ -111,8 +138,9 @@ export class UsersController {
   get(@Param('id', new ParseUUIDPipe()) id: string): Promise<UserRow> {
     return findOneOrFail<UserRow>(
       this.pool,
-      `select id, name, email, phone, role, can_login as "canLogin"
-       from users where id = $1`,
+      `select ${UsersController.SELECT}
+       from users u${UsersController.USAGE}
+       where u.id = $1`,
       [id],
       'person',
     );
