@@ -67,14 +67,18 @@ import { VarianceFigure } from "@/components/forms/variance-figures"
  * table against 901 and 709 of container.
  */
 
-type Measure = "budget" | "actual" | "variance" | "variancePct"
+export type Measure = "budget" | "actual" | "variance" | "variancePct"
 
-const MEASURES: { value: Measure; label: string }[] = [
+export const MEASURES: { value: Measure; label: string }[] = [
   { value: "budget", label: "Budget" },
   { value: "actual", label: "Actual" },
   { value: "variance", label: "Variance" },
   { value: "variancePct", label: "Variance %" },
 ]
+
+export function measureLabel(measure: Measure): string {
+  return MEASURES.find((m) => m.value === measure)?.label ?? "Budget"
+}
 
 /**
  * One cell, for whichever measure is showing.
@@ -112,14 +116,28 @@ export function HeadPeriodGrid({
   projectId,
   siteId,
   onRowCount,
+  measure: controlledMeasure,
+  onMeasureChange,
 }: {
   /** Scope. Omit both for every site; the screens always pass one. */
   projectId?: string
   siteId?: string
   /** Reported up so a tab's count badge can show the real row count. */
   onRowCount?: (count: number) => void
+  /**
+   * Controlled-with-internal-default (section 4): omit both this and
+   * `onMeasureChange` and the grid owns its own "Showing" selector
+   * exactly as before. Pass both and a caller — an exporting page that
+   * needs to know which measure is on screen — can read and drive the
+   * same value the grid renders, so the grid and the export can never
+   * disagree about what "Showing" currently means.
+   */
+  measure?: Measure
+  onMeasureChange?: (measure: Measure) => void
 }) {
-  const [measure, setMeasure] = React.useState<Measure>("budget")
+  const [internalMeasure, setInternalMeasure] = React.useState<Measure>("budget")
+  const measure = controlledMeasure ?? internalMeasure
+  const setMeasure = onMeasureChange ?? setInternalMeasure
   const [attempt, setAttempt] = React.useState(0)
   const [answer, setAnswer] = React.useState<{
     result: HeadPeriodReport | null
@@ -188,9 +206,7 @@ export function HeadPeriodGrid({
         >
           <SelectTrigger id="measure" className="w-field-min">
             <SelectValue>
-              {(value: string | null) =>
-                MEASURES.find((m) => m.value === value)?.label ?? "Budget"
-              }
+              {(value: string | null) => measureLabel((value as Measure) ?? "budget")}
             </SelectValue>
           </SelectTrigger>
           <SelectContent>

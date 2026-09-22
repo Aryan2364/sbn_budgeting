@@ -32,6 +32,7 @@ import { DatePicker } from "@/components/ui/date-picker"
 import { Input } from "@/components/ui/input"
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group"
 import { SearchableSelect } from "@/components/ui/searchable-select"
+import { Textarea } from "@/components/ui/textarea"
 import {
   Select,
   SelectContent,
@@ -70,11 +71,11 @@ function fromIsoDate(text: string | undefined): Date | undefined {
 /**
  * Add and Edit, in ONE component (section 4 rule 1).
  *
- * The fields are exactly what the spreadsheet has (question 2): site,
- * date, cost head, period, bill / voucher number, approved by, amount.
- * **There is no description field** and **no upload control**
- * (questions 2 and 4) — both were considered and ruled out, so neither
- * is missing by accident.
+ * The fields are what the spreadsheet has (question 2) plus a free-form
+ * description of what the money was spent on: site, date, cost head,
+ * period, amount, description, bill / voucher number, approved by.
+ * **There is no upload control** (question 4) — considered and ruled
+ * out, so it is not missing by accident.
  */
 export function ExpenseForm({ expenseId }: { expenseId?: string }) {
   const router = useRouter()
@@ -87,6 +88,7 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
   const [spentOn, setSpentOn] = React.useState<Date | undefined>(undefined)
   const [chosenPeriod, setChosenPeriod] = React.useState<number | null>(null)
   const [amount, setAmount] = React.useState("")
+  const [description, setDescription] = React.useState("")
   const [billNumber, setBillNumber] = React.useState("")
   const [approvedBy, setApprovedBy] = React.useState("")
 
@@ -141,6 +143,7 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
           // date would suggest now (question 6).
           setPeriodOverridden(true)
           setAmount(paiseToRupeeInput(expense.amountPaise))
+          setDescription(expense.description ?? "")
           setBillNumber(expense.billNumber ?? "")
           setApprovedBy(expense.approvedBy ?? "")
           /*
@@ -252,6 +255,7 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
         spentOn: toIsoDate(spentOn!),
         period,
         amountPaise: parsed.ok ? parsed.paise! : "0",
+        description: description || null,
         billNumber: billNumber || null,
         approvedBy: approvedBy || null,
       }
@@ -444,6 +448,15 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
                     }}
                   />
                 </InputGroup>
+              </FormField>
+
+              <FormField span={12} label="Description" htmlFor="description">
+                <Textarea
+                  id="description"
+                  value={description}
+                  disabled={loading}
+                  onChange={(event) => setDescription(event.target.value)}
+                />
               </FormField>
             </FormSection>
 

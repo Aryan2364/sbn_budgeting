@@ -76,7 +76,7 @@ function AppShell({ children }: { children: React.ReactNode }) {
           the overlay below takes over. The width comes from
           <html data-sidebar> so a restored choice does not animate in
           on every page load. */}
-      <aside className="hidden w-sidebar shrink-0 flex-col border-r border-border-light bg-surface transition-[width] duration-200 ease-out lg:flex rail:w-sidebar-rail">
+      <aside className="no-print hidden w-sidebar shrink-0 flex-col border-r border-border-light bg-surface transition-[width] duration-200 ease-out lg:flex rail:w-sidebar-rail">
         <SidebarBody collapsible collapsed={collapsed} />
       </aside>
 

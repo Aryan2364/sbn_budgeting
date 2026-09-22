@@ -16,14 +16,18 @@ import {
   query,
   type BudgetGrid,
   type Expense,
+  type HeadPeriodReport,
+  type HeadPeriodRow,
   type ListResponse,
   type Matchable,
   type Project,
   type Site,
+  type VariancePeriodRow,
 } from "@/lib/api"
-import { formatAmount, formatCurrency, formatDate, formatNumber } from "@/lib/format"
+import { EMPTY_VALUE, formatAmount, formatCurrency, formatDate, formatNumber, formatPercent } from "@/lib/format"
 import { multiplyPaise, sumPaise } from "@/lib/money"
-import { anchorLabel, periodAnchor, periodLabel } from "@/lib/periods"
+import { anchorLabel, PERIODS, periodAnchor, periodLabel } from "@/lib/periods"
+import type { PdfColumn, PdfTotalRow } from "@/lib/pdf-export"
 import { errorMessage, useSession } from "@/components/shell/session"
 import { Badge } from "@/components/ui/badge"
 import { Banner, BannerDescription, BannerTitle } from "@/components/ui/banner"
@@ -37,6 +41,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { EmptyState } from "@/components/ui/empty-state"
+import { ExportPdfButton } from "@/components/ui/export-pdf-button"
+import { PrintHeader } from "@/components/ui/print-header"
 import {
   Pagination,
   PaginationBar,
@@ -65,12 +71,62 @@ import {
   DetailFieldList,
 } from "@/components/templates/detail-page"
 import { RecordBreadcrumb } from "@/components/forms/record-breadcrumb"
-import { HeadPeriodGrid } from "@/components/forms/head-period-grid"
+import { HeadPeriodGrid, measureLabel, type Measure } from "@/components/forms/head-period-grid"
 import { DeleteRecordDialog } from "@/components/forms/delete-record-dialog"
 import { PermissionTooltip } from "@/components/forms/permission-tooltip"
+import { varianceDirection } from "@/components/forms/variance-figures"
 
 /** Section 11.1: the product's page size is 25 everywhere. */
 const EXPENSES_PAGE_SIZE = 25
+
+/**
+ * PDF cell formatters for the Variance tab's export, mirroring exactly
+ * what `HeadPeriodGrid`'s `Figure` renders — for WHICHEVER measure the
+ * grid is currently showing (bug fix, Sep 2026). The export used to be
+ * hardcoded to "Budget" regardless of the on-screen selector; now the
+ * measure is lifted to this page (see `varianceMeasure` below) and
+ * these formatters switch on it exactly as `Figure` does.
+ */
+function pdfBudgetCell(cell: VariancePeriodRow): string {
+  return cell.budgetPaise === null ? "Budget not set" : formatAmount(cell.budgetPaise)
+}
+
+function pdfVarianceCellText(paise: string | null): string {
+  const direction = varianceDirection(paise)
+  if (direction === null || paise === null) return EMPTY_VALUE
+  return `${direction} ${formatAmount(paise)}`
+}
+
+function pdfVariancePctCellText(pct: string | null): string {
+  return pct === null ? EMPTY_VALUE : formatPercent(Number(pct))
+}
+
+function pdfMeasureCell(cell: VariancePeriodRow, measure: Measure): string {
+  switch (measure) {
+    case "budget":
+      return pdfBudgetCell(cell)
+    case "actual":
+      return formatAmount(cell.actualPaise)
+    case "variance":
+      return pdfVarianceCellText(cell.variancePaise)
+    case "variancePct":
+      return pdfVariancePctCellText(cell.variancePct)
+  }
+}
+
+function varianceExportColumns(measure: Measure): PdfColumn<HeadPeriodRow>[] {
+  return [
+    { header: "Cost head", cell: (row) => row.costHeadName },
+    ...PERIODS.map(
+      (label, index): PdfColumn<HeadPeriodRow> => ({
+        header: label,
+        cell: (row) => pdfMeasureCell(row.cells[index], measure),
+        numeric: true,
+      }),
+    ),
+    { header: "Total", cell: (row) => pdfMeasureCell(row.total, measure), numeric: true },
+  ]
+}
 
 /** Section 11.2. The detail template, with data. */
 export default function SiteDetailPage({
@@ -119,6 +175,49 @@ function SiteDetail({ params }: { params: Promise<{ id: string }> }) {
   const [expenseTotal, setExpenseTotal] = React.useState(0)
   const [expensePage, setExpensePage] = React.useState(1)
   const [expensePages, setExpensePages] = React.useState(1)
+
+  /**
+   * The Variance tab's PDF export. `HeadPeriodGrid` (section 34) already
+   * fetches every cost head in one call — not paginated, per 34.2 — so
+   * `fetchPage` just returns everything on page 1. The grand total
+   * (section 34.1) is computed in SQL by the same endpoint, so it is
+   * captured in a ref here rather than summed client-side, and read back
+   * by `buildTotalRow`.
+   */
+  const varianceTotalsRef = React.useRef<{
+    periodTotals: VariancePeriodRow[]
+    total: VariancePeriodRow
+  } | null>(null)
+
+  /**
+   * BUG FIX: the measure selector used to live only inside
+   * `HeadPeriodGrid`'s own state, invisible to this page, so the
+   * export always shipped "Budget" no matter what was on screen.
+   * `HeadPeriodGrid` now accepts `measure`/`onMeasureChange` as a
+   * controlled-with-internal-default pair; this page controls it so
+   * the grid and the export below always read the same value.
+   */
+  const [varianceMeasure, setVarianceMeasure] = React.useState<Measure>("budget")
+
+  const varianceFetchPage = React.useCallback(async () => {
+    const result = await api.get<HeadPeriodReport>(
+      `/reports/variance/head-periods${query({ siteId: id })}`,
+    )
+    varianceTotalsRef.current = { periodTotals: result.periodTotals, total: result.total }
+    return { data: result.rows, total: result.rows.length }
+  }, [id])
+
+  const varianceTotalRow = React.useCallback((): PdfTotalRow | undefined => {
+    const t = varianceTotalsRef.current
+    if (!t) return undefined
+    return {
+      cells: [
+        "Total",
+        ...t.periodTotals.map((cell) => pdfMeasureCell(cell, varianceMeasure)),
+        pdfMeasureCell(t.total, varianceMeasure),
+      ],
+    }
+  }, [varianceMeasure])
   const [varianceRows, setVarianceRows] = React.useState(0)
   const [error, setError] = React.useState<string | null>(null)
   const [deleting, setDeleting] = React.useState(false)
@@ -547,6 +646,11 @@ function SiteDetail({ params }: { params: Promise<{ id: string }> }) {
             <CardHeader>
               <div className="min-w-0">
                 <CardTitle>Variance by cost head and year</CardTitle>
+                {site ? (
+                  <PrintHeader
+                    title={`${site.name} — Variance by cost head and year`}
+                  />
+                ) : null}
                 {/*
                   Section 3: every budget figure states its basis, and
                   with five periods the basis names the period too —
@@ -561,6 +665,17 @@ function SiteDetail({ params }: { params: Promise<{ id: string }> }) {
                   </p>
                 ) : null}
               </div>
+              <ExportPdfButton
+                title={
+                  site
+                    ? `${site.name} — Variance by cost head and year — ${measureLabel(varianceMeasure)}`
+                    : `Variance by cost head and year — ${measureLabel(varianceMeasure)}`
+                }
+                contextDescription={site ? `Site: ${site.name}` : undefined}
+                columns={varianceExportColumns(varianceMeasure)}
+                fetchPage={varianceFetchPage}
+                buildTotalRow={varianceTotalRow}
+              />
             </CardHeader>
             {/*
               `overflow-x-auto` because this host cannot scroll and the
@@ -589,7 +704,12 @@ function SiteDetail({ params }: { params: Promise<{ id: string }> }) {
             <CardContent className="overflow-x-auto p-0">
               {/* The SAME component Report 2 uses, scoped to this site
                   instead of to a project. Not a second version. */}
-              <HeadPeriodGrid siteId={id} onRowCount={setVarianceRows} />
+              <HeadPeriodGrid
+                siteId={id}
+                onRowCount={setVarianceRows}
+                measure={varianceMeasure}
+                onMeasureChange={setVarianceMeasure}
+              />
             </CardContent>
           </Card>
         </TabsContent>

@@ -254,7 +254,7 @@ function TopBar({
   toggleLabel: string
 }) {
   return (
-    <header className="flex h-topbar shrink-0 items-center gap-3 border-b border-border-light bg-surface px-4">
+    <header className="no-print flex h-topbar shrink-0 items-center gap-3 border-b border-border-light bg-surface px-4">
       <SidebarToggle onToggle={onToggle} label={toggleLabel} />
       <GlobalSearch />
       <div className="ml-auto flex shrink-0 items-center gap-2">

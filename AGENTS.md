@@ -438,11 +438,59 @@ hand-roll the states, and do not reach for `ghost` inside a field.
 ### 6.4 States
 
 Every interactive element defines four states: resting, hover, pressed,
-disabled. Hover changes the background. Pressed changes it further.
-Disabled reduces contrast and removes the pointer cursor.
+disabled. Disabled reduces contrast and removes the pointer cursor.
+
+**"Pressed" belongs to controls that are pressed** — a button, a menu
+trigger, a tab, a checkbox, a row action. For these, hover changes the
+background and pressed changes it further.
+
+**A text-entry control is not pressed, it is focused.** An input, a
+textarea, a search field, a combobox's text half. Its background does
+not change on hover or while typing: that background carries text the
+user is reading back, and it must not shift under them. Focus is
+carried by the border and the `primary-ring` focus ring, which is what
+the user actually looks for. Such a control still defines resting,
+focus, disabled and invalid — it simply defines no hover or pressed
+*fill*.
+
+A pointer left over a field after a click holds `:hover` for as long as
+the user types. A hover fill on a text field is therefore not a brief
+highlight; it is how the field looks in use. That is what makes it
+wrong rather than merely unnecessary.
 
 Keyboard focus shows a visible ring in `primary-ring`. Never remove the
 focus outline.
+
+### 6.5 Composite controls
+
+Agreed 22 Sep 2026, after the defect below was found on a live screen.
+
+A composite control — a field with an icon addon, a field with a clear
+button, an input group — has **one element that owns the border, the
+radius and the height**. Everything inside sits within it.
+
+1. **An inner element never carries the wrapper's full control height.**
+   The wrapper's `h-control` is a border-box measurement and already
+   includes its border. An inner child given that same `h-control` is
+   two pixels taller than the space it has, overflows, and paints
+   across the border on both edges. Inner elements size from the
+   wrapper.
+2. **A state fill is painted by the element that owns the border and
+   the radius, never by a child.** A child has had its radius stripped,
+   so its fill is a sharp-cornered rectangle that stops short wherever
+   a sibling addon sits. `bg-transparent` on a child does not cancel
+   that child's own hover and pressed fills — it only sets the resting
+   one. Where a composite control needs a state fill, the outer element
+   draws it, with the `has-[...]` and `group-*` selectors already used
+   there for focus and disabled.
+
+Measured on the list-page search field: `InputGroup` is `h-control`
+plus `border`, leaving 34px of content; the inner input was a fixed
+36px with `border-0`, and its `hover:bg-surface-control` still fired.
+The result was a square grey block overlapping the border on all four
+sides and stopping short of the search icon. The fill made a geometry
+bug visible that `bg-transparent` had hidden — both are bugs, and the
+sizing one is the older of the two.
 
 ---
 

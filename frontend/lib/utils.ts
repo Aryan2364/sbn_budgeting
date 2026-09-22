@@ -35,6 +35,22 @@ const twMerge = extendTailwindMerge({
         },
       ],
     },
+    /**
+     * Section 6.5: an inner element of a composite control has to be
+     * able to override the wrapper-sized `h-control` it inherits (e.g.
+     * `InputGroupInput` overriding `Input`'s height with `h-full`) and
+     * have tailwind-merge actually drop the loser. Without this,
+     * `h-control` and `h-full` are unrelated custom classes to
+     * tailwind-merge and both end up in the class list, so which one
+     * wins depends on generated CSS order rather than which was passed
+     * last. Registering the control tokens on the `spacing` scale puts
+     * `h-control`/`w-control`/`size-control` (and their `-sm`/`-lg`
+     * variants) in the same group as `h-full`, `h-auto`, etc., so the
+     * last one passed to `cn()` wins, same as every other utility here.
+     */
+    theme: {
+      spacing: ["control", "control-sm", "control-lg"],
+    },
   },
 })
 

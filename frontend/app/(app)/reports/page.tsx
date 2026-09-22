@@ -4,9 +4,21 @@ import * as React from "react"
 import { useSearchParams } from "next/navigation"
 
 import { api, query } from "@/lib/api"
-import type { ListResponse, Matchable, VarianceRow } from "@/lib/api"
-import { formatAmount, formatNumber } from "@/lib/format"
+import type {
+  HeadPeriodReport,
+  HeadPeriodRow,
+  ListResponse,
+  Matchable,
+  PeriodSummary,
+  VariancePeriodRow,
+  VarianceRow,
+} from "@/lib/api"
+import { EMPTY_VALUE, formatAmount, formatNumber, formatPercent } from "@/lib/format"
+import { PERIODS, periodLabel } from "@/lib/periods"
 import { EmptyState } from "@/components/ui/empty-state"
+import { ExportPdfButton } from "@/components/ui/export-pdf-button"
+import type { PdfColumn, PdfTotalRow } from "@/lib/pdf-export"
+import { PrintHeader } from "@/components/ui/print-header"
 import { Truncate } from "@/components/ui/truncate"
 import { PageFrame, PageHeader } from "@/components/templates/page"
 import { ListDataArea, ListToolbar } from "@/components/templates/list-page"
@@ -16,13 +28,55 @@ import {
   BudgetFigure,
   VarianceFigure,
   VariancePercentFigure,
+  varianceDirection,
 } from "@/components/forms/variance-figures"
-import { HeadPeriodGrid } from "@/components/forms/head-period-grid"
+import { HeadPeriodGrid, measureLabel, type Measure } from "@/components/forms/head-period-grid"
 import { PeriodSummaryTable } from "@/components/forms/period-summary-table"
 import {
   ReportScopeControls,
   useReportScope,
 } from "@/components/forms/report-scope"
+
+/**
+ * Shared PDF cell formatters, mirroring exactly what the on-screen
+ * `variance-figures` components render (BudgetFigure, VarianceFigure,
+ * VariancePercentFigure) but as plain strings for the PDF table.
+ */
+function pdfBudgetCell(paise: string | null): string {
+  return paise === null ? "Budget not set" : formatAmount(paise)
+}
+
+function pdfVarianceCell(paise: string | null): string {
+  if (paise === null) return EMPTY_VALUE
+  return `${varianceDirection(paise)} ${formatAmount(paise)}`
+}
+
+function pdfVariancePctCell(pct: string | null): string {
+  return pct === null ? EMPTY_VALUE : formatPercent(Number(pct))
+}
+
+function pdfPeriodCell(cell: VariancePeriodRow): string {
+  return pdfBudgetCell(cell.budgetPaise)
+}
+
+/**
+ * The head-period grid's export must carry whichever measure the user
+ * is actually looking at (bug fix, Sep 2026) — never a hardcoded
+ * "Budget" — so this mirrors `HeadPeriodGrid`'s own `Figure` switch,
+ * one measure at a time, same as the screen.
+ */
+function pdfHeadCell(cell: VariancePeriodRow, measure: Measure): string {
+  switch (measure) {
+    case "budget":
+      return pdfBudgetCell(cell.budgetPaise)
+    case "actual":
+      return formatAmount(cell.actualPaise)
+    case "variance":
+      return pdfVarianceCell(cell.variancePaise)
+    case "variancePct":
+      return pdfVariancePctCell(cell.variancePct)
+  }
+}
 
 /**
  * The Reports section. Three reports over the same variance
@@ -123,6 +177,20 @@ const COLUMNS: RecordColumn<VarianceSiteRow>[] = [
   },
 ]
 
+const SITES_EXPORT_COLUMNS: PdfColumn<VarianceSiteRow>[] = [
+  { header: "Site", cell: (row) => row.siteName },
+  { header: "Project", cell: (row) => row.projectName },
+  { header: "Trees", cell: (row) => formatNumber(row.plannedTrees), numeric: true },
+  { header: "Budget", cell: (row) => pdfBudgetCell(row.budgetPaise), numeric: true },
+  { header: "Actual", cell: (row) => formatAmount(row.actualPaise), numeric: true },
+  { header: "Variance", cell: (row) => pdfVarianceCell(row.variancePaise), numeric: true },
+  {
+    header: "Variance %",
+    cell: (row) => pdfVariancePctCell(row.variancePct),
+    numeric: true,
+  },
+]
+
 function SitesReport({ tabs }: { tabs: React.ReactNode }) {
   /**
    * The variance endpoint predates the shared list convention's
@@ -181,6 +249,11 @@ function SitesReport({ tabs }: { tabs: React.ReactNode }) {
       searchLabel="Search sites"
       searchPlaceholder="Search sites"
       sectionTabs={tabs}
+      printTitle="Variance report — By site"
+      exportPdf={{
+        title: "Variance report — By site",
+        columns: SITES_EXPORT_COLUMNS,
+      }}
       columns={COLUMNS}
       /*
        * Variance ASCENDING, worst first, so the most overspent site is
@@ -206,9 +279,112 @@ function SitesReport({ tabs }: { tabs: React.ReactNode }) {
 // rather than two that drift apart.
 // ---------------------------------------------------------------
 
+const YEAR_EXPORT_COLUMNS: PdfColumn<VariancePeriodRow>[] = [
+  { header: "Period", cell: (row) => periodLabel(row.period) },
+  { header: "Budget", cell: pdfPeriodCell, numeric: true },
+  { header: "Actual", cell: (row) => formatAmount(row.actualPaise), numeric: true },
+  { header: "Variance", cell: (row) => pdfVarianceCell(row.variancePaise), numeric: true },
+  {
+    header: "Variance %",
+    cell: (row) => pdfVariancePctCell(row.variancePct),
+    numeric: true,
+  },
+]
+
+function headExportColumns(measure: Measure): PdfColumn<HeadPeriodRow>[] {
+  return [
+    { header: "Cost head", cell: (row) => row.costHeadName },
+    ...PERIODS.map(
+      (label, index): PdfColumn<HeadPeriodRow> => ({
+        header: label,
+        cell: (row) => pdfHeadCell(row.cells[index], measure),
+        numeric: true,
+      }),
+    ),
+    { header: "Total", cell: (row) => pdfHeadCell(row.total, measure), numeric: true },
+  ]
+}
+
 function YearReport({ view, tabs }: { view: string; tabs: React.ReactNode }) {
   const scope = useReportScope()
   const { projectId, siteId } = scope.scope
+
+  const scopeDescription = `Project: ${scope.projects[projectId] ?? "—"} · ${
+    siteId ? `Site: ${scope.sites[siteId] ?? "All sites"}` : "All sites"
+  }`
+
+  /**
+   * These report tables (section 34) are not paginated — the endpoint
+   * already returns every row in one call — so the export's `fetchPage`
+   * just returns everything on page 1 with `total = data.length`, which
+   * ends the button's paging loop immediately.
+   *
+   * The API's grand total (section 34.1) is computed in SQL, not summed
+   * from the fetched rows, so it is captured in a ref by `fetchPage` and
+   * read back by `buildTotalRow` rather than recomputed client-side.
+   */
+  const periodTotalRef = React.useRef<VariancePeriodRow | null>(null)
+  const headTotalsRef = React.useRef<{
+    periodTotals: VariancePeriodRow[]
+    total: VariancePeriodRow
+  } | null>(null)
+
+  /**
+   * BUG FIX: the measure selector used to live only inside
+   * `HeadPeriodGrid`'s own state, invisible to this page — so the
+   * export always shipped "Budget" no matter what the grid was
+   * showing. `HeadPeriodGrid` now accepts `measure`/`onMeasureChange`
+   * as a controlled-with-internal-default pair; this page controls it
+   * so the grid on screen and the export below read the exact same
+   * value.
+   */
+  const [headMeasure, setHeadMeasure] = React.useState<Measure>("budget")
+  const headExportColumnsForMeasure = React.useMemo(
+    () => headExportColumns(headMeasure),
+    [headMeasure],
+  )
+
+  const periodFetchPage = React.useCallback(async () => {
+    const result = await api.get<PeriodSummary>(
+      `/reports/variance/periods-summary${query({ projectId, siteId })}`,
+    )
+    periodTotalRef.current = result.total
+    return { data: result.rows, total: result.rows.length }
+  }, [projectId, siteId])
+
+  const periodTotalRow = React.useCallback((): PdfTotalRow | undefined => {
+    const t = periodTotalRef.current
+    if (!t) return undefined
+    return {
+      cells: [
+        "Total",
+        pdfPeriodCell(t),
+        formatAmount(t.actualPaise),
+        pdfVarianceCell(t.variancePaise),
+        pdfVariancePctCell(t.variancePct),
+      ],
+    }
+  }, [])
+
+  const headFetchPage = React.useCallback(async () => {
+    const result = await api.get<HeadPeriodReport>(
+      `/reports/variance/head-periods${query({ projectId, siteId })}`,
+    )
+    headTotalsRef.current = { periodTotals: result.periodTotals, total: result.total }
+    return { data: result.rows, total: result.rows.length }
+  }, [projectId, siteId])
+
+  const headTotalRow = React.useCallback((): PdfTotalRow | undefined => {
+    const t = headTotalsRef.current
+    if (!t) return undefined
+    return {
+      cells: [
+        "Total",
+        ...t.periodTotals.map((cell) => pdfHeadCell(cell, headMeasure)),
+        pdfHeadCell(t.total, headMeasure),
+      ],
+    }
+  }, [headMeasure])
 
   return (
     <PageFrame>
@@ -218,6 +394,14 @@ function YearReport({ view, tabs }: { view: string; tabs: React.ReactNode }) {
           view === "years"
             ? "Budget against actual for each budget period"
             : "Budget against actual for each cost head, period by period"
+        }
+      />
+
+      <PrintHeader
+        title={
+          view === "years"
+            ? "Variance report — By year"
+            : "Variance report — By cost head and year"
         }
       />
 
@@ -231,6 +415,25 @@ function YearReport({ view, tabs }: { view: string; tabs: React.ReactNode }) {
       */}
       <ListToolbar>
         <ReportScopeControls {...scope} />
+        {view === "years" ? (
+          <ExportPdfButton
+            className="ml-auto"
+            title="Variance report — By year"
+            contextDescription={scopeDescription}
+            columns={YEAR_EXPORT_COLUMNS}
+            fetchPage={periodFetchPage}
+            buildTotalRow={periodTotalRow}
+          />
+        ) : (
+          <ExportPdfButton
+            className="ml-auto"
+            title={`Variance report — By cost head and year — ${measureLabel(headMeasure)}`}
+            contextDescription={scopeDescription}
+            columns={headExportColumnsForMeasure}
+            fetchPage={headFetchPage}
+            buildTotalRow={headTotalRow}
+          />
+        )}
       </ListToolbar>
 
       <ListDataArea>
@@ -255,6 +458,8 @@ function YearReport({ view, tabs }: { view: string; tabs: React.ReactNode }) {
           <HeadPeriodGrid
             projectId={projectId || undefined}
             siteId={siteId || undefined}
+            measure={headMeasure}
+            onMeasureChange={setHeadMeasure}
           />
         )}
       </ListDataArea>

@@ -10,6 +10,7 @@ import { ApiError, type ListResponse, type Matchable } from "@/lib/api"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { EmptyState } from "@/components/ui/empty-state"
+import { PrintHeader } from "@/components/ui/print-header"
 import {
   Pagination,
   PaginationBar,
@@ -29,6 +30,8 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { Truncate } from "@/components/ui/truncate"
+import { ExportPdfButton } from "@/components/ui/export-pdf-button"
+import type { PdfColumn, PdfTotalRow } from "@/lib/pdf-export"
 import { PageFrame, PageHeader } from "@/components/templates/page"
 import {
   ListDataArea,
@@ -90,11 +93,19 @@ export interface RecordListProps<T> {
   defaultDirection?: "asc" | "desc"
   columns: RecordColumn<T>[]
   rowHref?: (row: T) => string
+  /**
+   * `pageSize` is OPTIONAL and additive. Existing callers that ignore it
+   * keep using the server's `DEFAULT_PAGE_SIZE` exactly as before — this
+   * exists so `RecordList`'s own PDF export (see `exportPdf` below) can
+   * ask for the API's `MAX_PAGE_SIZE` (100) instead of paging one screen
+   * at a time.
+   */
   load: (params: {
     page: number
     search: string
     sort: string
     direction: "asc" | "desc"
+    pageSize?: number
   }) => Promise<ListResponse<T & Matchable>>
   /** What "nothing yet" offers. Section 13: never to someone who filtered. */
   emptyHeading: string
@@ -118,8 +129,70 @@ export interface RecordListProps<T> {
    * toolbar. Nothing else may come between them.
    */
   sectionTabs?: React.ReactNode
+  /**
+   * The print-only header line (`PrintHeader`), shown only when this
+   * list also exports to PDF via the `exportPdf` prop below. Rendered
+   * in the page header, which the print stylesheet never hides —
+   * unlike the toolbar the export button itself sits in.
+   *
+   * Never wire `<ExportPdfButton />` through `toolbarExtra` instead —
+   * a button built at the page level closes over whatever `search`/
+   * `sort`/`direction` the caller happened to have at that point, and
+   * cannot see the live values this component updates as the user
+   * types and sorts. That is exactly the bug `exportPdf` exists to
+   * rule out: the button it renders is built HERE, from the same
+   * state the table below is rendering with, so the PDF and the
+   * screen can never disagree.
+   */
+  printTitle?: string
   /** Bumping this refetches — used after a delete or a save elsewhere. */
   refreshKey?: number
+  /**
+   * Optional: an aggregate figure joined onto the header meta line,
+   * next to the record count (section 11.1 zone 1 — "record count as
+   * meta text under the title"). This is a LIST PAGE, not a data entry
+   * grid (section 31.3) or a report table (section 34) — neither of
+   * those sections' pinned-footer rules apply here, so the total lives
+   * in the non-scrolling header instead of costing the data area a row.
+   *
+   * Reads `result.aggregates`, the same server-computed figure the old
+   * footer row read. Joined with the same "·" convention this
+   * component already uses for `exportContextDescription` below.
+   *
+   * Omitted by every existing caller, so nothing else changes.
+   */
+  metaTotal?: (aggregates: Record<string, string>) => React.ReactNode
+  /**
+   * Enables the "Export PDF" toolbar button, built and owned by
+   * `RecordList` itself — never passed in via `toolbarExtra` — because
+   * only `RecordList` knows the CURRENT search/sort/direction. A
+   * `fetchPage` built at the page level would silently export
+   * unfiltered, default-sorted data while the PDF heading claimed
+   * otherwise (a report that lies is worse than no report).
+   *
+   * `title` and `columns` are what only the caller knows (the PDF's
+   * heading and how to render each column's cell text — see
+   * `PdfColumn`). `buildTotalRow` is called with the collected rows and,
+   * when the caller declared `totals` above, the same `aggregates` the
+   * on-screen total row reads, so the PDF's total can reuse the exact
+   * `formatAmount`/etc. text as the screen instead of re-deriving it.
+   */
+  exportPdf?: {
+    /** The PDF heading and the downloaded filename's seed. */
+    title: string
+    /** In the same order as the on-screen columns, formatted the same way. */
+    columns: PdfColumn<T>[]
+    /**
+     * Builds the bold total row. `aggregates` is the same
+     * `result.aggregates` the on-screen `totals` footer reads (present
+     * only when `totals` above is also supplied) — reuse `totals.render`
+     * so the two can never disagree in value or wording.
+     */
+    buildTotalRow?: (
+      rows: T[],
+      aggregates?: Record<string, string>,
+    ) => PdfTotalRow | undefined
+  }
 }
 
 export function RecordList<T extends { id: string }>({
@@ -140,7 +213,10 @@ export function RecordList<T extends { id: string }>({
   emptyActionHref,
   toolbarExtra,
   sectionTabs,
+  printTitle,
   refreshKey = 0,
+  metaTotal,
+  exportPdf,
 }: RecordListProps<T>) {
   const router = useRouter()
   const [searchInput, setSearchInput] = React.useState("")
@@ -223,6 +299,48 @@ export function RecordList<T extends { id: string }>({
   const rows = result?.data ?? []
   const isFiltered = search.trim() !== ""
 
+  // ---- PDF export: owned here, never at the page level -----------------
+  //
+  // `lastAggregatesRef` carries the most recent `result.aggregates` this
+  // export run has seen, so the wrapped `buildTotalRow` below can hand
+  // the caller the SAME totals the on-screen footer reads even though
+  // `ExportPdfButton` itself only ever passes it the collected `rows`.
+  const lastAggregatesRef = React.useRef<Record<string, string> | undefined>(
+    undefined,
+  )
+
+  // Recreated on every render, so it always closes over the CURRENT
+  // search/sort/direction state — the critical correctness property:
+  // this is the exact same `search`/`sort`/`direction` the table below
+  // is rendering with, not a copy captured once at mount.
+  const exportFetchPage = exportPdf
+    ? async (page: number, pageSize: number) => {
+        const response = await load({ page, search, sort, direction, pageSize })
+        lastAggregatesRef.current = response.aggregates
+        return { data: response.data, total: response.total }
+      }
+    : undefined
+
+  const exportBuildTotalRow = exportPdf?.buildTotalRow
+    ? (rows: T[]) => exportPdf.buildTotalRow!(rows, lastAggregatesRef.current)
+    : undefined
+
+  // Section 27: describe the active search/sort in the same words the
+  // toolbar and column headers use. A printed report that does not say
+  // it was filtered misleads whoever reads it on paper.
+  const sortColumn = columns.find((c) => c.sortKey === sort)
+  const sortDescription = sortColumn
+    ? `Sort: ${sortColumn.label} (${direction === "asc" ? "ascending" : "descending"})`
+    : null
+  const searchDescription = isFiltered ? `Search: "${search.trim()}"` : null
+  const isDefaultSort =
+    sort === (defaultSort ?? columns.find((c) => c.sortKey)?.sortKey ?? "") &&
+    direction === defaultDirection
+  const exportContextDescription =
+    !isFiltered && isDefaultSort
+      ? "Showing all records, default sort."
+      : [searchDescription, sortDescription].filter(Boolean).join(" · ")
+
   return (
     <PageFrame>
       <PageHeader
@@ -230,7 +348,15 @@ export function RecordList<T extends { id: string }>({
         meta={
           state === "loading" && !result
             ? "Loading records"
-            : countLabel(total)
+            : metaTotal && result?.aggregates
+              ? [countLabel(total), metaTotal(result.aggregates)]
+                  .filter(Boolean)
+                  .reduce<React.ReactNode[]>((acc, part, index) => {
+                    if (index > 0) acc.push(" · ")
+                    acc.push(part)
+                    return acc
+                  }, [])
+              : countLabel(total)
         }
         actions={
           createHref && createLabel ? (
@@ -241,6 +367,8 @@ export function RecordList<T extends { id: string }>({
           ) : undefined
         }
       />
+
+      {printTitle ? <PrintHeader title={printTitle} /> : null}
 
       {sectionTabs}
 
@@ -259,6 +387,16 @@ export function RecordList<T extends { id: string }>({
           </span>
         ) : null}
         {toolbarExtra}
+        {exportPdf ? (
+          <ExportPdfButton
+            className="ml-auto"
+            title={exportPdf.title}
+            columns={exportPdf.columns}
+            fetchPage={exportFetchPage}
+            buildTotalRow={exportBuildTotalRow}
+            contextDescription={exportContextDescription}
+          />
+        ) : null}
       </ListToolbar>
 
       <ListDataArea

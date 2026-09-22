@@ -61,6 +61,15 @@ export interface ListSpec {
   filters?: Record<string, FilterBuilder>;
   /** Always-on restriction, e.g. a soft-delete or a scope. */
   baseWhere?: string;
+  /**
+   * Optional grand totals over EVERY row matching the current
+   * search/filters, not just the page. Each value is a bare SQL
+   * aggregate expression (`sum(e.amount_paise)`); this module adds the
+   * `over ()` window itself so a caller cannot forget it and silently
+   * get a per-row aggregate instead of a grand one. One round trip,
+   * over the identical WHERE clause as the page and the total count.
+   */
+  aggregates?: Record<string, string>;
 }
 
 export interface ListParams {
@@ -83,6 +92,12 @@ export interface ListResult<T> {
   search: string | null;
   /** Which filters were actually applied — the chips the toolbar shows. */
   appliedFilters: Record<string, string>;
+  /**
+   * Grand totals over every row matching the current search/filters,
+   * keyed the same as `spec.aggregates`. Always strings: these are
+   * money in paise and a JS number would silently lose precision.
+   */
+  aggregates?: Record<string, string>;
 }
 
 /** Rows come back carrying where the search hit, when it was not the title. */
@@ -177,11 +192,20 @@ export async function runListQuery<T>(
   const limitParam = param(pageSize);
   const offsetParam = param(offset);
 
+  // Each aggregate rides the same window as `totalCount`, so it covers
+  // every row matching the current search/filters, not just the page,
+  // and it costs nothing extra: one round trip, identical WHERE clause.
+  const aggregateEntries = Object.entries(spec.aggregates ?? {});
+  const aggregateSelect = aggregateEntries
+    .map(([key, expr]) => `, coalesce((${expr} over ())::text, '0') as "agg_${key}"`)
+    .join('');
+
   const sql = `
     select
       ${spec.select},
       ${matchSelect},
       count(*) over () as "totalCount"
+      ${aggregateSelect}
     from ${spec.from}
     ${where}
     order by ${orderBy}
@@ -189,17 +213,38 @@ export async function runListQuery<T>(
   `;
 
   const result = await pool.query(sql, values);
-  const total =
-    result.rows.length > 0 ? Number(result.rows[0].totalCount) : await countOnly(
+
+  let total: number;
+  let aggregates: Record<string, string> | undefined;
+
+  if (result.rows.length > 0) {
+    total = Number(result.rows[0].totalCount);
+    if (aggregateEntries.length > 0) {
+      aggregates = {};
+      for (const [key] of aggregateEntries) {
+        aggregates[key] = String(result.rows[0][`agg_${key}`]);
+      }
+    }
+  } else {
+    // `count(*) over ()` (and every aggregate riding it) returns nothing
+    // when the page itself is empty, which happens whenever someone
+    // pages past the end. Asking again is the only way to tell "no
+    // records" from "no records on page 9".
+    const fallback = await countAndAggregates(
       pool,
       spec,
       where,
       values.slice(0, values.length - 2),
+      aggregateEntries,
     );
+    total = fallback.total;
+    aggregates = fallback.aggregates;
+  }
 
   const data = result.rows.map((row) => {
-    const { totalCount, ...rest } = row as Record<string, unknown>;
-    void totalCount;
+    const rest = { ...(row as Record<string, unknown>) };
+    delete rest.totalCount;
+    for (const [key] of aggregateEntries) delete rest[`agg_${key}`];
     return rest as T & MatchInfo;
   });
 
@@ -213,25 +258,45 @@ export async function runListQuery<T>(
     direction,
     search,
     appliedFilters,
+    ...(aggregates ? { aggregates } : {}),
   };
 }
 
 /**
- * `count(*) over ()` returns nothing when the page is empty, which
- * happens whenever someone pages past the end. Asking again is the only
- * way to tell "no records" from "no records on page 9".
+ * The fallback for an empty result page: a plain count, plus each
+ * declared aggregate over the same WHERE clause, with no window and no
+ * limit/offset.
+ *
+ * An empty RESULT SET here is a real zero total -- there genuinely are
+ * no matching rows, so `sum(...)` returning null becomes `"0"`. This is
+ * NOT the section 31.2 "empty is not zero" case, which is about a blank
+ * cell nobody has filled in on an otherwise-existing row; here there is
+ * no row at all, and a sum of nothing is unambiguously nothing.
  */
-async function countOnly(
+async function countAndAggregates(
   pool: Pool,
   spec: ListSpec,
   where: string,
   values: unknown[],
-): Promise<number> {
-  const { rows } = await pool.query<{ count: string }>(
-    `select count(*)::text as count from ${spec.from} ${where}`,
+  aggregateEntries: [string, string][],
+): Promise<{ total: number; aggregates: Record<string, string> | undefined }> {
+  const aggregateSelect = aggregateEntries
+    .map(([key, expr]) => `, coalesce(${expr}::text, '0') as "agg_${key}"`)
+    .join('');
+  const { rows } = await pool.query<Record<string, string>>(
+    `select count(*)::text as count ${aggregateSelect} from ${spec.from} ${where}`,
     values,
   );
-  return Number(rows[0]?.count ?? 0);
+  const row = rows[0];
+  const total = Number(row?.count ?? 0);
+  let aggregates: Record<string, string> | undefined;
+  if (aggregateEntries.length > 0) {
+    aggregates = {};
+    for (const [key] of aggregateEntries) {
+      aggregates[key] = row?.[`agg_${key}`] ?? '0';
+    }
+  }
+  return { total, aggregates };
 }
 
 /** `%` and `_` are wildcards in ILIKE. A user searching "50%" means "50%". */

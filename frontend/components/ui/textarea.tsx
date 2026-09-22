@@ -16,17 +16,17 @@ function Textarea({ className, ...props }: React.ComponentProps<"textarea">) {
         "placeholder:text-text-muted",
         "outline-none focus-visible:border-primary-ring focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-primary-ring",
           /*
-   * Section 6.4: hover changes the background, pressed changes it
-   * further. This control had NEITHER — only resting, disabled and
-   * focus. Worse, globals.css forced a hover appearance for it in the
-   * kitchen sink's state matrix, so the matrix displayed a state the
-   * component could not actually produce. The rule declared the
-   * intent; the component now carries it.
+   * Section 6.4: a text-entry control is not pressed, it is focused.
+   * Its background carries text the user is reading back, so it must
+   * not shift under them while they hover or type — a pointer left
+   * over a field after a click holds `:hover` for as long as typing
+   * continues, so a hover fill here would be how the field looks in
+   * use, not a brief highlight. Only the border responds to hover;
+   * there is no hover or pressed background fill.
    *
    * `enabled:` so a disabled field does not light up under the pointer.
    */
-        "enabled:hover:border-border-strong enabled:hover:bg-surface-control",
-        "enabled:active:bg-surface-control-pressed",
+        "enabled:hover:border-border-strong",
         "disabled:cursor-default disabled:border-border-light disabled:bg-surface-sunken disabled:text-text-muted",
         "aria-invalid:border-danger aria-invalid:focus-visible:outline-danger",
         className

@@ -74,7 +74,14 @@ const inputGroupButtonVariants = cva(
         sm: "",
         "icon-xs":
           "size-control-sm rounded-lg p-0 has-[>svg]:p-0",
-        "icon-sm": "size-control p-0 has-[>svg]:p-0",
+        // Section 6.5: `InputGroup`'s content box is 34px (its
+        // `h-control` is border-box, minus the 1px border on each
+        // edge), so a 36px `size-control` button here would be taller
+        // than the space it has, the same overflow the rule calls out
+        // for `InputGroupInput`. `h-full` sizes it from the wrapper
+        // instead of repeating a fixed constant that can be larger
+        // than the box it sits in.
+        "icon-sm": "h-full aspect-square p-0 has-[>svg]:p-0",
       },
     },
     defaultVariants: {
@@ -120,6 +127,16 @@ function InputGroupText({ className, ...props }: React.ComponentProps<"span">) {
   )
 }
 
+/**
+ * Section 6.5: `InputGroup` is the element that owns the border, the
+ * radius and the height — its `h-control` is a border-box measurement
+ * that already includes the 1px border, leaving 34px of content. `Input`
+ * carries its own fixed `h-control` (36px), so composing it here without
+ * overriding that height would make it two pixels taller than the space
+ * it has, overflowing the wrapper and painting over the border on both
+ * edges. `h-full` makes it size from the wrapper's content box instead
+ * of repeating the wrapper's own control height.
+ */
 function InputGroupInput({
   className,
   ...props
@@ -128,7 +145,7 @@ function InputGroupInput({
     <Input
       data-slot="input-group-control"
       className={cn(
-        "flex-1 rounded-none border-0 bg-transparent shadow-none ring-0 focus-visible:ring-0 disabled:bg-transparent aria-invalid:ring-0",
+        "h-full flex-1 rounded-none border-0 bg-transparent shadow-none ring-0 focus-visible:ring-0 disabled:bg-transparent aria-invalid:ring-0",
         className
       )}
       {...props}
@@ -136,6 +153,13 @@ function InputGroupInput({
   )
 }
 
+/**
+ * Section 6.5: `Textarea` has no fixed `h-control` of its own to begin
+ * with (only `min-h-16`, since it grows with content), and the wrapper
+ * switches to `h-auto` whenever it contains a `textarea` (see
+ * `has-[>textarea]:h-auto` on `InputGroup` above), so there is no fixed
+ * height on either side to conflict — no override needed here.
+ */
 function InputGroupTextarea({
   className,
   ...props

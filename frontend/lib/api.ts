@@ -177,6 +177,13 @@ export interface ListResponse<T> {
   direction: 'asc' | 'desc'
   search: string | null
   appliedFilters: Record<string, string>
+  /**
+   * Optional server-computed totals over EVERY row matching the current
+   * search/filters, not just the page. Optional so a list screen whose
+   * endpoint predates this (e.g. the variance report, which builds its
+   * own `ListResponse` by hand) is unaffected.
+   */
+  aggregates?: Record<string, string>
 }
 
 export interface Matchable {
@@ -289,6 +296,7 @@ export interface Expense {
   spentOn: string
   period: number
   amountPaise: string
+  description: string | null
   billNumber: string | null
   approvedBy: string | null
   createdAt: string

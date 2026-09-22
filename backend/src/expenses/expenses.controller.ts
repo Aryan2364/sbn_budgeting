@@ -63,6 +63,10 @@ export class ExpenseDto {
   @IsOptional()
   @IsString()
   approvedBy?: string | null;
+
+  @IsOptional()
+  @IsString()
+  description?: string | null;
 }
 
 export interface ExpenseRow {
@@ -76,6 +80,7 @@ export interface ExpenseRow {
   amountPaise: string;
   billNumber: string | null;
   approvedBy: string | null;
+  description: string | null;
   createdAt: string;
 }
 
@@ -84,7 +89,7 @@ const SELECT = `
   e.cost_head_id as "costHeadId", ch.name as "costHeadName",
   e.spent_on as "spentOn", e.period, e.amount_paise as "amountPaise",
   e.bill_number as "billNumber", e.approved_by as "approvedBy",
-  e.created_at as "createdAt"`;
+  e.description, e.created_at as "createdAt"`;
 
 const FROM = `
   expenses e
@@ -117,6 +122,7 @@ export class ExpensesController {
           { sql: 'ch.name', label: 'Cost head' },
           { sql: 'e.bill_number', label: 'Bill number' },
           { sql: 'e.approved_by', label: 'Approved by' },
+          { sql: 'e.description', label: 'Description' },
         ],
         sortable: {
           spentOn: 'e.spent_on',
@@ -132,6 +138,7 @@ export class ExpensesController {
           costHeadId: (v, param) => `e.cost_head_id = ${param(v)}`,
           period: (v, param) => `e.period = ${param(Number(v))}`,
         },
+        aggregates: { amountPaise: 'sum(e.amount_paise)' },
       },
       { ...query, filters: { siteId, costHeadId, period } },
     );
@@ -152,8 +159,8 @@ export class ExpensesController {
     const { rows } = await this.pool.query(
       `insert into expenses
          (site_id, cost_head_id, spent_on, period, amount_paise,
-          bill_number, approved_by, created_by)
-       values ($1, $2, $3, $4, $5, $6, $7, $8) returning id`,
+          bill_number, approved_by, description, created_by)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9) returning id`,
       [
         body.siteId,
         body.costHeadId,
@@ -162,6 +169,7 @@ export class ExpensesController {
         body.amountPaise,
         body.billNumber ?? null,
         body.approvedBy ?? null,
+        body.description ?? null,
         user.id,
       ],
     );
@@ -181,6 +189,7 @@ export class ExpensesController {
       amount_paise: body.amountPaise,
       bill_number: body.billNumber ?? null,
       approved_by: body.approvedBy ?? null,
+      description: body.description ?? null,
     });
     await findOneOrFail(
       this.pool,

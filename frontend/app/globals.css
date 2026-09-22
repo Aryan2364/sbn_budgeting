@@ -470,15 +470,25 @@
    states and these ever disagree, the matrix shows a lie. The
    self-check in /kitchen-sink exists because that already happened —
    input, textarea and select-trigger were forced here while having no
-   hover styles of their own at all. */
+   hover styles of their own at all.
+
+   Section 6.4: `input` and `textarea` are text-entry, not
+   press-targets — they define no hover/pressed background fill, only
+   a border response. `select-trigger` is a press-target (its text
+   half is not editable; the whole thing opens a menu), so it keeps
+   both, matching its own `enabled:hover:bg-surface-control` class. */
 [data-force="hover"] [data-slot="input"],
-[data-force="hover"] [data-slot="textarea"],
+[data-force="hover"] [data-slot="textarea"] {
+  border-color: var(--border-strong);
+}
+[data-force="pressed"] [data-slot="input"],
+[data-force="pressed"] [data-slot="textarea"] {
+  border-color: var(--border-strong);
+}
 [data-force="hover"] [data-slot="select-trigger"] {
   background-color: var(--surface-control);
   border-color: var(--border-strong);
 }
-[data-force="pressed"] [data-slot="input"],
-[data-force="pressed"] [data-slot="textarea"],
 [data-force="pressed"] [data-slot="select-trigger"] {
   background-color: var(--surface-control-pressed);
   border-color: var(--border-strong);
@@ -537,6 +547,121 @@
 [data-force="pressed"] [data-slot="radio-group-item"][data-checked] {
   background-color: var(--primary-pressed);
   border-color: var(--primary-pressed);
+}
+
+/* ----------------------------------------------------------------
+   PRINT - report screens export via the browser's own print-to-PDF
+   (components/ui/export-pdf-button.tsx calls window.print()), never a
+   redrawn PDF, so this stylesheet is the whole export feature.
+
+   .no-print / .print-only are the two utility classes this relies on.
+   Chrome that already carries a stable data-slot (every button, the
+   list toolbar, the pagination bar, a tab bar's own trigger row) is
+   hidden through that attribute rather than a class added file by
+   file, because it is one selector that already covers every screen
+   with no risk of a new toolbar forgetting to opt in. .no-print is
+   reserved for the two shell landmarks that carry no data-slot of
+   their own - the sidebar and the top bar (see app-shell.tsx and
+   top-bar.tsx) - which is the smaller, more maintainable set than
+   writing a print rule from scratch for every ad-hoc container.
+   ---------------------------------------------------------------- */
+.print-only {
+  display: none;
+}
+
+@media print {
+  @page {
+    /* Report tables are wide; portrait clips them at the margin. */
+    size: landscape;
+    margin: 12mm;
+  }
+
+  /* Section 28: dark mode is structured for but not built, so there is
+     nothing to force back to light here YET — every token above is
+     already the light value, and copying those seven hexes into a
+     second block would violate section 2.1's one-place swap rule the
+     moment the brand colour ever changes (this file would then hold
+     the OLD brand colour on every printed page, forever, silently).
+     When dark mode ships, force light for print by neutralising
+     WHATEVER SELECTOR dark mode uses (a `.dark` class or
+     `data-theme="dark"` on `<html>`, per section 28's plan) inside
+     this media query - e.g. `:where(html) { color-scheme: light }` -
+     so the existing single `:root` definition applies again. Never by
+     giving print its own copy of the hex values. */
+
+  html,
+  body {
+    height: auto !important;
+    overflow: visible !important;
+    background: var(--surface) !important;
+  }
+
+  /* The app shell and any button, including the export button itself. */
+  .no-print,
+  [data-slot="button"],
+  [data-slot="list-toolbar"],
+  [data-slot="pagination-bar"],
+  [data-slot="tabs-list"] {
+    display: none !important;
+  }
+
+  .print-only {
+    display: block !important;
+  }
+
+  /* Release every scroll container so the whole table prints across
+     pages instead of one clipped viewport - the single most common
+     way a print stylesheet fails. `display: block` is only safe on
+     the page-level frame/scroller slots named explicitly: they are
+     plain divs. It must NOT reach `.overflow-x-auto` / `.overflow-y-auto`
+     generally, because those classes also sit on table wrappers and on
+     `components/ui/truncate.tsx`'s clip container - forcing `overflow:
+     visible` there would spill truncated text across neighbouring
+     cells (section 1 rule 6 / section 8), and forcing `display: block`
+     on a table wrapper collapses the table layout this feature exists
+     to print. Only `height`, `max-height` and `overflow` are released
+     on those two; `display` is left alone. */
+  main,
+  [data-slot="page-frame"],
+  [data-slot="page-scroller"],
+  [data-slot="list-data-area"],
+  [data-slot="list-data-area"] > div {
+    display: block !important;
+    height: auto !important;
+    max-height: none !important;
+    overflow: visible !important;
+  }
+
+  .overflow-x-auto,
+  .overflow-y-auto {
+    height: auto !important;
+    max-height: none !important;
+    overflow: visible !important;
+  }
+
+  /* Un-stick the pinned column header and the section 34.1 pinned
+     total row so they print in normal flow instead of overlapping. */
+  .sticky,
+  [data-slot="table-header"],
+  [data-slot="table-footer"] {
+    position: static !important;
+    top: auto !important;
+    bottom: auto !important;
+    left: auto !important;
+    z-index: auto !important;
+  }
+
+  /* Column headers repeat on every printed page. */
+  thead {
+    display: table-header-group;
+  }
+  tfoot {
+    display: table-footer-group;
+  }
+  tr {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
 }
 
 /* Section 6.4: the focus ring is primary-ring and is never removed. */
