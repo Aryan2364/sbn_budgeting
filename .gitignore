@@ -1,10 +1,12 @@
 # Per-app ignores live in backend/.gitignore and frontend/.gitignore.
 # This file covers the repo root only.
 
-# secrets — the real deploy env never leaves the server
+# secrets — the real deploy env never leaves the server.
+# .env.production.example is covered by the wildcard on purpose: there is
+# no negation for *.example, because the example file is filled in with
+# real values while working and a negation invites committing them.
 .env
 .env.*
-!.env.*.example
 
 # misc
 .DS_Store
