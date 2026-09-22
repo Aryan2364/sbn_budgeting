@@ -39,3 +39,9 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Local-only component gallery. Kept on developer machines, never committed,
+# so it is absent from the CI checkout and therefore from the built image
+# and the server. Untracked with `git rm --cached` — a .gitignore entry
+# alone does nothing to a file git is already tracking.
+/app/kitchen-sink/

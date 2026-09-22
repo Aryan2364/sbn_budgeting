@@ -1,8 +1,20 @@
 node_modules
 .next
 .git
+.gitignore
 Dockerfile
 .dockerignore
 *.tsbuildinfo
 next-env.d.ts
 .env*
+
+# Documentation and design scratch. Never imported by the app, so they
+# only slow the context upload and would otherwise sit in the image.
+# eslint.config.mjs is deliberately NOT here: `next build` reads it.
+*.md
+all/
+
+# Local-only component gallery, also in .gitignore. CI never sees it
+# because it is not in the repo; this line is what stops a build run on a
+# developer machine — where the folder DOES exist — from baking it in.
+app/kitchen-sink/

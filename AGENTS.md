@@ -102,6 +102,20 @@ other than the five derived shades — `primary-hover`, `primary-pressed`,
 old colour.** Those five staying behind is correct. Anything else
 holding it is a component reaching around the tokens.
 
+**`/kitchen-sink` is local-only and is not in the repository.**
+`frontend/app/kitchen-sink/` is listed in `frontend/.gitignore` and
+`frontend/.dockerignore`, so it is absent from the CI checkout, from the
+built image and from the server — the URL is a 404 on a deployed site,
+and that is correct rather than a fault to fix. A gallery of every
+control in the product is a development tool; it was never meant to be
+served from the live domain.
+
+**A fresh clone therefore has no kitchen-sink and cannot run the brand
+swap test until someone supplies the page.** That is the cost of keeping
+it off the server this way, and it is deliberate. If the test needs to
+be runnable from a clean checkout, the folder has to come back into the
+repo and be excluded at build time instead.
+
 ### 2.3 Neutral greys
 
 | Token           | Value     | Contrast on white | Used for                    |
