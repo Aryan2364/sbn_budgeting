@@ -11,3 +11,12 @@
 # misc
 .DS_Store
 *.pem
+
+# Session plan documents. Working notes, not part of the software: nothing
+# builds, deploys or renders from them, and they accumulate whatever was
+# pasted while working — plan-2026-09-05-1218.md carried a real admin
+# password to origin/main for twelve days before anyone noticed. The
+# design rulebook (AGENTS.md), the deploy runbook and the READMEs stay
+# tracked; a clone needs those to build and ship.
+plan.md
+plan-*.md
