@@ -38,7 +38,7 @@ export class ExpenseDto {
   @IsUUID(undefined, { message: 'Choose a cost head' })
   costHeadId!: string;
 
-  @IsDateString({}, { message: 'Enter the date, like 12 Aug 2026' })
+  @IsDateString({}, { message: 'Enter the date, like 21/03/26' })
   spentOn!: string;
 
   /**
@@ -67,6 +67,31 @@ export class ExpenseDto {
   @IsOptional()
   @IsString()
   description?: string | null;
+}
+
+/**
+ * The four new list filters, validated the same way the corresponding
+ * `ExpenseDto` fields are: dates via `@IsDateString`, paise amounts as
+ * digit strings via `@Matches`. Bound with `@Query()` alongside the
+ * existing single-param filters, so an invalid value 400s before it
+ * ever reaches `runListQuery`.
+ */
+export class ExpenseFilterQueryDto {
+  @IsOptional()
+  @IsDateString({}, { message: 'Enter the date, like 21/03/26' })
+  spentOnFrom?: string;
+
+  @IsOptional()
+  @IsDateString({}, { message: 'Enter the date, like 21/03/26' })
+  spentOnTo?: string;
+
+  @IsOptional()
+  @Matches(/^\d+$/, { message: 'Enter an amount, like 4,200.00' })
+  amountMin?: string;
+
+  @IsOptional()
+  @Matches(/^\d+$/, { message: 'Enter an amount, like 4,200.00' })
+  amountMax?: string;
 }
 
 export interface ExpenseRow {
@@ -106,6 +131,7 @@ export class ExpensesController {
     @Query('siteId') siteId?: string,
     @Query('costHeadId') costHeadId?: string,
     @Query('period') period?: string,
+    @Query() rangeFilters?: ExpenseFilterQueryDto,
   ): Promise<ListResult<ExpenseRow & MatchInfo>> {
     return runListQuery<ExpenseRow>(
       this.pool,
@@ -137,10 +163,25 @@ export class ExpensesController {
           siteId: (v, param) => `e.site_id = ${param(v)}`,
           costHeadId: (v, param) => `e.cost_head_id = ${param(v)}`,
           period: (v, param) => `e.period = ${param(Number(v))}`,
+          spentOnFrom: (v, param) => `e.spent_on >= ${param(v)}`,
+          spentOnTo: (v, param) => `e.spent_on <= ${param(v)}`,
+          amountMin: (v, param) => `e.amount_paise >= ${param(v)}`,
+          amountMax: (v, param) => `e.amount_paise <= ${param(v)}`,
         },
         aggregates: { amountPaise: 'sum(e.amount_paise)' },
       },
-      { ...query, filters: { siteId, costHeadId, period } },
+      {
+        ...query,
+        filters: {
+          siteId,
+          costHeadId,
+          period,
+          spentOnFrom: rangeFilters?.spentOnFrom,
+          spentOnTo: rangeFilters?.spentOnTo,
+          amountMin: rangeFilters?.amountMin,
+          amountMax: rangeFilters?.amountMax,
+        },
+      },
     );
   }
 

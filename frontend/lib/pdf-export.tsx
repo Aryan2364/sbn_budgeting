@@ -24,16 +24,67 @@
 
 import * as React from "react"
 
-import { formatDate } from "@/lib/format"
+import { buildExportFilename, formatDate } from "@/lib/format"
 
-export interface PdfColumn<T> {
+/**
+ * Shared by both export formats (AGENTS.md section 1 rule 4: a caller
+ * never defines its columns twice) — `lib/pdf-export.tsx` reads `header`,
+ * `cell` and `numeric`; `lib/excel-export.ts` reads the same three plus
+ * the Excel-only `excelValue`. Named `ExportColumn` now that it is
+ * format-neutral; `PdfColumn` stays as an alias so existing PDF-only call
+ * sites compile unchanged.
+ */
+export interface ExportColumn<T> {
   /** Column header text. */
   header: string
-  /** How to read this column's text out of a row. */
+  /** How to read this column's text out of a row. Used by the PDF, and
+   * by Excel whenever `excelValue` below is not supplied. */
   cell: (row: T) => string
   /** Right-aligns the column. Section 18: numbers and amounts align right. */
   numeric?: boolean
+  /**
+   * Excel-only. When this column holds a real typed value — an amount,
+   * or a date — return it here rather than `cell`'s formatted, grouped,
+   * symbol- or comma-carrying (or `dd/MM/yy`-STRING, for a date) text,
+   * so the Excel cell is a genuine typed cell rather than text:
+   *
+   * - A `Date` becomes a real Excel date cell (`lib/excel-export.ts`
+   *   applies the `dd/mm/yy` number format), so it sorts and filters as
+   *   a date instead of as a string that happens to look like one.
+   * - A `number` becomes a real numeric cell (amount columns: rupees,
+   *   never paise — see `lib/excel-export.ts` for how it is produced
+   *   without going through a float multiplication).
+   * - `null` writes a genuinely empty cell (section 31.2: absent is not
+   *   zero and not the on-screen "—").
+   *
+   * Ignored by the PDF, which always uses `cell`. Omit for a plain text
+   * column, or when `cell`'s own string is what Excel should show too.
+   */
+  excelValue?: (row: T) => number | string | Date | null
+  /**
+   * Opt-in, per column, for a text column whose value is SOMETIMES a
+   * plain integer and sometimes not — a free-text reference number like
+   * Bill no. (`bill_number` is a Postgres `text` column,
+   * `backend/migrations/0001_init.sql:147`, and can legitimately hold
+   * `007`, `INV/2026/001` or `12-A`). When set, `lib/excel-export.ts`
+   * writes that specific cell as a real numeric cell ONLY when its
+   * `excelValue`/`cell` string is safely round-trippable through a JS
+   * number (see `isSafeExcelInteger` there) — plain digits, no leading
+   * zero unless the value is exactly "0", within the safe integer
+   * range — so `87` sorts and filters as a number while `007` and
+   * `INV/2026/001` stay exactly as typed, as text.
+   *
+   * Deliberately NOT automatic for every string column: a column with
+   * no reason to ever hold a leading zero or a non-digit character
+   * (a name, a cost head) should never have this check run on it at
+   * all, so a value that merely happens to look numeric one day can
+   * never surprise anyone by silently becoming a number.
+   */
+  excelNumericSafe?: boolean
 }
+
+/** @deprecated Use `ExportColumn` — this name predates the CSV export. */
+export type PdfColumn<T> = ExportColumn<T>
 
 export interface PdfTotalRow {
   /** One string per column, in the same order as `columns`. */
@@ -43,7 +94,7 @@ export interface PdfTotalRow {
 export interface ExportPdfOptions<T> {
   /** The report heading, and the seed for the downloaded filename. */
   title: string
-  columns: PdfColumn<T>[]
+  columns: ExportColumn<T>[]
   rows: T[]
   /** Rendered bold, pinned to the end of the table. */
   totalRow?: PdfTotalRow
@@ -113,7 +164,7 @@ interface BrandColors {
  * Browser-only — `ExportPdfButton` is a client component and this only
  * ever runs from its click handler.
  */
-function resolveBrandColors(): BrandColors {
+export function resolveBrandColors(): BrandColors {
   const styles = getComputedStyle(document.documentElement)
   return {
     primary: readToken(styles, "--primary", FALLBACK_PRIMARY),
@@ -124,19 +175,6 @@ function resolveBrandColors(): BrandColors {
     borderLight: readToken(styles, "--border-light", FALLBACK_BORDER_LIGHT),
     surfaceSunken: readToken(styles, "--surface-sunken", FALLBACK_SURFACE_SUNKEN),
   }
-}
-
-/** `Expenses-2026-09-22.pdf` — no spaces, nothing Windows rejects. */
-function buildFilename(title: string): string {
-  const iso = new Date()
-  const isoDate = `${iso.getFullYear()}-${String(iso.getMonth() + 1).padStart(2, "0")}-${String(
-    iso.getDate(),
-  ).padStart(2, "0")}`
-  const safeTitle = title
-    .trim()
-    .replace(/[\\/:*?"<>|]/g, "")
-    .replace(/\s+/g, "-")
-  return `${safeTitle}-${isoDate}.pdf`
 }
 
 /**
@@ -382,7 +420,7 @@ export async function exportPdfTable<T>(options: ExportPdfOptions<T>): Promise<v
   const url = URL.createObjectURL(blob)
   const link = document.createElement("a")
   link.href = url
-  link.download = buildFilename(title)
+  link.download = buildExportFilename(title, "pdf")
   document.body.appendChild(link)
   link.click()
   document.body.removeChild(link)

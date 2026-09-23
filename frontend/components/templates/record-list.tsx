@@ -30,8 +30,8 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { Truncate } from "@/components/ui/truncate"
-import { ExportPdfButton } from "@/components/ui/export-pdf-button"
-import type { PdfColumn, PdfTotalRow } from "@/lib/pdf-export"
+import { ExportButton } from "@/components/ui/export-button"
+import type { ExportColumn, PdfTotalRow } from "@/lib/pdf-export"
 import { PageFrame, PageHeader } from "@/components/templates/page"
 import {
   ListDataArea,
@@ -51,6 +51,32 @@ import { formatNumber } from "@/lib/format"
 
 type ColumnPriority = "essential" | "secondary" | "tertiary"
 
+/**
+ * A constrained width vocabulary for table columns, in the spirit of
+ * section 17's 12-column field-width spans: named sizes, never a raw
+ * pixel picked per screen. Values live once, as tokens, in
+ * `app/globals.css` (`--spacing-col-*`).
+ *
+ * **This is for columns with a KNOWN maximum content size — Date,
+ * Period, Bill no., Amount — not for free-text columns.** A first
+ * version of this feature did the opposite (gave Description and Cost
+ * head a fixed 280px each) and that starved the predictable columns:
+ * with two 280px columns eating over half a 927px table, Date/Period/
+ * Amount were left to split a ~227px remainder three ways and their
+ * headers clipped. Fix: pin the columns whose longest possible value
+ * is known and give the free-text columns (Description, Cost head,
+ * Site) NO declared width at all, so `table-layout:fixed` hands them
+ * whatever is left and they truncate — which is the correct outcome
+ * for them and the reason `Truncate` exists.
+ *
+ * OPT-IN. A column that omits `width` keeps its old behaviour: no
+ * declared width, sharing whatever space `table-layout:fixed` leaves
+ * over after the columns that do declare one. This is what keeps
+ * every other `RecordList` caller (Sites, Reports, Dashboard, the
+ * Settings master lists) unaffected — none of them sets `width`.
+ */
+type ColumnWidth = "tight" | "narrow" | "amount"
+
 export interface RecordColumn<T> {
   key: string
   label: string
@@ -62,6 +88,19 @@ export interface RecordColumn<T> {
    * tertiary (hidden below 768).
    */
   priority?: ColumnPriority
+  /**
+   * Pins this column to a fixed width because its content has a KNOWN
+   * maximum — never on a free-text column (see `ColumnWidth` above).
+   * `tight` 110px (Date, Period), `narrow` 140px (Bill no.), `amount`
+   * 160px (Amount). Leaving Description/Cost head/Site undeclared is
+   * what gives `table-layout:fixed` a bounded remainder to share
+   * between them, so a paragraph-length value truncates instead of
+   * widening the column or the table past its container (section 1
+   * rule 6, section 8). Declaring `width` on any column switches this
+   * table to `table-layout:fixed`; columns without it keep sharing the
+   * remaining space as before.
+   */
+  width?: ColumnWidth
   /** Omit to make the column unsortable — section 27.2 says declare which. */
   sortKey?: string
   render: (row: T) => React.ReactNode
@@ -71,6 +110,39 @@ const PRIORITY_CLASS: Record<ColumnPriority, string> = {
   essential: "",
   secondary: "hidden lg:table-cell",
   tertiary: "hidden md:table-cell",
+}
+
+/**
+ * Literal class strings, matched by Tailwind's content scan the same
+ * way `PRIORITY_CLASS` above already is. A previous attempt built
+ * `max-w-[280px]` etc. as arbitrary values scattered in page files;
+ * some of those exact bracket values were never scanned and silently
+ * did nothing (`getComputedStyle` showed `max-width: none`). These
+ * three strings are `w-col-tight` / `w-col-narrow` / `w-col-amount` —
+ * ordinary Tailwind utilities generated from the `--spacing-col-*`
+ * tokens in `globals.css`, the exact same mechanism that already
+ * produces `w-search` and `max-w-field-max` elsewhere in this
+ * codebase, so there is no bracket value for the scanner to miss.
+ */
+const WIDTH_CLASS: Record<ColumnWidth, string> = {
+  tight: "w-col-tight",
+  narrow: "w-col-narrow",
+  amount: "w-col-amount",
+}
+
+/**
+ * Section 27.3: search, sort AND filter, all owned here. Exported so a
+ * caller that wants to control this state (to persist it in the URL,
+ * section 27.3's "filters, search and sort persist when the user opens
+ * a record and comes back") has a name for the shape it is lifting.
+ */
+export interface ListState {
+  search: string
+  sort: string
+  direction: "asc" | "desc"
+  page: number
+  /** Query-string values, e.g. `spentOnFrom: "2026-08-01"`. */
+  filters: Record<string, string | undefined>
 }
 
 export interface RecordListProps<T> {
@@ -106,6 +178,8 @@ export interface RecordListProps<T> {
     sort: string
     direction: "asc" | "desc"
     pageSize?: number
+    /** Section 27.3's filter panel. Absent for callers with no filters. */
+    filters?: Record<string, string | undefined>
   }) => Promise<ListResponse<T & Matchable>>
   /** What "nothing yet" offers. Section 13: never to someone who filtered. */
   emptyHeading: string
@@ -135,7 +209,7 @@ export interface RecordListProps<T> {
    * in the page header, which the print stylesheet never hides —
    * unlike the toolbar the export button itself sits in.
    *
-   * Never wire `<ExportPdfButton />` through `toolbarExtra` instead —
+   * Never wire the download button through `toolbarExtra` instead —
    * a button built at the page level closes over whatever `search`/
    * `sort`/`direction` the caller happened to have at that point, and
    * cannot see the live values this component updates as the user
@@ -163,7 +237,71 @@ export interface RecordListProps<T> {
    */
   metaTotal?: (aggregates: Record<string, string>) => React.ReactNode
   /**
-   * Enables the "Export PDF" toolbar button, built and owned by
+   * Embeds the toolbar/table/pagination WITHOUT the page chrome —
+   * `PageFrame`/`PageHeader`, section tabs and the print-only heading.
+   *
+   * Used exactly once so far: the site detail page's Expenses tab. That
+   * screen already has its own title (the Card's `CardTitle`) and sits
+   * inside a Card inside a Tabs panel on a DETAIL page — a second page
+   * title inside a card would be a bug, not a feature (section 11.2).
+   *
+   * This ALSO changes scroll ownership (section 10). A list page's data
+   * area owns the scroll via `ListDataArea`'s internal
+   * `overflow-y-auto`; a detail page's PAGE owns the scroll and its
+   * cards do not. Nesting `ListDataArea`'s fixed-height scroller inside
+   * a Card on a scrolling detail page would stack two vertical
+   * scrollers on the same axis, which section 1 rule 8 forbids — the
+   * user's wheel would get trapped in the card. So when `embedded` is
+   * true this renders the table and pagination bar as plain flow
+   * content with no internal scroll container, and the surrounding
+   * page (`PageScroller`) scrolls it like everything else on the page.
+   */
+  embedded?: boolean
+  /**
+   * Section 27.3's filter panel, controlled from outside so a caller can
+   * persist it (e.g. in the URL, matching how `app/(app)/reports/page.tsx`
+   * already reads a `?view=` param via `useSearchParams`). Optional and
+   * paired with `onListStateChange` — a caller that supplies neither
+   * gets the fully internal search/sort/page state this component has
+   * always had, so every existing screen is unaffected.
+   *
+   * `filters` rides into every `load()` call and into the request cache
+   * key, exactly like `search`/`sort`/`direction` already do.
+   */
+  listState?: ListState
+  onListStateChange?: (next: ListState) => void
+  /**
+   * Section 27.3: active filters appear as removable chips BELOW the
+   * toolbar. Driven off `result.appliedFilters` — the server's own
+   * record of what it actually applied — never off the request filters
+   * a caller may have set but the server rejected or never received, so
+   * a chip can never disagree with what is actually on screen.
+   *
+   * The caller builds the chip nodes (it knows how to label a date or
+   * an amount, and which keys are its own to hide — e.g. a site page's
+   * own `siteId` scope must never be offered as a removable chip). This
+   * component only renders whatever comes back, plus an always-present
+   * "Clear all" that resets `listState.filters` to `{}`.
+   */
+  renderFilterChips?: (appliedFilters: Record<string, string>) => React.ReactNode
+  /**
+   * The active filters described in plain words, in the same phrasing
+   * `renderFilterChips` renders as chips (ideally backed by the exact
+   * same labeller — see `expenseFilterLabels` in
+   * `components/forms/expense-filter.tsx`) — used to build the PDF
+   * export's heading so a filtered report says so. Omitted by a caller
+   * with no filters, same as `renderFilterChips`.
+   */
+  describeFilters?: (appliedFilters: Record<string, string>) => string[]
+  /**
+   * Embedded mode has no header to carry the record count or the
+   * `metaTotal` figure (there is no header at all), so the caller reads
+   * them back here instead — e.g. the site page's tab badge and its
+   * "Total spent" line. Called whenever the settled result changes.
+   */
+  onResult?: (info: { total: number; aggregates?: Record<string, string> }) => void
+  /**
+   * Enables the download toolbar button (PDF and CSV), built and owned by
    * `RecordList` itself — never passed in via `toolbarExtra` — because
    * only `RecordList` knows the CURRENT search/sort/direction. A
    * `fetchPage` built at the page level would silently export
@@ -181,7 +319,7 @@ export interface RecordListProps<T> {
     /** The PDF heading and the downloaded filename's seed. */
     title: string
     /** In the same order as the on-screen columns, formatted the same way. */
-    columns: PdfColumn<T>[]
+    columns: ExportColumn<T>[]
     /**
      * Builds the bold total row. `aggregates` is the same
      * `result.aggregates` the on-screen `totals` footer reads (present
@@ -217,17 +355,43 @@ export function RecordList<T extends { id: string }>({
   refreshKey = 0,
   metaTotal,
   exportPdf,
+  embedded = false,
+  onResult,
+  listState,
+  onListStateChange,
+  renderFilterChips,
+  describeFilters,
 }: RecordListProps<T>) {
   const router = useRouter()
-  const [searchInput, setSearchInput] = React.useState("")
-  const [search, setSearch] = React.useState("")
-  const [page, setPage] = React.useState(1)
-  const [sort, setSort] = React.useState(
-    () => defaultSort ?? columns.find((c) => c.sortKey)?.sortKey ?? "",
+
+  // Controlled-with-internal-default, the same pattern `HeadPeriodGrid`
+  // uses for `measure` (see reports/page.tsx): a caller supplying both
+  // `listState` and `onListStateChange` owns this state (typically to
+  // persist it in the URL); everyone else gets the internal state this
+  // component has always had.
+  const isControlled = listState !== undefined && onListStateChange !== undefined
+  const [internalState, setInternalState] = React.useState<ListState>(() => ({
+    search: "",
+    sort: defaultSort ?? columns.find((c) => c.sortKey)?.sortKey ?? "",
+    direction: defaultDirection,
+    page: 1,
+    filters: {},
+  }))
+  const listStateValue = isControlled ? listState! : internalState
+  const updateState = React.useCallback(
+    (patch: Partial<ListState>) => {
+      const next: ListState = { ...listStateValue, ...patch }
+      if (isControlled) onListStateChange!(next)
+      else setInternalState(next)
+    },
+    [listStateValue, isControlled, onListStateChange],
   )
-  const [direction, setDirection] = React.useState<"asc" | "desc">(
-    defaultDirection,
-  )
+
+  const { search, sort, direction, page, filters } = listStateValue
+  const setPage = (updater: number | ((p: number) => number)) =>
+    updateState({ page: typeof updater === "function" ? updater(page) : updater })
+
+  const [searchInput, setSearchInput] = React.useState(search)
   /**
    * The result carries the request it answers, so "loading" is derived
    * rather than set at the top of the effect. Setting a flag there
@@ -243,19 +407,27 @@ export function RecordList<T extends { id: string }>({
   // not on every keystroke.
   React.useEffect(() => {
     const timer = window.setTimeout(() => {
-      setSearch(searchInput)
-      setPage(1)
+      if (searchInput !== search) updateState({ search: searchInput, page: 1 })
     }, 300)
     return () => window.clearTimeout(timer)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchInput])
 
   const [attempt, setAttempt] = React.useState(0)
 
-  const request = JSON.stringify({ page, search, sort, direction, refreshKey, attempt })
+  const request = JSON.stringify({
+    page,
+    search,
+    sort,
+    direction,
+    filters,
+    refreshKey,
+    attempt,
+  })
 
   React.useEffect(() => {
     let cancelled = false
-    load({ page, search, sort, direction })
+    load({ page, search, sort, direction, filters })
       .then((response) => {
         if (!cancelled) setAnswer({ result: response, failure: null, request })
       })
@@ -273,7 +445,7 @@ export function RecordList<T extends { id: string }>({
     return () => {
       cancelled = true
     }
-  }, [load, page, search, sort, direction, request])
+  }, [load, page, search, sort, direction, filters, request])
 
   const settled = answer.request === request
   const state: "loading" | "ready" | "failed" = !settled
@@ -287,24 +459,29 @@ export function RecordList<T extends { id: string }>({
   function toggleSort(column: RecordColumn<T>) {
     if (!column.sortKey) return
     if (sort === column.sortKey) {
-      setDirection((d) => (d === "asc" ? "desc" : "asc"))
+      updateState({ direction: direction === "asc" ? "desc" : "asc", page: 1 })
     } else {
-      setSort(column.sortKey)
-      setDirection("asc")
+      updateState({ sort: column.sortKey, direction: "asc", page: 1 })
     }
-    setPage(1)
   }
 
   const total = result?.total ?? 0
   const rows = result?.data ?? []
   const isFiltered = search.trim() !== ""
 
+  // Embedded mode has no header to read the total/aggregates off of, so
+  // the caller gets them here instead (e.g. the site page's tab badge).
+  React.useEffect(() => {
+    if (!onResult || !result) return
+    onResult({ total: result.total, aggregates: result.aggregates })
+  }, [onResult, result])
+
   // ---- PDF export: owned here, never at the page level -----------------
   //
   // `lastAggregatesRef` carries the most recent `result.aggregates` this
   // export run has seen, so the wrapped `buildTotalRow` below can hand
   // the caller the SAME totals the on-screen footer reads even though
-  // `ExportPdfButton` itself only ever passes it the collected `rows`.
+  // `ExportButton` itself only ever passes it the collected `rows`.
   const lastAggregatesRef = React.useRef<Record<string, string> | undefined>(
     undefined,
   )
@@ -315,7 +492,7 @@ export function RecordList<T extends { id: string }>({
   // is rendering with, not a copy captured once at mount.
   const exportFetchPage = exportPdf
     ? async (page: number, pageSize: number) => {
-        const response = await load({ page, search, sort, direction, pageSize })
+        const response = await load({ page, search, sort, direction, pageSize, filters })
         lastAggregatesRef.current = response.aggregates
         return { data: response.data, total: response.total }
       }
@@ -336,10 +513,254 @@ export function RecordList<T extends { id: string }>({
   const isDefaultSort =
     sort === (defaultSort ?? columns.find((c) => c.sortKey)?.sortKey ?? "") &&
     direction === defaultDirection
+  const filterLabels = describeFilters?.(result?.appliedFilters ?? {}) ?? []
+  const hasActiveFilters = filterLabels.length > 0
+  const filterDescription = hasActiveFilters ? `Filter: ${filterLabels.join(", ")}` : null
   const exportContextDescription =
-    !isFiltered && isDefaultSort
+    !isFiltered && !hasActiveFilters && isDefaultSort
       ? "Showing all records, default sort."
-      : [searchDescription, sortDescription].filter(Boolean).join(" · ")
+      : [searchDescription, filterDescription, sortDescription].filter(Boolean).join(" · ")
+
+  const toolbar = (
+    <ListToolbar className={embedded ? "mt-0" : undefined}>
+      <ListSearch
+        label={searchLabel}
+        placeholder={searchPlaceholder}
+        value={searchInput}
+        onChange={(event) => setSearchInput(event.target.value)}
+        onClear={() => setSearchInput("")}
+      />
+      {/* Section 27.1: the result count sits beside the field. */}
+      {isFiltered && state === "ready" ? (
+        <span className="text-label text-text-secondary">
+          {formatNumber(total)} {total === 1 ? "result" : "results"}
+        </span>
+      ) : null}
+      {toolbarExtra}
+      {exportPdf ? (
+        <ExportButton
+          className="ml-auto"
+          title={exportPdf.title}
+          columns={exportPdf.columns}
+          fetchPage={exportFetchPage}
+          buildTotalRow={exportBuildTotalRow}
+          contextDescription={exportContextDescription}
+        />
+      ) : null}
+    </ListToolbar>
+  )
+
+  // Section 27.3: active filters as removable chips below the toolbar,
+  // plus an always-available "Clear all". `activeFilterCount` reads the
+  // REQUEST side (`listStateValue.filters`) rather than the response, so
+  // the zone still shows immediately after the user applies a filter and
+  // before the new response has settled, and never counts a page-owned
+  // scope (e.g. the site page's `siteId`) that is never put in this bag.
+  const activeFilterCount = Object.values(filters).filter(
+    (v) => v !== undefined && v !== "",
+  ).length
+  const filterChipZone =
+    activeFilterCount > 0 ? (
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        {renderFilterChips?.(result?.appliedFilters ?? {})}
+        <Button
+          type="button"
+          variant="secondary"
+          size="sm"
+          onClick={() => updateState({ filters: {}, page: 1 })}
+        >
+          Clear all
+        </Button>
+      </div>
+    ) : null
+
+  const paginationBar = (
+    <PaginationBar>
+      <PaginationCount>
+        {state === "ready" && total > 0
+          ? `Showing ${formatNumber((result!.page - 1) * result!.pageSize + 1)} to ${formatNumber(
+              Math.min(result!.page * result!.pageSize, total),
+            )} of ${formatNumber(total)}`
+          : countLabel(total)}
+      </PaginationCount>
+      <Pagination>
+        <PaginationContent>
+          <PaginationItem>
+            <PaginationPrevious
+              href="#"
+              aria-disabled={page <= 1}
+              className={cn(page <= 1 && "pointer-events-none opacity-50")}
+              onClick={(event) => {
+                event.preventDefault()
+                setPage((p) => Math.max(1, p - 1))
+              }}
+            />
+          </PaginationItem>
+          <PaginationItem>
+            <span className="px-3 text-label text-text-secondary">
+              Page {formatNumber(result?.page ?? 1)} of{" "}
+              {formatNumber(result?.totalPages ?? 1)}
+            </span>
+          </PaginationItem>
+          <PaginationItem>
+            <PaginationNext
+              href="#"
+              aria-disabled={page >= (result?.totalPages ?? 1)}
+              className={cn(
+                page >= (result?.totalPages ?? 1) &&
+                  "pointer-events-none opacity-50",
+              )}
+              onClick={(event) => {
+                event.preventDefault()
+                setPage((p) => Math.min(result?.totalPages ?? 1, p + 1))
+              }}
+            />
+          </PaginationItem>
+        </PaginationContent>
+      </Pagination>
+    </PaginationBar>
+  )
+
+  // Section 17-in-the-spirit-of: table-fixed only turns on when a
+  // caller actually declared a column width. Every other caller
+  // (Sites, Reports "By site", the Settings master lists, Dashboard)
+  // declares none, so its table keeps today's `table-layout: auto`.
+  const hasColumnWidths = columns.some((column) => column.width)
+
+  const tableContent = (
+    <>
+      {/* Section 13: three empty states, and using the wrong one makes
+          the software look unintelligent. */}
+      {state === "failed" ? (
+          <EmptyState
+            variant="failed"
+            heading="The list could not be loaded"
+            onAction={() => setAttempt((a) => a + 1)}
+          >
+            {failure}
+          </EmptyState>
+        ) : state === "ready" && rows.length === 0 && isFiltered ? (
+          <EmptyState
+            variant="nothing-found"
+            heading={`No records match “${search}”`}
+            onAction={() => setSearchInput("")}
+          >
+            Nothing matched that search. Clearing it will widen the list.
+          </EmptyState>
+        ) : state === "ready" && rows.length === 0 ? (
+          <EmptyState
+            variant="nothing-yet"
+            heading={emptyHeading}
+            actionLabel={emptyActionLabel ?? createLabel}
+            onAction={
+              emptyActionHref
+                ? () => router.push(emptyActionHref)
+                : createHref
+                  ? () => router.push(createHref)
+                  : undefined
+            }
+          >
+            {emptyBody}
+          </EmptyState>
+        ) : (
+          <Table className={cn(hasColumnWidths && "table-fixed")}>
+            <TableHeader>
+              <TableRow>
+                {columns.map((column) => (
+                  <TableHead
+                    key={column.key}
+                    numeric={column.numeric}
+                    className={cn(
+                      PRIORITY_CLASS[column.priority ?? "essential"],
+                      column.width && WIDTH_CLASS[column.width],
+                    )}
+                  >
+                    {column.sortKey ? (
+                      <button
+                        type="button"
+                        onClick={() => toggleSort(column)}
+                        className={cn(
+                          "flex w-full min-w-0 cursor-pointer items-center gap-1 rounded-lg text-label text-text-secondary transition-colors hover:text-text-primary",
+                          "outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-ring",
+                          column.numeric && "flex-row-reverse justify-end",
+                        )}
+                      >
+                        {/* Section 8: the label truncates, the chevron
+                            (section 27.2's sort direction indicator) never
+                            shrinks and stays visible - a sort control the
+                            user cannot see is worse than a clipped word. */}
+                        <Truncate className="min-w-0">{column.label}</Truncate>
+                        {/* Section 27.2: only the active column shows a
+                            chevron, and it shows the direction. */}
+                        {sort === column.sortKey ? (
+                          direction === "asc" ? (
+                            <ChevronUpIcon className="size-4 shrink-0" />
+                          ) : (
+                            <ChevronDownIcon className="size-4 shrink-0" />
+                          )
+                        ) : (
+                          <ArrowUpDownIcon className="size-4 shrink-0 opacity-0 transition-opacity group-hover/head:opacity-100" />
+                        )}
+                      </button>
+                    ) : (
+                      column.label
+                    )}
+                  </TableHead>
+                ))}
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {state === "loading"
+                ? Array.from({ length: 8 }, (_, row) => (
+                    <TableRow key={`skeleton-${row}`}>
+                      {columns.map((column) => (
+                        <TableCell
+                          key={column.key}
+                          className={cn(
+                            PRIORITY_CLASS[column.priority ?? "essential"],
+                            column.width && WIDTH_CLASS[column.width],
+                          )}
+                        >
+                          <Skeleton
+                            className={cn("h-4 w-3/4", column.numeric && "ml-auto")}
+                          />
+                        </TableCell>
+                      ))}
+                    </TableRow>
+                  ))
+                : rows.map((row) => (
+                    <RecordRow
+                      key={row.id}
+                      row={row}
+                      columns={columns}
+                      href={rowHref?.(row)}
+                      onOpen={rowHref ? () => router.push(rowHref(row)) : undefined}
+                    />
+                  ))}
+            </TableBody>
+          </Table>
+        )}
+    </>
+  )
+
+  if (embedded) {
+    // Section 10: the detail page (`PageScroller`) owns the scroll here,
+    // not this table — so no `ListDataArea` wrapper (it would add an
+    // inner `overflow-y-auto`, stacking two vertical scrollers on the
+    // same axis, forbidden by section 1 rule 8). Just the toolbar, the
+    // table itself in a plain bordered box, and the pagination bar,
+    // all as ordinary flow content the page scrolls along with.
+    return (
+      <div className="flex flex-col gap-4">
+        {toolbar}
+        {filterChipZone}
+        <div className="overflow-hidden rounded-lg border border-border-light">
+          {tableContent}
+        </div>
+        {paginationBar}
+      </div>
+    )
+  }
 
   return (
     <PageFrame>
@@ -372,185 +793,10 @@ export function RecordList<T extends { id: string }>({
 
       {sectionTabs}
 
-      <ListToolbar>
-        <ListSearch
-          label={searchLabel}
-          placeholder={searchPlaceholder}
-          value={searchInput}
-          onChange={(event) => setSearchInput(event.target.value)}
-          onClear={() => setSearchInput("")}
-        />
-        {/* Section 27.1: the result count sits beside the field. */}
-        {isFiltered && state === "ready" ? (
-          <span className="text-label text-text-secondary">
-            {formatNumber(total)} {total === 1 ? "result" : "results"}
-          </span>
-        ) : null}
-        {toolbarExtra}
-        {exportPdf ? (
-          <ExportPdfButton
-            className="ml-auto"
-            title={exportPdf.title}
-            columns={exportPdf.columns}
-            fetchPage={exportFetchPage}
-            buildTotalRow={exportBuildTotalRow}
-            contextDescription={exportContextDescription}
-          />
-        ) : null}
-      </ListToolbar>
+      {toolbar}
+      {filterChipZone}
 
-      <ListDataArea
-        footer={
-          <PaginationBar>
-            <PaginationCount>
-              {state === "ready" && total > 0
-                ? `Showing ${formatNumber((result!.page - 1) * result!.pageSize + 1)} to ${formatNumber(
-                    Math.min(result!.page * result!.pageSize, total),
-                  )} of ${formatNumber(total)}`
-                : countLabel(total)}
-            </PaginationCount>
-            <Pagination>
-              <PaginationContent>
-                <PaginationItem>
-                  <PaginationPrevious
-                    href="#"
-                    aria-disabled={page <= 1}
-                    className={cn(page <= 1 && "pointer-events-none opacity-50")}
-                    onClick={(event) => {
-                      event.preventDefault()
-                      setPage((p) => Math.max(1, p - 1))
-                    }}
-                  />
-                </PaginationItem>
-                <PaginationItem>
-                  <span className="px-3 text-label text-text-secondary">
-                    Page {formatNumber(result?.page ?? 1)} of{" "}
-                    {formatNumber(result?.totalPages ?? 1)}
-                  </span>
-                </PaginationItem>
-                <PaginationItem>
-                  <PaginationNext
-                    href="#"
-                    aria-disabled={page >= (result?.totalPages ?? 1)}
-                    className={cn(
-                      page >= (result?.totalPages ?? 1) &&
-                        "pointer-events-none opacity-50",
-                    )}
-                    onClick={(event) => {
-                      event.preventDefault()
-                      setPage((p) => Math.min(result?.totalPages ?? 1, p + 1))
-                    }}
-                  />
-                </PaginationItem>
-              </PaginationContent>
-            </Pagination>
-          </PaginationBar>
-        }
-      >
-        {/* Section 13: three empty states, and using the wrong one makes
-            the software look unintelligent. */}
-        {state === "failed" ? (
-          <EmptyState
-            variant="failed"
-            heading="The list could not be loaded"
-            onAction={() => setAttempt((a) => a + 1)}
-          >
-            {failure}
-          </EmptyState>
-        ) : state === "ready" && rows.length === 0 && isFiltered ? (
-          <EmptyState
-            variant="nothing-found"
-            heading={`No records match “${search}”`}
-            onAction={() => setSearchInput("")}
-          >
-            Nothing matched that search. Clearing it will widen the list.
-          </EmptyState>
-        ) : state === "ready" && rows.length === 0 ? (
-          <EmptyState
-            variant="nothing-yet"
-            heading={emptyHeading}
-            actionLabel={emptyActionLabel ?? createLabel}
-            onAction={
-              emptyActionHref
-                ? () => router.push(emptyActionHref)
-                : createHref
-                  ? () => router.push(createHref)
-                  : undefined
-            }
-          >
-            {emptyBody}
-          </EmptyState>
-        ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                {columns.map((column) => (
-                  <TableHead
-                    key={column.key}
-                    numeric={column.numeric}
-                    className={cn(PRIORITY_CLASS[column.priority ?? "essential"])}
-                  >
-                    {column.sortKey ? (
-                      <button
-                        type="button"
-                        onClick={() => toggleSort(column)}
-                        className={cn(
-                          "inline-flex cursor-pointer items-center gap-1 rounded-lg text-label text-text-secondary transition-colors hover:text-text-primary",
-                          "outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-ring",
-                          column.numeric && "flex-row-reverse",
-                        )}
-                      >
-                        {column.label}
-                        {/* Section 27.2: only the active column shows a
-                            chevron, and it shows the direction. */}
-                        {sort === column.sortKey ? (
-                          direction === "asc" ? (
-                            <ChevronUpIcon className="size-4" />
-                          ) : (
-                            <ChevronDownIcon className="size-4" />
-                          )
-                        ) : (
-                          <ArrowUpDownIcon className="size-4 opacity-0 transition-opacity group-hover/head:opacity-100" />
-                        )}
-                      </button>
-                    ) : (
-                      column.label
-                    )}
-                  </TableHead>
-                ))}
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {state === "loading"
-                ? Array.from({ length: 8 }, (_, row) => (
-                    <TableRow key={`skeleton-${row}`}>
-                      {columns.map((column) => (
-                        <TableCell
-                          key={column.key}
-                          className={cn(
-                            PRIORITY_CLASS[column.priority ?? "essential"],
-                          )}
-                        >
-                          <Skeleton
-                            className={cn("h-4 w-3/4", column.numeric && "ml-auto")}
-                          />
-                        </TableCell>
-                      ))}
-                    </TableRow>
-                  ))
-                : rows.map((row) => (
-                    <RecordRow
-                      key={row.id}
-                      row={row}
-                      columns={columns}
-                      href={rowHref?.(row)}
-                      onOpen={rowHref ? () => router.push(rowHref(row)) : undefined}
-                    />
-                  ))}
-            </TableBody>
-          </Table>
-        )}
-      </ListDataArea>
+      <ListDataArea footer={paginationBar}>{tableContent}</ListDataArea>
     </PageFrame>
   )
 }
@@ -568,30 +814,42 @@ function RecordRow<T extends { id: string }>({
 }) {
   const content = (
     <>
-      {columns.map((column, index) => (
-        <TableCell
-          key={column.key}
-          numeric={column.numeric}
-          className={cn(PRIORITY_CLASS[column.priority ?? "essential"])}
-        >
-          {index === 0 ? (
-            <span className="flex min-w-0 flex-col">
-              <span className="min-w-0">{column.render(row)}</span>
-              {/* Section 27.1: when the match is on a field other than
-                  the title, the row says where it matched. Without
-                  this, results look random. */}
-              {row.matchedField ? (
-                <span className="mt-0.5 flex min-w-0 items-center gap-1 text-meta text-text-muted">
-                  <Badge variant="neutral">{row.matchedField}</Badge>
-                  <Truncate className="min-w-0">{row.matchedValue ?? ""}</Truncate>
+      {columns.map((column, index) => {
+        const rendered = column.render(row)
+        return (
+          <TableCell
+            key={column.key}
+            numeric={column.numeric}
+            className={cn(
+              PRIORITY_CLASS[column.priority ?? "essential"],
+              column.width && WIDTH_CLASS[column.width],
+            )}
+          >
+            {index === 0 ? (
+              <span className="flex min-w-0 flex-col">
+                <span className="min-w-0">
+                  {typeof rendered === "string" ? (
+                    <Truncate>{rendered}</Truncate>
+                  ) : (
+                    rendered
+                  )}
                 </span>
-              ) : null}
-            </span>
-          ) : (
-            column.render(row)
-          )}
-        </TableCell>
-      ))}
+                {/* Section 27.1: when the match is on a field other than
+                    the title, the row says where it matched. Without
+                    this, results look random. */}
+                {row.matchedField ? (
+                  <span className="mt-0.5 flex min-w-0 items-center gap-1 text-meta text-text-muted">
+                    <Badge variant="neutral">{row.matchedField}</Badge>
+                    <Truncate className="min-w-0">{row.matchedValue ?? ""}</Truncate>
+                  </span>
+                ) : null}
+              </span>
+            ) : (
+              rendered
+            )}
+          </TableCell>
+        )
+      })}
     </>
   )
 

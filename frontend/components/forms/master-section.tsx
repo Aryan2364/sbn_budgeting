@@ -16,6 +16,8 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 import { EmptyState } from "@/components/ui/empty-state"
+import { ExportButton } from "@/components/ui/export-button"
+import type { ExportColumn } from "@/lib/pdf-export"
 import {
   Pagination,
   PaginationBar,
@@ -100,6 +102,7 @@ export function MasterSection<T extends { id: string }>({
   totalPages,
   total,
   onPageChange,
+  exportList,
 }: {
   title: string
   description: string
@@ -173,6 +176,33 @@ export function MasterSection<T extends { id: string }>({
   totalPages?: number
   total?: number
   onPageChange?: (page: number) => void
+  /**
+   * Optional and additive: a caller that omits this is completely
+   * unaffected (no button renders). Section 26 reasoning: reading a
+   * list the user can already see on screen is not an admin-only
+   * action, so this is deliberately NOT gated on `canEdit` — every
+   * caller so far (cost heads, people, site locations) passes it
+   * unconditionally, independent of the edit permission.
+   *
+   * `fetchPage` mirrors `ExportButton`'s own `fetchPage` shape exactly
+   * (`(page, pageSize) => Promise<{ data, total }>`) so the SAME paging
+   * loop in `components/ui/export-button.tsx` is reused rather than a
+   * second one written here (AGENTS.md section 1 rule 4). `rows` on
+   * this component is only ever the current page — the page owns
+   * fetching, not `MasterSection` — so the export MUST go through this
+   * separate fetch rather than exporting `rows` as given, which would
+   * silently produce a file containing only the page on screen.
+   */
+  exportList?: {
+    /** The PDF heading and the downloaded filename's seed. */
+    title: string
+    /** Mirrors the on-screen `columns`, same order, same headers. */
+    columns: ExportColumn<T>[]
+    fetchPage: (
+      page: number,
+      pageSize: number,
+    ) => Promise<{ data: T[]; total: number }>
+  }
 }) {
   const [deleting, setDeleting] = React.useState<T | null>(null)
 
@@ -189,6 +219,13 @@ export function MasterSection<T extends { id: string }>({
           this button, and the tooltip is what tells the other why.
         */}
         <CardAction>
+          {exportList ? (
+            <ExportButton
+              title={exportList.title}
+              columns={exportList.columns}
+              fetchPage={exportList.fetchPage}
+            />
+          ) : null}
           <PermissionTooltip allowed={canEdit} reason={cannotEditReason}>
             <Button
               variant="secondary"

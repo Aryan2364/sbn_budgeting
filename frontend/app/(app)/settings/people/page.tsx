@@ -30,6 +30,7 @@ import {
 } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
 import { Truncate } from "@/components/ui/truncate"
+import type { ExportColumn } from "@/lib/pdf-export"
 import { FormError } from "@/components/forms/form-error"
 import {
   MASTER_PAGE_SIZE,
@@ -60,6 +61,35 @@ export default function PeopleSettingsPage() {
   const [editing, setEditing] = React.useState<Person | null>(null)
   const [creating, setCreating] = React.useState(false)
 
+  /**
+   * Mirrors the on-screen columns exactly. Fetches EVERY row, not the
+   * page on screen: `ExportButton`'s own paging loop pages this at
+   * pageSize=100 until every matching row has been collected.
+   */
+  const exportFetchPage = React.useCallback(
+    async (exportPage: number, pageSize: number) =>
+      api.get<ListResponse<Person & Matchable>>(
+        `/users${query({ page: exportPage, pageSize, sort: "name", direction: "asc" })}`,
+      ),
+    [],
+  )
+  const exportColumns: ExportColumn<Person>[] = [
+    { header: "Name", cell: (row) => row.name },
+    {
+      header: "Email",
+      cell: (row) => row.email ?? "—",
+      excelValue: (row) => row.email ?? null,
+    },
+    {
+      header: "Role",
+      cell: (row) => (row.role === "admin" ? "Admin" : "Staff"),
+    },
+    {
+      header: "Signs in",
+      cell: (row) => (row.canLogin ? "Yes" : "No"),
+    },
+  ]
+
   return (
     <>
       <MasterSection
@@ -76,6 +106,11 @@ export default function PeopleSettingsPage() {
         totalPages={totalPages}
         total={total}
         onPageChange={setPage}
+        exportList={{
+          title: "People",
+          columns: exportColumns,
+          fetchPage: exportFetchPage,
+        }}
         columns={[
           {
             key: "name",

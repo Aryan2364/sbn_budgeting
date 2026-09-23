@@ -145,6 +145,39 @@ export class ProjectsController {
   }
 
   /**
+   * Take EVERY site off this project, in one statement.
+   *
+   * **The scope is the WHERE clause, not a list the browser sent.**
+   * The screen that calls this was detaching the sites it happened to
+   * be holding — a page of at most 100, fetched when the page loaded.
+   * On a project with more than that it would unlink 100, report
+   * success, and leave the delete to fail on the ones nobody saw; and
+   * being many requests rather than one, a failure halfway through
+   * left some sites detached and the screen still showing them all.
+   * One UPDATE cannot do either.
+   *
+   * The count comes back because the caller states it: "4 sites are no
+   * longer in this project" has to be what happened, not what a stale
+   * `siteCount` predicted.
+   *
+   * Not admin-only, for the reason given on `DELETE /sites/:id/project`
+   * — the same change is already open to the same people there.
+   */
+  @Post(':id/unlink-sites')
+  async unlinkSites(
+    @Param('id', new ParseUUIDPipe()) id: string,
+  ): Promise<{ unlinked: number }> {
+    // Proves the project exists, so a wrong id is a 404 rather than a
+    // cheerful "0 sites unlinked" that nothing went wrong in.
+    await findOneOrFail(this.pool, 'select id from projects where id = $1', [id], 'project');
+    const { rowCount } = await this.pool.query(
+      'update sites set project_id = null where project_id = $1',
+      [id],
+    );
+    return { unlinked: rowCount ?? 0 };
+  }
+
+  /**
    * Admin only (section 26), and refused while sites still reference it.
    *
    * Section 15 says a confirmation must state what else will be

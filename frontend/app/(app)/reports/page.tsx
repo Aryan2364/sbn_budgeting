@@ -1,4 +1,4 @@
-"use client"
+﻿"use client"
 
 import * as React from "react"
 import { useSearchParams } from "next/navigation"
@@ -14,10 +14,11 @@ import type {
   VarianceRow,
 } from "@/lib/api"
 import { EMPTY_VALUE, formatAmount, formatNumber, formatPercent } from "@/lib/format"
+import { paiseToRupeeInput } from "@/lib/money"
 import { PERIODS, periodLabel } from "@/lib/periods"
 import { EmptyState } from "@/components/ui/empty-state"
-import { ExportPdfButton } from "@/components/ui/export-pdf-button"
-import type { PdfColumn, PdfTotalRow } from "@/lib/pdf-export"
+import { ExportButton } from "@/components/ui/export-button"
+import type { ExportColumn, PdfTotalRow } from "@/lib/pdf-export"
 import { PrintHeader } from "@/components/ui/print-header"
 import { Truncate } from "@/components/ui/truncate"
 import { PageFrame, PageHeader } from "@/components/templates/page"
@@ -57,6 +58,28 @@ function pdfVariancePctCell(pct: string | null): string {
 
 function pdfPeriodCell(cell: VariancePeriodRow): string {
   return pdfBudgetCell(cell.budgetPaise)
+}
+
+/**
+ * Excel-only counterpart to the `pdf*Cell` string formatters above: a
+ * real numeric cell in rupees, or `null` when the underlying value is
+ * genuinely absent (never `0`, which would state a decision nobody
+ * made — same distinction section 31.2 draws on screen).
+ *
+ * `paiseToRupeeInput` (lib/money.ts) does the paise->rupees conversion
+ * by string manipulation and already returns `""` for `null`; `Number()`
+ * on that exact decimal string is the only conversion to a JS number —
+ * never `Number(paise) / 100`, which is float division on money and
+ * exactly what this product's paise-as-string convention exists to
+ * avoid.
+ */
+function excelAmountValue(paise: string | null): number | null {
+  const text = paiseToRupeeInput(paise)
+  return text === "" ? null : Number(text)
+}
+
+function excelPercentValue(pct: string | null): number | null {
+  return pct === null ? null : Number(pct)
 }
 
 /**
@@ -136,7 +159,7 @@ const COLUMNS: RecordColumn<VarianceSiteRow>[] = [
     label: "Project",
     sortKey: "project",
     priority: "secondary",
-    render: (row) => <Truncate>{row.projectName}</Truncate>,
+    render: (row) => <Truncate>{row.projectName ?? "—"}</Truncate>,
   },
   {
     key: "trees",
@@ -177,17 +200,38 @@ const COLUMNS: RecordColumn<VarianceSiteRow>[] = [
   },
 ]
 
-const SITES_EXPORT_COLUMNS: PdfColumn<VarianceSiteRow>[] = [
+const SITES_EXPORT_COLUMNS: ExportColumn<VarianceSiteRow>[] = [
   { header: "Site", cell: (row) => row.siteName },
-  { header: "Project", cell: (row) => row.projectName },
-  { header: "Trees", cell: (row) => formatNumber(row.plannedTrees), numeric: true },
-  { header: "Budget", cell: (row) => pdfBudgetCell(row.budgetPaise), numeric: true },
-  { header: "Actual", cell: (row) => formatAmount(row.actualPaise), numeric: true },
-  { header: "Variance", cell: (row) => pdfVarianceCell(row.variancePaise), numeric: true },
+  { header: "Project", cell: (row) => row.projectName ?? "—" },
+  {
+    header: "Trees",
+    cell: (row) => formatNumber(row.plannedTrees),
+    numeric: true,
+    excelValue: (row) => row.plannedTrees,
+  },
+  {
+    header: "Budget",
+    cell: (row) => pdfBudgetCell(row.budgetPaise),
+    numeric: true,
+    excelValue: (row) => excelAmountValue(row.budgetPaise),
+  },
+  {
+    header: "Actual",
+    cell: (row) => formatAmount(row.actualPaise),
+    numeric: true,
+    excelValue: (row) => excelAmountValue(row.actualPaise),
+  },
+  {
+    header: "Variance",
+    cell: (row) => pdfVarianceCell(row.variancePaise),
+    numeric: true,
+    excelValue: (row) => excelAmountValue(row.variancePaise),
+  },
   {
     header: "Variance %",
     cell: (row) => pdfVariancePctCell(row.variancePct),
     numeric: true,
+    excelValue: (row) => excelPercentValue(row.variancePct),
   },
 ]
 
@@ -279,29 +323,69 @@ function SitesReport({ tabs }: { tabs: React.ReactNode }) {
 // rather than two that drift apart.
 // ---------------------------------------------------------------
 
-const YEAR_EXPORT_COLUMNS: PdfColumn<VariancePeriodRow>[] = [
+const YEAR_EXPORT_COLUMNS: ExportColumn<VariancePeriodRow>[] = [
   { header: "Period", cell: (row) => periodLabel(row.period) },
-  { header: "Budget", cell: pdfPeriodCell, numeric: true },
-  { header: "Actual", cell: (row) => formatAmount(row.actualPaise), numeric: true },
-  { header: "Variance", cell: (row) => pdfVarianceCell(row.variancePaise), numeric: true },
+  {
+    header: "Budget",
+    cell: pdfPeriodCell,
+    numeric: true,
+    excelValue: (row) => excelAmountValue(row.budgetPaise),
+  },
+  {
+    header: "Actual",
+    cell: (row) => formatAmount(row.actualPaise),
+    numeric: true,
+    excelValue: (row) => excelAmountValue(row.actualPaise),
+  },
+  {
+    header: "Variance",
+    cell: (row) => pdfVarianceCell(row.variancePaise),
+    numeric: true,
+    excelValue: (row) => excelAmountValue(row.variancePaise),
+  },
   {
     header: "Variance %",
     cell: (row) => pdfVariancePctCell(row.variancePct),
     numeric: true,
+    excelValue: (row) => excelPercentValue(row.variancePct),
   },
 ]
 
-function headExportColumns(measure: Measure): PdfColumn<HeadPeriodRow>[] {
+/**
+ * Excel value for a head-period cell. Mirrors `pdfHeadCell`'s measure
+ * switch, but returns the raw number (or `null` when not set) instead
+ * of the formatted, sign-prefixed or percent-suffixed string.
+ */
+function excelHeadCell(cell: VariancePeriodRow, measure: Measure): number | null {
+  switch (measure) {
+    case "budget":
+      return excelAmountValue(cell.budgetPaise)
+    case "actual":
+      return excelAmountValue(cell.actualPaise)
+    case "variance":
+      return excelAmountValue(cell.variancePaise)
+    case "variancePct":
+      return excelPercentValue(cell.variancePct)
+  }
+}
+
+function headExportColumns(measure: Measure): ExportColumn<HeadPeriodRow>[] {
   return [
     { header: "Cost head", cell: (row) => row.costHeadName },
     ...PERIODS.map(
-      (label, index): PdfColumn<HeadPeriodRow> => ({
+      (label, index): ExportColumn<HeadPeriodRow> => ({
         header: label,
         cell: (row) => pdfHeadCell(row.cells[index], measure),
         numeric: true,
+        excelValue: (row) => excelHeadCell(row.cells[index], measure),
       }),
     ),
-    { header: "Total", cell: (row) => pdfHeadCell(row.total, measure), numeric: true },
+    {
+      header: "Total",
+      cell: (row) => pdfHeadCell(row.total, measure),
+      numeric: true,
+      excelValue: (row) => excelHeadCell(row.total, measure),
+    },
   ]
 }
 
@@ -416,7 +500,7 @@ function YearReport({ view, tabs }: { view: string; tabs: React.ReactNode }) {
       <ListToolbar>
         <ReportScopeControls {...scope} />
         {view === "years" ? (
-          <ExportPdfButton
+          <ExportButton
             className="ml-auto"
             title="Variance report — By year"
             contextDescription={scopeDescription}
@@ -425,7 +509,7 @@ function YearReport({ view, tabs }: { view: string; tabs: React.ReactNode }) {
             buildTotalRow={periodTotalRow}
           />
         ) : (
-          <ExportPdfButton
+          <ExportButton
             className="ml-auto"
             title={`Variance report — By cost head and year — ${measureLabel(headMeasure)}`}
             contextDescription={scopeDescription}

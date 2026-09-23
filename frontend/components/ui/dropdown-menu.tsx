@@ -97,6 +97,15 @@ function DropdownMenuItem({
         "data-[highlighted]:bg-surface-control data-inset:pl-9",
         "data-[variant=danger]:text-danger data-[variant=danger]:data-[highlighted]:bg-danger-bg data-[variant=danger]:*:[svg]:text-danger",
         "data-disabled:pointer-events-none data-disabled:text-text-muted",
+        // A DISABLED DANGER ITEM MUST STILL LOOK DISABLED (§6.4).
+        // The two rules above are both a single attribute selector, so
+        // they tie on specificity and the danger colour wins on source
+        // order — leaving a dead "Delete" at full-strength red, which
+        // is the one item in a menu a user is most certain is live.
+        // These two carry both attributes, so they outrank it by
+        // specificity rather than by where they happen to sit.
+        "data-disabled:data-[variant=danger]:text-text-muted",
+        "data-disabled:data-[variant=danger]:*:[svg]:text-text-muted",
         "[&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
         className
       )}

@@ -1,4 +1,5 @@
 import { Badge } from "@/components/ui/badge"
+import { Truncate } from "@/components/ui/truncate"
 import { EMPTY_VALUE, formatAmount, formatPercent } from "@/lib/format"
 
 /**
@@ -44,7 +45,7 @@ export function BudgetFigure({ paise }: { paise: string | null }) {
   if (paise === null) {
     return <span className="text-text-secondary">Budget not set</span>
   }
-  return <>{formatAmount(paise)}</>
+  return <Truncate>{formatAmount(paise)}</Truncate>
 }
 
 /**
@@ -63,11 +64,11 @@ export function VarianceFigure({ paise }: { paise: string | null }) {
   if (direction === null || paise === null) return <>{EMPTY_VALUE}</>
 
   return (
-    <span className="inline-flex items-center justify-end gap-2">
-      <Badge variant={direction === "over" ? "danger" : "neutral"}>
+    <span className="inline-flex min-w-0 items-center justify-end gap-2">
+      <Badge className="shrink-0" variant={direction === "over" ? "danger" : "neutral"}>
         {direction}
       </Badge>
-      <span className="tabular-nums">{formatAmount(paise)}</span>
+      <Truncate className="tabular-nums">{formatAmount(paise)}</Truncate>
     </span>
   )
 }
@@ -83,5 +84,5 @@ export function VarianceFigure({ paise }: { paise: string | null }) {
  */
 export function VariancePercentFigure({ pct }: { pct: string | null }) {
   if (pct === null) return <>{EMPTY_VALUE}</>
-  return <>{formatPercent(Number(pct))}</>
+  return <Truncate>{formatPercent(Number(pct))}</Truncate>
 }

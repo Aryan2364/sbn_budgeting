@@ -568,6 +568,21 @@ three behaviours.
 - Cards in a grid must all be the same height. Clamping is how this is
   achieved.
 
+**Truncation only works if the column has a bounded width.** A table
+sized from its content is at the mercy of its longest value: it either
+overflows its container or starves its other columns. `white-space:
+nowrap` gives one long cell an enormous preferred width and the browser
+honours it. Measured on the site Expenses tab, one pasted paragraph made
+its cell 2791px and the table 3310px inside a 927px container, pushing
+Bill no. and Amount off screen. Declaring a cell truncated is not enough
+— the column it sits in must have a width its content cannot override.
+Section 17.1 says where that width comes from.
+
+**A header cell truncates like any other cell.** A clipped header loses
+the word that says what the column means, which is worse than a clipped
+value: the reader can often infer a value from its neighbours, never the
+label.
+
 ---
 
 ## 9. Responsive behaviour
@@ -928,6 +943,32 @@ Rules:
 - Number fields align their content right. Text fields align left.
 - Fields that belong together sit on the same row.
 
+### 17.1 Table column widths
+
+Agreed 23 Sep 2026, after a pasted paragraph broke the expenses table.
+
+A column is as wide as the data it holds, the same way a field is.
+
+**Fixed widths go to the columns whose content has a known maximum** —
+a date, a period label, a reference number, an amount. **The free-text
+columns take what is left and truncate** — a cost head, a description,
+a note. They are the only columns where truncation is the intended
+outcome, so they are the ones to squeeze.
+
+Sized the other way the predictable columns starve. Measured before this
+rule: two free-text columns at a fixed 280px each left 76px apiece for
+Date, Period and Amount in a 927px table, and the Amount header rendered
+as "Amoun".
+
+**Widths come from a named vocabulary, never a number written into a
+screen.** Section 17 already does this for fields, for the same reason:
+a width the design system cannot see cannot be changed in one place, and
+two screens showing the same data drift apart. The vocabulary lives in
+`globals.css` beside the other sizing tokens.
+
+An amount column is sized to the largest figure the product can show,
+not the largest in today's data.
+
 ---
 
 ## 18. Date and number formats
@@ -936,16 +977,25 @@ One format across the whole software.
 
 | Type          | Format               | Example              |
 |---------------|----------------------|----------------------|
-| Date          | `DD Mon YYYY`        | 12 Aug 2026          |
-| Date and time | `DD Mon YYYY, h:mm A`| 12 Aug 2026, 3:45 PM |
+| Date          | `DD/MM/YY`           | 21/03/26             |
+| Date and time | `DD/MM/YY, h:mm A`   | 21/03/26, 3:45 PM    |
 | Number        | Indian grouping      | 12,45,680            |
 | Amount        | Two decimals always  | 4,200.00             |
 | Currency      | Symbol before, no gap| ₹4,200.00            |
 
 Rules:
 
-- Never display a date in numeric-only form. 12/08/2026 means two
-  different dates depending on who reads it.
+- **Day first, always.** `21/03/26` is the twenty-first of March. This
+  file previously forbade numeric dates on the grounds that 12/08/2026
+  reads as two different dates depending on the reader. That was
+  overruled on 23 Sep 2026 by the client, for whom day-first numeric is
+  the form everyone here already reads and writes, and who never asked
+  for the spelled-out month. The ambiguity the old rule feared is a
+  reader-outside-India problem, and it is accepted knowingly rather
+  than forgotten. **The two-digit year carries the same trade**: a
+  printed sheet does not say which century, which matters most in an
+  exported PDF that outlives the screen it came from. Widening `YY` to
+  `YYYY` is a one-line change in `lib/format.ts` if that ever bites.
 - "2 hours ago" style is allowed in activity feeds and notifications only.
   Everywhere else uses the full date.
 - All numbers, amounts and dates are right-aligned in tables.
@@ -973,9 +1023,21 @@ keyboard users never learn it.
 
 ### 20.1 Date picker
 
-- Displays and accepts `DD Mon YYYY`, matching section 18.
+- Displays and accepts `DD/MM/YY`, matching section 18.
 - The field accepts typed entry as well as calendar selection. Never
   calendar-only.
+- **Typing is digits only; the field inserts the slashes.** Six digits,
+  `210326`, become `21/03/26` as they are typed. Nobody types a
+  separator, so nobody can type it wrong, and the field never has to
+  guess between `21/03/26`, `21-03-26` and `21.03.26`.
+- The empty field shows `dd/mm/yy` as its placeholder. It states the
+  order the field expects before anything is typed, which is when the
+  user needs to know it. It is a hint, not a label: section 1 rule 12
+  still applies and the field carries a real label as well.
+- An unparseable or impossible entry — `32/03/26` — shows the inline
+  error of section 11.3 rule 6. It must never silently discard what
+  was typed and restore the old value: the user is then left looking
+  at a date they did not enter, with nothing on screen saying why.
 - The calendar opens in a popover aligned to the left edge of the field.
 - Week starts on Monday.
 - Today is outlined. The selected date is filled with `primary`.

@@ -20,6 +20,7 @@ import { Input } from "@/components/ui/input"
 import { InlineFieldError } from "@/components/ui/inline-field-error"
 import { Label } from "@/components/ui/label"
 import { Truncate } from "@/components/ui/truncate"
+import type { ExportColumn } from "@/lib/pdf-export"
 import { FormError } from "@/components/forms/form-error"
 import {
   MASTER_PAGE_SIZE,
@@ -44,6 +45,28 @@ export default function SiteLocationsSettingsPage() {
   const [editing, setEditing] = React.useState<SiteLocation | null>(null)
   const [creating, setCreating] = React.useState(false)
 
+  /**
+   * Mirrors the on-screen columns exactly. Fetches EVERY row, not the
+   * page on screen: `ExportButton`'s own paging loop pages this at
+   * pageSize=100 until every matching row has been collected.
+   */
+  const exportFetchPage = React.useCallback(
+    async (exportPage: number, pageSize: number) =>
+      api.get<ListResponse<SiteLocation & Matchable>>(
+        `/site-locations${query({ page: exportPage, pageSize, sort: "name", direction: "asc" })}`,
+      ),
+    [],
+  )
+  const exportColumns: ExportColumn<SiteLocation>[] = [
+    { header: "Location", cell: (row) => row.name },
+    {
+      header: "Sites",
+      cell: (row) => formatNumber(row.siteCount),
+      numeric: true,
+      excelValue: (row) => row.siteCount,
+    },
+  ]
+
   return (
     <>
       <MasterSection
@@ -60,6 +83,11 @@ export default function SiteLocationsSettingsPage() {
         totalPages={totalPages}
         total={total}
         onPageChange={setPage}
+        exportList={{
+          title: "Site locations",
+          columns: exportColumns,
+          fetchPage: exportFetchPage,
+        }}
         columns={[
           {
             key: "name",

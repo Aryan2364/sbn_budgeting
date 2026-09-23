@@ -51,11 +51,29 @@ export interface HeadPeriodReport {
   total: VariancePeriodRow;
 }
 
+/**
+ * The `projectId` scope value meaning "the sites that belong to no
+ * project" (migration 0007), as opposed to `undefined`, which means
+ * "every site, project or not".
+ *
+ * A sentinel and not a second query parameter, because the screen's
+ * control is ONE select whose options are a list of projects plus this
+ * — and a select's value is one string. Splitting it into
+ * `?projectId=&noProject=true` would let a caller ask for both at once
+ * and force every read site to decide what that means.
+ *
+ * It is also why the three filters below cannot simply interpolate the
+ * value: `project_id = 'none'` is not a uuid, so Postgres would raise
+ * `22P02` and the report would 500 rather than filter.
+ */
+export const NO_PROJECT = 'none';
+
 export interface VarianceRow {
   siteId: string;
   siteName: string;
-  projectId: string;
-  projectName: string;
+  /** Null where the site belongs to no project (migration 0007). */
+  projectId: string | null;
+  projectName: string | null;
   plannedTrees: number;
   costHeadId: string | null;
   costHeadName: string | null;
@@ -101,7 +119,8 @@ export class VarianceService {
       const pattern = param(`%${params.search.trim().replace(/[\\%_]/g, (c) => `\\${c}`)}%`);
       where.push(`(v.site_name ilike ${pattern} or v.project_name ilike ${pattern})`);
     }
-    if (params.projectId) where.push(`v.project_id = ${param(params.projectId)}`);
+    if (params.projectId === NO_PROJECT) where.push(`v.project_id is null`);
+    else if (params.projectId) where.push(`v.project_id = ${param(params.projectId)}`);
     if (params.managerId) where.push(`s.manager_id = ${param(params.managerId)}`);
 
     const sortable: Record<string, string> = {
@@ -222,7 +241,10 @@ export class VarianceService {
         v.variance_paise as "variancePaise",
         v.variance_pct   as "variancePct"
       from sites s
-      join projects p on p.id = s.project_id
+      -- LEFT: a site need not belong to a project (migration 0007).
+      -- Inner here would empty this site's own Variance tab rather
+      -- than error, which is the worst way for it to be wrong.
+      left join projects p on p.id = s.project_id
       cross join cost_heads ch
       left join variance v
         on  v.site_id      = s.id
@@ -366,7 +388,9 @@ export class VarianceService {
   }): Promise<{ rows: VariancePeriodRow[]; total: VariancePeriodRow }> {
     const values: unknown[] = [];
     const where: string[] = [`v.grain = 'site_period'`];
-    if (params.projectId) {
+    if (params.projectId === NO_PROJECT) {
+      where.push(`v.project_id is null`);
+    } else if (params.projectId) {
       values.push(params.projectId);
       where.push(`v.project_id = $${values.length}`);
     }
@@ -461,7 +485,9 @@ export class VarianceService {
   }): Promise<HeadPeriodReport> {
     const values: unknown[] = [];
     const where: string[] = [`v.grain = 'site_head_period'`];
-    if (params.projectId) {
+    if (params.projectId === NO_PROJECT) {
+      where.push(`v.project_id is null`);
+    } else if (params.projectId) {
       values.push(params.projectId);
       where.push(`v.project_id = $${values.length}`);
     }
@@ -626,7 +652,7 @@ export interface DashboardSummary {
   attention: {
     siteId: string;
     siteName: string;
-    projectName: string;
+    projectName: string | null;
     budgetPaise: string | null;
     actualPaise: string;
     variancePaise: string | null;

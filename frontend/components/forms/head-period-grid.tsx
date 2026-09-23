@@ -95,19 +95,17 @@ function Figure({ cell, measure }: { cell: VariancePeriodRow; measure: Measure }
       return cell.budgetPaise === null ? (
         <span className="text-text-secondary">Budget not set</span>
       ) : (
-        <>{formatAmount(cell.budgetPaise)}</>
+        <Truncate>{formatAmount(cell.budgetPaise)}</Truncate>
       )
     case "actual":
-      return <>{formatAmount(cell.actualPaise)}</>
+      return <Truncate>{formatAmount(cell.actualPaise)}</Truncate>
     case "variance":
       return <VarianceFigure paise={cell.variancePaise} />
     case "variancePct":
-      return (
-        <>
-          {cell.variancePct === null
-            ? EMPTY_VALUE
-            : formatPercent(Number(cell.variancePct))}
-        </>
+      return cell.variancePct === null ? (
+        <>{EMPTY_VALUE}</>
+      ) : (
+        <Truncate>{formatPercent(Number(cell.variancePct))}</Truncate>
       )
   }
 }

@@ -14,12 +14,20 @@ import { Label } from "@/components/ui/label"
 import { SearchableSelect } from "@/components/ui/searchable-select"
 
 /**
- * The scope both year-wise reports are read at: a project, optionally
- * narrowed to one of its sites.
+ * The scope both year-wise reports are read at: every site by
+ * default, narrowed by project, by site, or by both.
  *
- * **A PROJECT IS THE DEFAULT VIEW**, per the client's "total year
- * wise", which reads as a rollup rather than as a per-site list. The
- * site select narrows it and starts at "All sites".
+ * **ALL SITES IS THE DEFAULT VIEW** (client instruction, 23 Sep 2026).
+ * It was the first project until a site stopped needing one (migration
+ * 0007), and that default then hid real money: opening on a project
+ * silently excluded every site outside it, with nothing on screen
+ * saying so. A rollup is still what "total year wise" asks for — the
+ * change is which set is rolled up, not that one is.
+ *
+ * The client was shown what this costs before it was agreed: the
+ * opening figure grows by whatever sits outside the first project,
+ * which on their data was most of it. Choosing a project returns the
+ * old number exactly.
  *
  * These are scope controls and they live in the toolbar rather than
  * behind the section 27.3 filter panel. The reason that panel exists
@@ -34,6 +42,19 @@ import { SearchableSelect } from "@/components/ui/searchable-select"
  * `select` because there is one project today is how a screen breaks
  * quietly at the seventh.
  */
+
+/**
+ * The project scope meaning "the sites that belong to no project"
+ * (migration 0007). Matches `NO_PROJECT` in the API's variance service,
+ * which turns it into `project_id is null` — it is NOT a uuid and must
+ * never be treated as one.
+ *
+ * It sits in the same select as the project names rather than beside
+ * it, because it answers the same question the select asks: which
+ * sites is this report about. A separate tick box would let a user ask
+ * for a project AND no project at once, which is not a scope.
+ */
+export const NO_PROJECT = "none"
 
 export interface ReportScope {
   projectId: string
@@ -71,13 +92,23 @@ export function useReportScope(): {
     ])
       .then(([projectList, siteList]) => {
         if (cancelled) return
-        setProjects(
-          Object.fromEntries(projectList.data.map((p) => [p.id, p.name])),
-        )
+        // "No project" leads, before the names. It is a scope in its
+        // own right, not a fallback for a missing one, and a reader
+        // scanning a long project list should not have to reach the
+        // bottom to find it.
+        setProjects({
+          // "All" is a real option, not an absence. The select must
+          // never sit on a blank trigger reading "Choose a project"
+          // while the table below already shows every site — the
+          // control and the figures have to agree at first paint.
+          "": "All",
+          [NO_PROJECT]: "No project",
+          ...Object.fromEntries(projectList.data.map((p) => [p.id, p.name])),
+        })
         setAllSites(siteList.data)
-        // The first project is the default view. A report with no scope
-        // chosen would have nothing to show and no way to say why.
-        setProjectIdState((current) => current || (projectList.data[0]?.id ?? ""))
+        // No default to set: the initial "" IS the scope, and it means
+        // every site. Seeding the first project here is what the change
+        // above removed.
         setLoading(false)
       })
       .catch(() => {
@@ -96,7 +127,10 @@ export function useReportScope(): {
     () =>
       Object.fromEntries(
         allSites
-          .filter((s) => !projectId || s.projectId === projectId)
+          .filter((s) => {
+            if (projectId === NO_PROJECT) return s.projectId === null
+            return !projectId || s.projectId === projectId
+          })
           .map((s) => [s.id, s.name]),
       ),
     [allSites, projectId],
@@ -141,7 +175,7 @@ export function ReportScopeControls({
           value={scope.projectId}
           onValueChange={setProjectId}
           disabled={loading}
-          placeholder="Choose a project"
+          placeholder="All"
           searchPlaceholder="Search projects"
         />
       </div>

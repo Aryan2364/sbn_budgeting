@@ -151,8 +151,16 @@ export default function DashboardPage() {
    * which is the mistake section 13 is written to prevent. A dashboard
    * has no filters, so the third state ("nothing found") cannot arise
    * here and is deliberately absent.
+   *
+   * EMPTY MEANS NO SITES, not no projects. It was `projectCount` until
+   * a site stopped needing a project (migration 0007), and that made
+   * this screen lie: every tile, the chart and both panels below are
+   * built from sites and expenses, so a client with ten sites and no
+   * project saw a full Reports screen and a Dashboard insisting there
+   * was nothing to report — offering to create the one record type
+   * this page does not measure.
    */
-  if (load.state === "ready" && load.data.projectCount === 0) {
+  if (load.state === "ready" && load.data.siteCount === 0) {
     return (
       <PageScroller>
         <PageHeader title="Dashboard" />
@@ -160,11 +168,11 @@ export default function DashboardPage() {
           <EmptyState
             variant="nothing-yet"
             heading="Nothing to report yet"
-            actionLabel="New project"
-            onAction={() => router.push("/projects/new")}
+            actionLabel="New site"
+            onAction={() => router.push("/sites/new")}
           >
-            A donor funds a project for a number of trees, delivered across
-            one or more sites. Create the first project and this fills in.
+            A site holds the tree count, the budget and the expenses for one
+            location. Create the first site and this fills in.
           </EmptyState>
         </div>
       </PageScroller>
@@ -433,9 +441,17 @@ export default function DashboardPage() {
                     >
                       <TableCell>
                         <Truncate>{row.siteName}</Truncate>
-                        <span className="mt-0.5 block text-meta text-text-muted">
-                          {row.projectName}
-                        </span>
+                        {/* Dropped entirely, not dashed, where the site
+                            has no project. This is a meta line beneath
+                            the name rather than a table cell: an em-dash
+                            on its own under a site name says a field is
+                            missing, and a bare empty span leaves a line
+                            of space that makes the rows uneven. */}
+                        {row.projectName ? (
+                          <span className="mt-0.5 block text-meta text-text-muted">
+                            {row.projectName}
+                          </span>
+                        ) : null}
                       </TableCell>
                       <TableCell numeric>
                         {row.variancePaise === null

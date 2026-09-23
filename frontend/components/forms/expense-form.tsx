@@ -229,7 +229,7 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
     const found: Record<string, string> = {}
     if (!siteId) found.siteId = "Choose the site this expense belongs to"
     if (!costHeadId) found.costHeadId = "Choose a cost head"
-    if (!spentOn) found.spentOn = "Enter the date, like 12 Aug 2026"
+    if (!spentOn) found.spentOn = "Enter the date, like 21/03/26"
     if (period === null) found.period = "Choose a period"
     const parsed = parseRupeesToPaise(amount)
     if (!parsed.ok) found.amount = parsed.error

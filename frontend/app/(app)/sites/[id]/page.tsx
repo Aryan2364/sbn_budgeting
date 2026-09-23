@@ -25,9 +25,16 @@ import {
   type VariancePeriodRow,
 } from "@/lib/api"
 import { EMPTY_VALUE, formatAmount, formatCurrency, formatDate, formatNumber, formatPercent } from "@/lib/format"
-import { multiplyPaise, sumPaise } from "@/lib/money"
+import { paiseToRupeeInput, multiplyPaise, sumPaise } from "@/lib/money"
 import { anchorLabel, PERIODS, periodAnchor, periodLabel } from "@/lib/periods"
-import type { PdfColumn, PdfTotalRow } from "@/lib/pdf-export"
+import type { ExportColumn, PdfColumn, PdfTotalRow } from "@/lib/pdf-export"
+import { RecordList, type RecordColumn } from "@/components/templates/record-list"
+import {
+  ExpenseFilterButton,
+  expenseFilterChips,
+  expenseFilterLabels,
+  type ExpenseFilterValues,
+} from "@/components/forms/expense-filter"
 import { errorMessage, useSession } from "@/components/shell/session"
 import { Badge } from "@/components/ui/badge"
 import { Banner, BannerDescription, BannerTitle } from "@/components/ui/banner"
@@ -41,26 +48,9 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { EmptyState } from "@/components/ui/empty-state"
-import { ExportPdfButton } from "@/components/ui/export-pdf-button"
+import { ExportButton } from "@/components/ui/export-button"
 import { PrintHeader } from "@/components/ui/print-header"
-import {
-  Pagination,
-  PaginationBar,
-  PaginationContent,
-  PaginationCount,
-  PaginationItem,
-  PaginationNext,
-  PaginationPrevious,
-} from "@/components/ui/pagination"
 import { Skeleton } from "@/components/ui/skeleton"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { Truncate } from "@/components/ui/truncate"
@@ -76,8 +66,6 @@ import { DeleteRecordDialog } from "@/components/forms/delete-record-dialog"
 import { PermissionTooltip } from "@/components/forms/permission-tooltip"
 import { varianceDirection } from "@/components/forms/variance-figures"
 
-/** Section 11.1: the product's page size is 25 everywhere. */
-const EXPENSES_PAGE_SIZE = 25
 
 /**
  * PDF cell formatters for the Variance tab's export, mirroring exactly
@@ -128,6 +116,100 @@ function varianceExportColumns(measure: Measure): PdfColumn<HeadPeriodRow>[] {
   ]
 }
 
+/**
+ * The site page's Expenses tab, in `RecordList` columns — mirrors
+ * `app/(app)/expenses/page.tsx`'s COLUMNS/PDF_COLUMNS, minus the Site
+ * column (every row here is already this site, so repeating its name
+ * would say nothing a screen full of identical values doesn't already
+ * say) and with Cost head promoted out of `tertiary` since this is the
+ * client's specifically requested sort column and it should not be the
+ * first thing dropped on a narrower screen.
+ */
+const SITE_EXPENSE_COLUMNS: RecordColumn<Expense>[] = [
+  {
+    key: "spentOn",
+    label: "Date",
+    numeric: true,
+    sortKey: "spentOn",
+    width: "tight",
+    render: (row) => formatDate(row.spentOn),
+  },
+  {
+    key: "costHeadName",
+    label: "Cost head",
+    sortKey: "costHeadName",
+    render: (row) => <Truncate>{row.costHeadName}</Truncate>,
+  },
+  {
+    key: "period",
+    label: "Period",
+    sortKey: "period",
+    priority: "secondary",
+    width: "tight",
+    render: (row) => periodLabel(row.period),
+  },
+  {
+    key: "description",
+    label: "Description",
+    priority: "secondary",
+    render: (row) => <Truncate>{row.description ?? "—"}</Truncate>,
+  },
+  {
+    key: "billNumber",
+    label: "Bill no.",
+    priority: "tertiary",
+    width: "narrow",
+    render: (row) => <Truncate>{row.billNumber ?? "—"}</Truncate>,
+  },
+  {
+    key: "amountPaise",
+    label: "Amount",
+    numeric: true,
+    sortKey: "amountPaise",
+    width: "amount",
+    render: (row) => formatAmount(row.amountPaise),
+  },
+]
+
+/** Mirrors `SITE_EXPENSE_COLUMNS` exactly, same order and text. */
+const SITE_EXPENSE_PDF_COLUMNS: ExportColumn<Expense>[] = [
+  {
+    header: "Date",
+    cell: (row) => formatDate(row.spentOn),
+    // Excel: a real date cell (see the same column in app/(app)/expenses/page.tsx).
+    excelValue: (row) => new Date(row.spentOn),
+  },
+  { header: "Cost head", cell: (row) => row.costHeadName },
+  { header: "Period", cell: (row) => periodLabel(row.period) },
+  {
+    header: "Description",
+    cell: (row) => row.description ?? "—",
+    // Section 31.2's "empty is not zero" applies to text too: the Excel
+    // cell must be truly empty, not the on-screen "—" placeholder.
+    excelValue: (row) => row.description ?? null,
+  },
+  {
+    header: "Bill no.",
+    cell: (row) => row.billNumber ?? "—",
+    // See the same column in app/(app)/expenses/page.tsx: a free-text
+    // reference stays TEXT unless this specific value is a plain
+    // leading-zero-free integer (`excelNumericSafe`, lib/pdf-export.tsx).
+    excelValue: (row) => row.billNumber ?? null,
+    excelNumericSafe: true,
+  },
+  {
+    header: "Amount",
+    cell: (row) => formatAmount(row.amountPaise),
+    numeric: true,
+    // Excel: a real number, in rupees, via the exact string conversion
+    // (see the same column in app/(app)/expenses/page.tsx for why).
+    excelValue: (row) => {
+      const text = paiseToRupeeInput(row.amountPaise)
+      return text === "" ? null : Number(text)
+    },
+  },
+]
+
 /** Section 11.2. The detail template, with data. */
 export default function SiteDetailPage({
   params,
@@ -163,18 +245,21 @@ function SiteDetail({ params }: { params: Promise<{ id: string }> }) {
   const [project, setProject] = React.useState<Project | null>(null)
   const [budget, setBudget] = React.useState<BudgetGrid | null>(null)
   /**
-   * The expenses PAGE, plus the API's own total.
+   * The Expenses tab is now `RecordList` in embedded mode (see
+   * `record-list.tsx`'s `embedded`/`onResult` props) — it owns its own
+   * fetch, paging, sort and export. This page only needs the two
+   * figures `RecordList` has no header to display them in: the tab's
+   * count badge and the "Total spent" line, read back via `onResult`.
    *
-   * It used to keep only `data` from a `pageSize: 25` fetch and render
-   * all of it with no page controls — so a site with 200 expenses
-   * showed 25 rows, no way to reach the rest, and **a tab badge reading
-   * 25**, which is a wrong number a user has every reason to trust.
-   * The badge now shows `total`; the rows are a page.
+   * The total used to be `sumPaise` over whatever 25-row PAGE happened
+   * to be loaded — a per-page sum labelled as if it were the site's
+   * total. `aggregates.amountPaise` is the server's SUM across every
+   * matching row (backend/src/expenses/expenses.controller.ts), so this
+   * is now the true site total, not just "on this page" — a real change
+   * in the number shown, not only in how it is produced.
    */
-  const [expenses, setExpenses] = React.useState<Expense[] | null>(null)
   const [expenseTotal, setExpenseTotal] = React.useState(0)
-  const [expensePage, setExpensePage] = React.useState(1)
-  const [expensePages, setExpensePages] = React.useState(1)
+  const [expenseAmountPaise, setExpenseAmountPaise] = React.useState<string | null>(null)
 
   /**
    * The Variance tab's PDF export. `HeadPeriodGrid` (section 34) already
@@ -198,6 +283,65 @@ function SiteDetail({ params }: { params: Promise<{ id: string }> }) {
    * the grid and the export below always read the same value.
    */
   const [varianceMeasure, setVarianceMeasure] = React.useState<Measure>("budget")
+
+  /**
+   * The Expenses tab's `RecordList.load`. Closes over `id`, so `siteId`
+   * rides along on every page fetch this component makes — including
+   * the export's own `fetchPage` calls in `record-list.tsx`, which call
+   * this SAME function. That is what stops the Download button from
+   * silently exporting every site's expenses under this site's heading.
+   */
+  const siteExpensesLoad = React.useCallback(
+    ({
+      page,
+      search,
+      sort,
+      direction,
+      pageSize,
+      filters,
+    }: {
+      page: number
+      search: string
+      sort: string
+      direction: "asc" | "desc"
+      pageSize?: number
+      filters?: Record<string, string | undefined>
+    }) =>
+      api.get<ListResponse<Expense & Matchable>>(
+        `/expenses${query({
+          siteId: id,
+          page,
+          search,
+          sort,
+          direction,
+          pageSize,
+          spentOnFrom: filters?.spentOnFrom,
+          spentOnTo: filters?.spentOnTo,
+          amountMin: filters?.amountMin,
+          amountMax: filters?.amountMax,
+        })}`,
+      ),
+    [id],
+  )
+
+  /**
+   * Section 27.3's filter panel, reused as-is on this embedded list
+   * (section 4 rule 1: never build the same thing twice). Local state
+   * only — not synced to the URL like the `/expenses` page's — because
+   * this tab already has its own `?tab=` param and this list is one
+   * card on a detail page, not a screen someone bookmarks a filtered
+   * view of. `siteId` never enters this `filters` bag (it rides along
+   * separately, above), so it can never surface as a removable chip —
+   * a user on this page must not be able to remove the very filter
+   * that makes it this site's page.
+   */
+  const [siteExpenseListState, setSiteExpenseListState] = React.useState<{
+    search: string
+    sort: string
+    direction: "asc" | "desc"
+    page: number
+    filters: Record<string, string | undefined>
+  }>({ search: "", sort: "spentOn", direction: "desc", page: 1, filters: {} })
 
   const varianceFetchPage = React.useCallback(async () => {
     const result = await api.get<HeadPeriodReport>(
@@ -229,21 +373,20 @@ function SiteDetail({ params }: { params: Promise<{ id: string }> }) {
       .then(async (found) => {
         if (cancelled) return
         setSite(found)
-        const [proj, grid, expenseList] = await Promise.all([
-          api.get<Project>(`/projects/${found.projectId}`),
+        // No project is the ordinary case (migration 0007), so there
+        // is nothing to fetch and no over-allocation to check. Asking
+        // for /projects/null would fail the whole load and put this
+        // site's page into the error state over a field it does not
+        // have.
+        const [proj, grid] = await Promise.all([
+          found.projectId
+            ? api.get<Project>(`/projects/${found.projectId}`)
+            : null,
           api.get<BudgetGrid>(`/sites/${id}/budget`),
-          api.get<ListResponse<Expense & Matchable>>(
-            `/expenses${query({ siteId: id, page: expensePage, pageSize: EXPENSES_PAGE_SIZE, sort: "spentOn", direction: "desc" })}`,
-          ),
         ])
         if (cancelled) return
         setProject(proj)
         setBudget(grid)
-        setExpenses(expenseList.data)
-        setExpenseTotal(expenseList.total)
-        setExpensePages(
-          Math.max(1, Math.ceil(expenseList.total / (expenseList.pageSize || EXPENSES_PAGE_SIZE))),
-        )
       })
       .catch((caught: unknown) => {
         if (!cancelled) setError(errorMessage(caught))
@@ -251,7 +394,7 @@ function SiteDetail({ params }: { params: Promise<{ id: string }> }) {
     return () => {
       cancelled = true
     }
-  }, [id, expensePage])
+  }, [id])
 
   React.useEffect(() => reload(), [reload])
 
@@ -273,7 +416,7 @@ function SiteDetail({ params }: { params: Promise<{ id: string }> }) {
   // budgeted, which reads "Budget not set" rather than 0.00.
   const perTree = budget ? sumPaise(budget.cells.map((c) => c.perTreePaise)) : null
   const siteBudget = site ? multiplyPaise(perTree, site.plannedTrees) : null
-  const spent = expenses ? sumPaise(expenses.map((e) => e.amountPaise)) : null
+  const spent = expenseAmountPaise
 
   const over =
     project !== null && project.allocatedTrees > project.plannedTrees
@@ -289,7 +432,9 @@ function SiteDetail({ params }: { params: Promise<{ id: string }> }) {
         className="mt-4"
         title={site ? site.name : <Skeleton className="h-8 w-64 max-w-full" />}
         badges={
-          site ? <Badge variant="neutral">{site.projectName}</Badge> : null
+          site?.projectName ? (
+            <Badge variant="neutral">{site.projectName}</Badge>
+          ) : null
         }
         meta={
           site ? (
@@ -417,7 +562,9 @@ function SiteDetail({ params }: { params: Promise<{ id: string }> }) {
             <CardContent>
               <DetailFieldList className="sm:grid-cols-1">
                 <DetailField label="Project">
-                  {site ? (
+                  {!site ? (
+                    <Skeleton className="h-4 w-3/4" />
+                  ) : site.projectId ? (
                     <Link
                       href={`/projects/${site.projectId}`}
                       className="text-primary hover:text-primary-hover"
@@ -425,7 +572,11 @@ function SiteDetail({ params }: { params: Promise<{ id: string }> }) {
                       {site.projectName}
                     </Link>
                   ) : (
-                    <Skeleton className="h-4 w-3/4" />
+                    // A dash, as Location does below. The field stays
+                    // rather than disappearing: a row that vanishes for
+                    // some sites makes the summary a different shape
+                    // per record.
+                    "—"
                   )}
                 </DetailField>
                 <DetailField label="Location">
@@ -520,7 +671,7 @@ function SiteDetail({ params }: { params: Promise<{ id: string }> }) {
                 <CardTitle>Expenses</CardTitle>
                 {spent !== null ? (
                   <p className="text-meta text-text-muted">
-                    {formatCurrency(spent)} on this page
+                    {formatCurrency(spent)} total
                   </p>
                 ) : null}
               </div>
@@ -533,106 +684,80 @@ function SiteDetail({ params }: { params: Promise<{ id: string }> }) {
                 New expense
               </Button>
             </CardHeader>
-            <CardContent className="p-0">
-              {expenses === null ? (
-                <div className="flex flex-col gap-3 p-4">
-                  <Skeleton className="h-4 w-full" />
-                  <Skeleton className="h-4 w-4/5" />
-                </div>
-              ) : expenses.length === 0 ? (
-                <EmptyState
-                  variant="nothing-yet"
-                  heading="No expenses yet"
-                  actionLabel="New expense"
-                  onAction={() => router.push(`/expenses/new?siteId=${id}`)}
-                >
-                  Expenses are booked against a cost head and a budget period.
-                </EmptyState>
-              ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead numeric>Date</TableHead>
-                      <TableHead>Cost head</TableHead>
-                      <TableHead className="hidden md:table-cell">Period</TableHead>
-                      <TableHead className="hidden lg:table-cell">Bill no.</TableHead>
-                      <TableHead numeric>Amount</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {expenses.map((expense) => (
-                      <TableRow
-                        key={expense.id}
-                        role="link"
-                        tabIndex={0}
-                        className="cursor-pointer outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary-ring"
-                        onClick={() => router.push(`/expenses/${expense.id}/edit`)}
-                        onKeyDown={(event) => {
-                          if (event.key === "Enter" || event.key === " ") {
-                            event.preventDefault()
-                            router.push(`/expenses/${expense.id}/edit`)
-                          }
-                        }}
-                      >
-                        <TableCell numeric>{formatDate(expense.spentOn)}</TableCell>
-                        <TableCell>
-                          <Truncate>{expense.costHeadName}</Truncate>
-                        </TableCell>
-                        <TableCell className="hidden md:table-cell">
-                          {periodLabel(expense.period)}
-                        </TableCell>
-                        <TableCell className="hidden lg:table-cell">
-                          <Truncate>{expense.billNumber ?? "—"}</Truncate>
-                        </TableCell>
-                        <TableCell numeric>
-                          {formatAmount(expense.amountPaise)}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              )}
-            </CardContent>
+            <CardContent className="p-4 pt-0">
+              {/*
+                The SAME list machinery `/expenses` uses (section 1 rule
+                4) — `RecordList` in embedded mode (no page header, no
+                page-owned data-area scroller: see that prop's doc
+                comment for why). The Site column is dropped: every row
+                on this screen already IS this site, so repeating its
+                name in every row would say nothing a screen full of
+                identical values doesn't already say.
 
-            {/* Section 1 rule 7: the rest of the expenses are reachable. */}
-            {expenses !== null && expensePages > 1 ? (
-              <PaginationBar>
-                <PaginationCount>
-                  {formatNumber(expenseTotal)} in total
-                </PaginationCount>
-                <Pagination>
-                  <PaginationContent>
-                    <PaginationItem>
-                      <PaginationPrevious
-                        href="#"
-                        aria-disabled={expensePage <= 1}
-                        className={expensePage <= 1 ? "pointer-events-none opacity-50" : undefined}
-                        onClick={(event) => {
-                          event.preventDefault()
-                          setExpensePage((p) => Math.max(1, p - 1))
-                        }}
-                      />
-                    </PaginationItem>
-                    <PaginationItem>
-                      <span className="px-3 text-label text-text-secondary">
-                        Page {formatNumber(expensePage)} of {formatNumber(expensePages)}
-                      </span>
-                    </PaginationItem>
-                    <PaginationItem>
-                      <PaginationNext
-                        href="#"
-                        aria-disabled={expensePage >= expensePages}
-                        className={expensePage >= expensePages ? "pointer-events-none opacity-50" : undefined}
-                        onClick={(event) => {
-                          event.preventDefault()
-                          setExpensePage((p) => Math.min(expensePages, p + 1))
-                        }}
-                      />
-                    </PaginationItem>
-                  </PaginationContent>
-                </Pagination>
-              </PaginationBar>
-            ) : null}
+                `load` closes over `id`, so `siteId` rides along on
+                every page fetch AND on the export's own paging calls —
+                the export can never silently widen to every site's
+                expenses under this site's heading.
+              */}
+              <RecordList<Expense>
+                embedded
+                title="Expenses"
+                countLabel={(total) =>
+                  `${formatNumber(total)} ${total === 1 ? "expense" : "expenses"}`
+                }
+                searchLabel="Search expenses"
+                searchPlaceholder="Search expenses"
+                defaultSort="spentOn"
+                defaultDirection="desc"
+                listState={siteExpenseListState}
+                onListStateChange={setSiteExpenseListState}
+                toolbarExtra={
+                  <ExpenseFilterButton
+                    filters={siteExpenseListState.filters as ExpenseFilterValues}
+                    onApply={(next) =>
+                      setSiteExpenseListState((s) => ({ ...s, filters: next, page: 1 }))
+                    }
+                  />
+                }
+                renderFilterChips={(applied) =>
+                  expenseFilterChips(
+                    applied,
+                    (next) =>
+                      setSiteExpenseListState((s) => ({ ...s, filters: next, page: 1 })),
+                    siteExpenseListState.filters as ExpenseFilterValues,
+                  )
+                }
+                describeFilters={expenseFilterLabels}
+                columns={SITE_EXPENSE_COLUMNS}
+                rowHref={(row) => `/expenses/${row.id}/edit`}
+                load={siteExpensesLoad}
+                onResult={({ total, aggregates }) => {
+                  setExpenseTotal(total)
+                  setExpenseAmountPaise(aggregates?.amountPaise ?? null)
+                }}
+                emptyHeading="No expenses yet"
+                emptyBody="Expenses are booked against a cost head and a budget period."
+                emptyActionLabel="New expense"
+                emptyActionHref={`/expenses/new?siteId=${id}`}
+                exportPdf={{
+                  title: site ? `${site.name} — Expenses` : "Expenses",
+                  columns: SITE_EXPENSE_PDF_COLUMNS,
+                  buildTotalRow: (_rows, aggregates): PdfTotalRow | undefined =>
+                    aggregates
+                      ? {
+                          cells: [
+                            "",
+                            "",
+                            "",
+                            "",
+                            "Total for all matching expenses",
+                            formatAmount(aggregates.amountPaise),
+                          ],
+                        }
+                      : undefined,
+                }}
+              />
+            </CardContent>
           </Card>
         </TabsContent>
 
@@ -665,7 +790,7 @@ function SiteDetail({ params }: { params: Promise<{ id: string }> }) {
                   </p>
                 ) : null}
               </div>
-              <ExportPdfButton
+              <ExportButton
                 title={
                   site
                     ? `${site.name} — Variance by cost head and year — ${measureLabel(varianceMeasure)}`

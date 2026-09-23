@@ -241,6 +241,37 @@
   /* 11.5: the settings section menu, "about 200px". */
   --spacing-settings-menu: 200px;
 
+  /* Table column widths - extends section 17's constrained-vocabulary
+     spirit to `RecordList` columns (components/templates/record-list.tsx).
+     `table-layout:fixed` needs SOME columns pinned so the free-text
+     ones (Description, Cost head) have a bounded remainder to share -
+     but the pinned ones must be the columns whose content has a KNOWN
+     maximum, sized to that maximum, never the free-text columns
+     themselves. Three names, not pixels, so the numbers live here and
+     nowhere else. Opt-in via `RecordColumn.width`; a column that
+     declares none keeps today's auto-fill behaviour (and, for
+     Description/Cost head, is exactly what lets it truncate instead of
+     forcing a fixed box on unpredictable text).
+
+     - `tight` (110px): Date ("26/08/26", 8 characters) and Period
+       ("Initial", 7 characters) - short, fixed-format values, plus
+       their sort icon when the column is sortable.
+     - `narrow` (140px): Bill no. - a realistic bill/voucher reference
+       ("INV-2026-0087"), not the 2-3 digit values seeded in demo data.
+     - `amount` (160px): Amount. MEASURED the same way section 31.1's
+       120px floor was: Geist 14px tabular figures render
+       "12,45,680.00" (no rupee sign; this column uses `formatAmount`,
+       not `formatCurrency`) at roughly 7.2px per character - 94px for
+       the 13-character `--spacing-grid-cell` example, minus the ₹
+       glyph. A site budget on this product's own dashboard reads
+       ₹1,71,60,000.00 - a 14-character amount before the decimals -
+       so the column must clear that, not today's shorter demo
+       figures, plus the 32px of `td`/`th` padding (`px-4` each side)
+       and the sort icon + gap the Amount header itself carries. */
+  --spacing-col-tight: 110px;
+  --spacing-col-narrow: 140px;
+  --spacing-col-amount: 160px;
+
   /* 31.1: the data entry grid's amount cell. MEASURED, not chosen -
      Geist 14px tabular figures render "Rs12,45,680.00" at 94px, plus
      24px of input padding and a 1.33px border. A truncated number is

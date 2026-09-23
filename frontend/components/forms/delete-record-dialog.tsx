@@ -73,6 +73,7 @@ export function DeleteRecordDialog({
   onConfirm,
   onDeleted,
   blocked,
+  continueToDelete,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -89,7 +90,45 @@ export function DeleteRecordDialog({
    * done instead. Omit it and the §15 confirmation is what renders.
    */
   blocked?: DeleteBlocked
+  /**
+   * The block is an OBSTACLE to the deletion, not an errand of its
+   * own: clearing it leaves the user where they meant to be, and the
+   * next click is the delete.
+   *
+   * **It is a prop of the dialog and not a field on `blocked` on
+   * purpose.** `blocked` goes undefined the moment the block clears,
+   * so a flag living inside it would vanish exactly when it is needed
+   * and the branch below would swing to a different component —
+   * which is the bug this whole mode exists to avoid.
+   */
+  continueToDelete?: boolean
 }) {
+  /*
+   * ONE POPUP FOR BOTH STEPS, and it has to be one COMPONENT.
+   *
+   * The two states below are built on different primitives — `Dialog`
+   * for a block the user may dismiss, `AlertDialog` for a deletion
+   * they may not — so letting `blocked` pick between them mid-flow
+   * destroys one portal and builds another. On screen the popup
+   * vanishes and a different one animates in, which reads as a glitch
+   * rather than as the same popup moving on. Here the primitive is
+   * fixed for the whole flow and only its contents change.
+   */
+  if (continueToDelete) {
+    return (
+      <ContinuingDeleteDialog
+        open={open}
+        onOpenChange={onOpenChange}
+        recordName={recordName}
+        what={what}
+        consequences={consequences}
+        onConfirm={onConfirm}
+        onDeleted={onDeleted}
+        blocked={blocked}
+      />
+    )
+  }
+
   if (blocked) {
     return (
       <CannotDeleteDialog
@@ -176,6 +215,111 @@ function ConfirmDeleteDialog({
             <TrashIcon />
             {busy ? "Deleting…" : `Delete ${what}`}
           </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  )
+}
+
+/**
+ * The block and the deletion as ONE popup, for the caller whose
+ * alternative action leads straight back to the delete.
+ *
+ * It is an `AlertDialog` throughout, including while blocked. That
+ * costs the §24 dismissals — Escape and the backdrop — for the first
+ * step, and buys the thing §24 is actually protecting: a popup that
+ * does not flinch under the user between two clicks they make in a
+ * row. Cancel is present at both steps, so no exit is lost, only a
+ * shortcut; and the second step is a deletion, which §24 says must
+ * not be dismissible anyway.
+ */
+function ContinuingDeleteDialog({
+  open,
+  onOpenChange,
+  recordName,
+  what,
+  consequences,
+  onConfirm,
+  onDeleted,
+  blocked,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  recordName: string
+  what: string
+  consequences: React.ReactNode
+  onConfirm: () => Promise<void>
+  onDeleted: () => void
+  blocked?: DeleteBlocked
+}) {
+  const [busy, setBusy] = React.useState(false)
+  const [error, setError] = React.useState<string | null>(null)
+
+  /*
+   * One handler, because the two steps differ in what they run and in
+   * what follows, not in how they behave: both disable the footer
+   * while working, both keep a refusal on screen rather than losing it
+   * on close, and both stop being busy either way.
+   */
+  async function act() {
+    setBusy(true)
+    setError(null)
+    try {
+      if (blocked) {
+        await blocked.run()
+        toast.success(blocked.done)
+        // No close and no `onActed`: `run` has left the caller's state
+        // correct, `blocked` is about to go undefined, and this same
+        // popup becomes the confirmation on the next render.
+        return
+      }
+      await onConfirm()
+      onOpenChange(false)
+      onDeleted()
+    } catch (caught) {
+      setError(errorMessage(caught))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <AlertDialog open={open} onOpenChange={onOpenChange}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>
+            {blocked ? `${recordName} is in use` : `Delete ${recordName}?`}
+          </AlertDialogTitle>
+          <AlertDialogDescription>
+            {blocked ? blocked.reason : consequences}
+          </AlertDialogDescription>
+          {/* mt-0: the header's own gap already spaces this. */}
+          {error ? (
+            <InlineFieldError className="mt-0">{error}</InlineFieldError>
+          ) : null}
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={busy}>Cancel</AlertDialogCancel>
+          {blocked ? (
+            // Not danger-styled and no trash icon: nothing is being
+            // destroyed yet, and dressing the way OUT of a block as a
+            // deletion is what makes people hesitate over the button
+            // that is safe to press.
+            <AlertDialogAction
+              // `AlertDialogAction` defaults to danger, which is right
+              // for the step this becomes and wrong for this one.
+              variant="primary"
+              disabled={busy}
+              onClick={act}
+            >
+              {busy ? "Working…" : blocked.actionLabel}
+            </AlertDialogAction>
+          ) : (
+            <AlertDialogAction variant="danger" disabled={busy} onClick={act}>
+              <TrashIcon />
+              {busy ? "Deleting…" : `Delete ${what}`}
+            </AlertDialogAction>
+          )}
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>

@@ -22,6 +22,7 @@ import { InlineFieldError } from "@/components/ui/inline-field-error"
 import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
 import { Truncate } from "@/components/ui/truncate"
+import type { ExportColumn } from "@/lib/pdf-export"
 import { FormError } from "@/components/forms/form-error"
 import {
   MASTER_PAGE_SIZE,
@@ -52,6 +53,34 @@ export default function CostHeadsSettingsPage() {
   const [editing, setEditing] = React.useState<CostHead | null>(null)
   const [creating, setCreating] = React.useState(false)
 
+  /**
+   * Mirrors the on-screen columns exactly (same order, same headers,
+   * same formatted strings). Fetches EVERY row matching, not the page
+   * on screen: `ExportButton`'s own paging loop calls this with
+   * page=1,2,3… at pageSize=100 until it has them all, same endpoint
+   * the on-screen table uses, varying only page/pageSize.
+   */
+  const exportFetchPage = React.useCallback(
+    async (exportPage: number, pageSize: number) =>
+      api.get<ListResponse<CostHead & Matchable>>(
+        `/cost-heads${query({ page: exportPage, pageSize, sort: "sortOrder", direction: "asc" })}`,
+      ),
+    [],
+  )
+  const exportColumns: ExportColumn<CostHead>[] = [
+    {
+      header: "#",
+      cell: (row) => formatNumber(row.sortOrder),
+      numeric: true,
+      excelValue: (row) => row.sortOrder,
+    },
+    { header: "Name", cell: (row) => row.name },
+    {
+      header: "Status",
+      cell: (row) => (row.isActive ? "Active" : "Inactive"),
+    },
+  ]
+
   return (
     <>
       <MasterSection
@@ -68,6 +97,11 @@ export default function CostHeadsSettingsPage() {
         totalPages={totalPages}
         total={total}
         onPageChange={setPage}
+        exportList={{
+          title: "Cost heads",
+          columns: exportColumns,
+          fetchPage: exportFetchPage,
+        }}
         columns={[
           {
             key: "sortOrder",

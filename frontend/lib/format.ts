@@ -5,8 +5,8 @@ import { format, isValid } from "date-fns"
  *
  * | Type          | Format                | Example              |
  * |---------------|-----------------------|----------------------|
- * | Date          | DD Mon YYYY           | 12 Aug 2026          |
- * | Date and time | DD Mon YYYY, h:mm A   | 12 Aug 2026, 3:45 PM |
+ * | Date          | DD/MM/YY              | 21/03/26             |
+ * | Date and time | DD/MM/YY, h:mm A      | 21/03/26, 3:45 PM    |
  * | Number        | Indian grouping       | 12,45,680            |
  * | Amount        | Two decimals always   | 4,200.00             |
  * | Currency      | Symbol before, no gap | ₹4,200.00            |
@@ -20,9 +20,14 @@ import { format, isValid } from "date-fns"
  * bigint so no amount is ever rounded on the way to the screen.
  */
 
-/** Section 18: never a numeric-only date. 12/08/2026 means two dates. */
-export const DATE_FORMAT = "dd MMM yyyy"
-export const DATE_TIME_FORMAT = "dd MMM yyyy, h:mm a"
+/**
+ * Section 18: day-first numeric, two-digit year. Overruled 23 Sep 2026 by
+ * the client — day-first numeric is the form everyone here already reads
+ * and writes. Widening `yy` to `yyyy` is a one-line change if that ever
+ * bites.
+ */
+export const DATE_FORMAT = "dd/MM/yy"
+export const DATE_TIME_FORMAT = "dd/MM/yy, h:mm a"
 
 /** What renders in place of a value that is genuinely absent. */
 export const EMPTY_VALUE = "—"
@@ -137,14 +142,33 @@ export function formatPercent(value: number | null | undefined): string {
   return `${rounded.toFixed(1)}%`
 }
 
-/** 12 Aug 2026. */
+/** 21/03/26. */
 export function formatDate(value: DateInput): string {
   const date = toDate(value)
   return date ? format(date, DATE_FORMAT) : EMPTY_VALUE
 }
 
-/** 12 Aug 2026, 3:45 PM. */
+/** 21/03/26, 3:45 PM. */
 export function formatDateTime(value: DateInput): string {
   const date = toDate(value)
   return date ? format(date, DATE_TIME_FORMAT) : EMPTY_VALUE
+}
+
+/**
+ * `Expenses-2026-09-22.pdf` / `Expenses-2026-09-22.xlsx` — the one place
+ * an export's downloaded filename is built, shared by `lib/pdf-export.tsx`
+ * and `lib/excel-export.ts` (AGENTS.md section 1 rule 4: never build the
+ * same thing twice). ISO date, not `DATE_FORMAT` — a filename cannot
+ * carry a space, and Windows additionally rejects `\ / : * ? " < > |`.
+ */
+export function buildExportFilename(title: string, extension: string): string {
+  const now = new Date()
+  const isoDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(
+    now.getDate(),
+  ).padStart(2, "0")}`
+  const safeTitle = title
+    .trim()
+    .replace(/[\\/:*?"<>|]/g, "")
+    .replace(/\s+/g, "-")
+  return `${safeTitle}-${isoDate}.${extension}`
 }

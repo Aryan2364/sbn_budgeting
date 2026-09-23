@@ -210,8 +210,9 @@ export interface Project {
 
 export interface Site {
   id: string
-  projectId: string
-  projectName: string
+  /** Null where the site belongs to no project. Ordinary, not missing. */
+  projectId: string | null
+  projectName: string | null
   name: string
   siteLocationId: string | null
   locationName: string | null
@@ -316,7 +317,7 @@ export interface DashboardSummary {
   attention: {
     siteId: string
     siteName: string
-    projectName: string
+    projectName: string | null
     budgetPaise: string | null
     actualPaise: string
     variancePaise: string | null
@@ -350,8 +351,8 @@ export interface DashboardSummary {
 export interface VarianceRow {
   siteId: string
   siteName: string
-  projectId: string
-  projectName: string
+  projectId: string | null
+  projectName: string | null
   plannedTrees: number
   costHeadId: string | null
   costHeadName: string | null

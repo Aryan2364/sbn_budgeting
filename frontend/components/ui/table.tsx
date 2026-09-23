@@ -3,6 +3,7 @@
 import * as React from "react"
 
 import { cn } from "@/lib/utils"
+import { Truncate } from "@/components/ui/truncate"
 
 /**
  * Sections 10, 11.1 and 22.
@@ -104,9 +105,20 @@ function TableRow({
   )
 }
 
+/**
+ * Section 8: "A header cell truncates like any other cell." Plain-string
+ * labels (the overwhelming majority of headers) are wrapped in `Truncate`
+ * automatically, so every existing caller gets the fix for free and
+ * nothing double-wraps a caller that already passes its own `Truncate`
+ * (non-string children, e.g. a sortable header's button+chevron, or a
+ * caller-supplied node) are left exactly as passed through - such a
+ * caller is responsible for truncating its own label internally the way
+ * `record-list.tsx`'s sortable header does.
+ */
 function TableHead({
   className,
   numeric,
+  children,
   ...props
 }: React.ComponentProps<"th"> & { numeric?: boolean }) {
   return (
@@ -119,13 +131,30 @@ function TableHead({
         className
       )}
       {...props}
-    />
+    >
+      {typeof children === "string" ? <Truncate>{children}</Truncate> : children}
+    </th>
   )
 }
 
+/**
+ * Section 8, section 1 rule 6: a numeric cell overflows just as easily
+ * as a text one - a stress-tested amount like `10,00,00,00,00,00,00,000.00`
+ * has no break opportunity and, with `overflow:visible` (the browser's
+ * table-cell default), spills into the neighbouring cell instead of
+ * clipping. Plain-string children are wrapped in `Truncate` the same way
+ * `TableHead` already does it, so this is the default for every numeric
+ * (and text) cell rather than something each caller has to remember.
+ * `Truncate`'s span sets no text-align of its own, so it inherits the
+ * cell's `data-numeric:text-right` and the ellipsis stays right-aligned.
+ * Non-string children (badges, icons, a caller's own composed node) pass
+ * through unchanged - that caller owns its own overflow handling, exactly
+ * as `TableHead` already treats a non-string header.
+ */
 function TableCell({
   className,
   numeric,
+  children,
   ...props
 }: React.ComponentProps<"td"> & { numeric?: boolean }) {
   return (
@@ -138,7 +167,9 @@ function TableCell({
         className
       )}
       {...props}
-    />
+    >
+      {typeof children === "string" ? <Truncate>{children}</Truncate> : children}
+    </td>
   )
 }
 

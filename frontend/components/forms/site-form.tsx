@@ -107,7 +107,7 @@ export function SiteForm({ siteId }: { siteId?: string }) {
         setLocations(Object.fromEntries(locationList.data.map((l) => [l.id, l.name])))
         setPeople(Object.fromEntries(peopleList.data.map((p) => [p.id, p.name])))
         if (site) {
-          setProjectId(site.projectId)
+          setProjectId(site.projectId ?? "")
           setName(site.name)
           setSiteLocationId(site.siteLocationId ?? "")
           setPlannedTrees(String(site.plannedTrees))
@@ -134,7 +134,8 @@ export function SiteForm({ siteId }: { siteId?: string }) {
 
   function validate(): Record<string, string> {
     const found: Record<string, string> = {}
-    if (!projectId) found.projectId = "Choose the project this site belongs to"
+    // No check on the project. It is optional (client instruction,
+    // 23 Sep 2026) and leaving it as None is an answer.
     if (name.trim() === "") found.name = "Enter the site name"
     if (plannedTrees.trim() === "") found.plannedTrees = "Enter the number of trees"
     else if (!/^\d+$/.test(plannedTrees.trim())) {
@@ -145,7 +146,7 @@ export function SiteForm({ siteId }: { siteId?: string }) {
     // Required (question 6): the fallback period anchor, and the only
     // one a site has while it is still being planted.
     if (!startDate) {
-      found.startDate = "Enter the plantation start date, like 12 Aug 2026"
+      found.startDate = "Enter the plantation start date, like 21/03/26"
     }
     // A site cannot finish being planted before it started. The
     // database carries the same check; this is so the person sees it
@@ -169,7 +170,7 @@ export function SiteForm({ siteId }: { siteId?: string }) {
     setError(null)
     try {
       const body = {
-        projectId,
+        projectId: projectId || null,
         name,
         siteLocationId: siteLocationId || null,
         plannedTrees: Number(plannedTrees),
@@ -237,22 +238,29 @@ export function SiteForm({ siteId }: { siteId?: string }) {
           <form id="site-form" onSubmit={submit} className="mt-8">
             <FormSection
               label="Site"
-              description="A site delivers part of a project. Its budget is set per tree against the count below."
+              description="Its budget is set per tree against the count below."
             >
-              <FormField
-                span={6}
-                label="Project"
-                required
-                htmlFor="projectId"
-                error={fieldErrors.projectId}
-              >
+              {/*
+                * Optional, and not marked optional either. Most clients
+                * are not expected to create a single project, so a
+                * hint reading "optional" on a field they will never
+                * fill is one more thing to read and dismiss on every
+                * site they enter.
+                *
+                * "None" is a real first choice rather than a cleared
+                * state: it shows on the trigger when nothing is
+                * picked, AND it is selectable, which is how a site
+                * that was linked gets unlinked again. A placeholder
+                * alone would let the link be made and never undone.
+                */}
+              <FormField span={6} label="Project" htmlFor="projectId">
                 <SearchableSelect
                   id="projectId"
-                  options={projects}
+                  options={{ "": "None", ...projects }}
                   value={projectId}
                   onValueChange={setProjectId}
                   disabled={loading}
-                  placeholder="Choose a project"
+                  placeholder="None"
                   searchPlaceholder="Search projects"
                 />
               </FormField>

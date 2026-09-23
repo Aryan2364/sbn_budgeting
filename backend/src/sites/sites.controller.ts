@@ -39,8 +39,17 @@ import { Roles } from '../common/roles.decorator';
 import { PG_POOL } from '../db/db.module';
 
 export class SiteDto {
-  @IsUUID(undefined, { message: 'Choose the project this site belongs to' })
-  projectId!: string;
+  /**
+   * OPTIONAL (client instruction, 23 Sep 2026). A site may belong to a
+   * project and may equally stand alone; the client is not expected to
+   * create projects at all. An empty string from the form's "None"
+   * choice means "no project", which is a stated answer, not a missing
+   * one -- the same shape `plantationCompleteDate` uses below.
+   */
+  @IsOptional()
+  @Transform(({ value }) => (value === '' || value === null ? null : value))
+  @IsUUID(undefined, { message: 'Choose a project, or leave it as None' })
+  projectId?: string | null;
 
   @IsString()
   @MinLength(1, { message: 'Enter the site name' })
@@ -58,7 +67,7 @@ export class SiteDto {
   /** Required (question 6). The FALLBACK period anchor. */
   @IsDateString(
     {},
-    { message: 'Enter the plantation start date, like 12 Aug 2026' },
+    { message: 'Enter the plantation start date, like 21/03/26' },
   )
   plantationStartDate!: string;
 
@@ -74,7 +83,7 @@ export class SiteDto {
   @Transform(({ value }) => (value === '' || value === null ? null : value))
   @IsDateString(
     {},
-    { message: 'Enter the plantation complete date, like 12 Aug 2026' },
+    { message: 'Enter the plantation complete date, like 21/03/26' },
   )
   plantationCompleteDate?: string | null;
 
@@ -89,8 +98,9 @@ export class SiteDto {
 
 export interface SiteRow {
   id: string;
-  projectId: string;
-  projectName: string;
+  /** Null where the site belongs to no project. Ordinary, not missing. */
+  projectId: string | null;
+  projectName: string | null;
   name: string;
   siteLocationId: string | null;
   locationName: string | null;
@@ -146,7 +156,7 @@ const SITE_SELECT = `
 
 const SITE_FROM = `
   sites s
-  join projects p on p.id = s.project_id
+  left join projects p on p.id = s.project_id
   left join site_locations l on l.id = s.site_location_id
   left join users m on m.id = s.manager_id
   left join users v on v.id = s.supervisor_id`;
@@ -260,7 +270,7 @@ export class SitesController {
             manager_id, supervisor_id)
          values ($1, $2, $3, $4, $5, $6, $7, $8) returning id`,
         [
-          body.projectId,
+          body.projectId ?? null,
           body.name,
           body.siteLocationId ?? null,
           body.plannedTrees,
@@ -273,7 +283,7 @@ export class SitesController {
       .catch(rethrowPlantationDates);
     return {
       site: await this.get(rows[0].id),
-      warning: await this.allocation(body.projectId),
+      warning: body.projectId ? await this.allocation(body.projectId) : null,
     };
   }
 
@@ -283,7 +293,10 @@ export class SitesController {
     @Body() body: SiteDto,
   ): Promise<{ site: SiteRow; warning: AllocationWarning | null }> {
     const { clause, values } = buildUpdate({
-      project_id: body.projectId,
+      // `?? null` and not the raw value: `buildUpdate` drops undefined,
+      // so without this, clearing a site's project on the form would
+      // leave the old one in place and say it had saved.
+      project_id: body.projectId ?? null,
       name: body.name,
       site_location_id: body.siteLocationId ?? null,
       planned_trees: body.plannedTrees,
@@ -300,8 +313,40 @@ export class SitesController {
     ).catch(rethrowPlantationDates);
     return {
       site: await this.get(id),
-      warning: await this.allocation(body.projectId),
+      warning: body.projectId ? await this.allocation(body.projectId) : null,
     };
+  }
+
+  /**
+   * Take this site off whatever project it belongs to.
+   *
+   * A DELETE on the ASSOCIATION, not a PATCH of the site. The screen
+   * that needs this — the project's site list — wants to change one
+   * column, and the general update takes a whole `SiteDto`: it would
+   * have to send the name, both dates, the tree count and both people
+   * back from a list that may be minutes old, overwriting anything
+   * somebody else changed in the meantime with values the user never
+   * looked at. This touches `project_id` and nothing else.
+   *
+   * Already unlinked is a success, not an error: the caller asked for
+   * a state, and that state holds.
+   *
+   * NOT admin-only, deliberately. The same person can already clear
+   * the field on the site's own form, so gating it here would make
+   * the identical change legal on one screen and forbidden on
+   * another, which is not a permission rule — it is an inconsistency.
+   */
+  @Delete(':id/project')
+  async clearProject(
+    @Param('id', new ParseUUIDPipe()) id: string,
+  ): Promise<SiteRow> {
+    await findOneOrFail(
+      this.pool,
+      'update sites set project_id = null where id = $1 returning id',
+      [id],
+      'site',
+    );
+    return this.get(id);
   }
 
   @Delete(':id')
