@@ -11,15 +11,6 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { EmptyState } from "@/components/ui/empty-state"
 import { PrintHeader } from "@/components/ui/print-header"
-import {
-  Pagination,
-  PaginationBar,
-  PaginationContent,
-  PaginationCount,
-  PaginationItem,
-  PaginationNext,
-  PaginationPrevious,
-} from "@/components/ui/pagination"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
   Table,
@@ -28,6 +19,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
+  TableRowLink,
 } from "@/components/ui/table"
 import { Truncate } from "@/components/ui/truncate"
 import { ExportButton } from "@/components/ui/export-button"
@@ -35,6 +27,7 @@ import type { ExportColumn, PdfTotalRow } from "@/lib/pdf-export"
 import { PageFrame, PageHeader } from "@/components/templates/page"
 import {
   ListDataArea,
+  ListPagination,
   ListSearch,
   ListToolbar,
 } from "@/components/templates/list-page"
@@ -574,51 +567,16 @@ export function RecordList<T extends { id: string }>({
       </div>
     ) : null
 
+  // Zone 4 (11.1.1): the one assembled pagination bar, "1–25 of 148".
   const paginationBar = (
-    <PaginationBar>
-      <PaginationCount>
-        {state === "ready" && total > 0
-          ? `Showing ${formatNumber((result!.page - 1) * result!.pageSize + 1)} to ${formatNumber(
-              Math.min(result!.page * result!.pageSize, total),
-            )} of ${formatNumber(total)}`
-          : countLabel(total)}
-      </PaginationCount>
-      <Pagination>
-        <PaginationContent>
-          <PaginationItem>
-            <PaginationPrevious
-              href="#"
-              aria-disabled={page <= 1}
-              className={cn(page <= 1 && "pointer-events-none opacity-50")}
-              onClick={(event) => {
-                event.preventDefault()
-                setPage((p) => Math.max(1, p - 1))
-              }}
-            />
-          </PaginationItem>
-          <PaginationItem>
-            <span className="px-3 text-label text-text-secondary">
-              Page {formatNumber(result?.page ?? 1)} of{" "}
-              {formatNumber(result?.totalPages ?? 1)}
-            </span>
-          </PaginationItem>
-          <PaginationItem>
-            <PaginationNext
-              href="#"
-              aria-disabled={page >= (result?.totalPages ?? 1)}
-              className={cn(
-                page >= (result?.totalPages ?? 1) &&
-                  "pointer-events-none opacity-50",
-              )}
-              onClick={(event) => {
-                event.preventDefault()
-                setPage((p) => Math.min(result?.totalPages ?? 1, p + 1))
-              }}
-            />
-          </PaginationItem>
-        </PaginationContent>
-      </Pagination>
-    </PaginationBar>
+    <ListPagination
+      page={result?.page ?? page}
+      pageSize={result?.pageSize ?? 25}
+      total={state === "loading" ? null : total}
+      onPageChange={setPage}
+      emptyLabel={countLabel(0)}
+      loadingLabel="Loading records"
+    />
   )
 
   // Section 17-in-the-spirit-of: table-fixed only turns on when a
@@ -680,9 +638,19 @@ export function RecordList<T extends { id: string }>({
                         type="button"
                         onClick={() => toggleSort(column)}
                         className={cn(
-                          "flex w-full min-w-0 cursor-pointer items-center gap-1 rounded-lg text-label text-text-secondary transition-colors hover:text-text-primary",
-                          "outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-ring",
-                          column.numeric && "flex-row-reverse justify-end",
+                          // Section 36: the header is a brand band, so the
+                          // label INHERITS the band's colour (on-brand, or
+                          // primary-text in the nested accent form). The
+                          // neutral text tokens are measured on white and
+                          // were grey-on-green here. Hover underlines, like
+                          // a standing link on a band (6.6); the ring takes
+                          // the current colour for the same reason 6.3.2
+                          // gives: primary-ring vanishes on the brand.
+                          "flex w-full min-w-0 cursor-pointer items-center gap-1 rounded-lg text-label text-inherit underline-offset-2 hover:underline",
+                          "outline-none focus-visible:outline-2 focus-visible:[outline-style:solid] focus-visible:-outline-offset-2 focus-visible:outline-current",
+                          // Numbers are right-aligned (11.1), and so is their
+                          // header: in a reversed row, start is the right.
+                          column.numeric && "flex-row-reverse justify-start",
                         )}
                       >
                         {/* Section 8: the label truncates, the chevron
@@ -734,7 +702,6 @@ export function RecordList<T extends { id: string }>({
                       row={row}
                       columns={columns}
                       href={rowHref?.(row)}
-                      onOpen={rowHref ? () => router.push(rowHref(row)) : undefined}
                     />
                   ))}
             </TableBody>
@@ -805,12 +772,10 @@ function RecordRow<T extends { id: string }>({
   row,
   columns,
   href,
-  onOpen,
 }: {
   row: T & Matchable
   columns: RecordColumn<T>[]
   href?: string
-  onOpen?: () => void
 }) {
   const content = (
     <>
@@ -828,7 +793,14 @@ function RecordRow<T extends { id: string }>({
             {index === 0 ? (
               <span className="flex min-w-0 flex-col">
                 <span className="min-w-0">
-                  {typeof rendered === "string" ? (
+                  {href ? (
+                    // Section 11.1.2: the record's name is a real link -
+                    // Tab reaches it, Enter opens it, "open in new tab"
+                    // works - and TableRow makes the whole row open it.
+                    <TableRowLink render={<Link href={href} />} className="block min-w-0">
+                      {typeof rendered === "string" ? <Truncate>{rendered}</Truncate> : rendered}
+                    </TableRowLink>
+                  ) : typeof rendered === "string" ? (
                     <Truncate>{rendered}</Truncate>
                   ) : (
                     rendered
@@ -853,28 +825,9 @@ function RecordRow<T extends { id: string }>({
     </>
   )
 
-  if (!href || !onOpen) return <TableRow>{content}</TableRow>
-
-  /**
-   * Client-side navigation, not a location assignment: a full reload
-   * would throw away the shell and re-fetch the session on every row
-   * click. Keyboard-reachable, because a row that only responds to a
-   * mouse is unreachable for the people who use this software most.
-   */
-  return (
-    <TableRow
-      role="link"
-      tabIndex={0}
-      className="cursor-pointer outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary-ring"
-      onClick={onOpen}
-      onKeyDown={(event) => {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault()
-          onOpen()
-        }
-      }}
-    >
-      {content}
-    </TableRow>
-  )
+  // Clicking anywhere on the row opens the record (11.1.2): TableRow
+  // delegates the click to the TableRowLink in the first cell, gives the
+  // row its hover fill and hand cursor, and leaves inner controls and
+  // text selection alone.
+  return <TableRow>{content}</TableRow>
 }

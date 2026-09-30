@@ -18,10 +18,15 @@ function Checkbox({ className, ...props }: CheckboxPrimitive.Root.Props) {
     <CheckboxPrimitive.Root
       data-slot="checkbox"
       className={cn(
-        "peer relative flex size-4 shrink-0 cursor-pointer items-center justify-center rounded-(--radius-tick) border border-border-strong bg-surface transition-colors",
-        // A larger invisible hit area than the 16px box it draws.
-        "after:absolute after:-inset-x-3 after:-inset-y-2",
-        "outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-ring",
+        "peer relative flex size-4 shrink-0 cursor-pointer items-center justify-center rounded-(--radius-tick) border border-border-strong bg-surface transition-colors duration-(--duration-fast)",
+        // A larger invisible hit area than the 16px box it draws. This
+        // control already owns ::after, so it does not take the
+        // tap-area utility; on a touch screen the same element becomes a
+        // centred --tap-target square instead (section 9 rule 4). An inset
+        // measured from the box falls 2px short: ::after sizes from the
+        // padding box, inside the 1px border.
+        "after:absolute after:-inset-x-3 after:-inset-y-2 pointer-coarse:after:inset-auto pointer-coarse:after:top-1/2 pointer-coarse:after:left-1/2 pointer-coarse:after:size-(--tap-target) pointer-coarse:after:-translate-x-1/2 pointer-coarse:after:-translate-y-1/2",
+        "outline-none focus-visible:outline-2 focus-visible:[outline-style:solid] focus-visible:outline-offset-2 focus-visible:outline-primary-ring",
         "data-checked:border-primary data-checked:bg-primary data-checked:text-primary-foreground",
         /*
          * Section 6.4: hover changes the background, pressed changes it

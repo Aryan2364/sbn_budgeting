@@ -15,6 +15,10 @@ services:
       TZ: Asia/Kolkata
     ports:
       - "4400:4000"
+    # Complaint photos are files, not rows. A named volume keeps them
+    # across redeploys; without it every deploy would delete them.
+    volumes:
+      - sbn_uploads:/app/uploads
     restart: unless-stopped
     networks:
       - sbn_prod
@@ -56,3 +60,6 @@ services:
 networks:
   sbn_prod:
     driver: bridge
+
+volumes:
+  sbn_uploads:

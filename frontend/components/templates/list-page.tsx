@@ -4,12 +4,24 @@ import * as React from "react"
 import { LayoutGridIcon, ListIcon, SearchIcon, XIcon } from "lucide-react"
 
 import { cn } from "@/lib/utils"
+import { formatNumber } from "@/lib/format"
 import { Button } from "@/components/ui/button"
 import {
   InputGroup,
   InputGroupAddon,
   InputGroupInput,
 } from "@/components/ui/input-group"
+import {
+  Pagination,
+  PaginationBar,
+  PaginationContent,
+  PaginationCount,
+  PaginationEllipsis,
+  PaginationItem,
+  PaginationLink,
+  PaginationNext,
+  PaginationPrevious,
+} from "@/components/ui/pagination"
 import {
   Tooltip,
   TooltipContent,
@@ -205,10 +217,120 @@ function ListDataArea({
   )
 }
 
+/**
+ * The pages to offer: all of them up to seven, otherwise the first, the
+ * last, and the current page with its neighbours, with a gap marker
+ * where pages are skipped. Always the same number of slots, so the
+ * controls do not shift sideways as the page changes.
+ */
+function pageSlots(page: number, totalPages: number): (number | "gap")[] {
+  if (totalPages <= 7) return Array.from({ length: totalPages }, (_, i) => i + 1)
+  if (page <= 4) return [1, 2, 3, 4, 5, "gap", totalPages]
+  if (page >= totalPages - 3) {
+    return [1, "gap", ...Array.from({ length: 5 }, (_, i) => totalPages - 4 + i)]
+  }
+  return [1, "gap", page - 1, page, page + 1, "gap", totalPages]
+}
+
+/**
+ * Zone 4, assembled once (section 11.1.1) from the kit's pagination
+ * parts, so every list says it the same way: "1–25 of 148" on the left
+ * (en dash, tabular, never wrapping), then Previous, the page numbers
+ * and Next on the right, plain, with the current page in primary-text.
+ * A control with nowhere to go is aria-disabled. The controls are real
+ * buttons: paging here is a callback, not a link.
+ *
+ * On a phone only the current page number stays between Previous and
+ * Next, so the bar fits a 360px screen.
+ */
+function ListPagination({
+  page,
+  pageSize,
+  total,
+  onPageChange,
+  emptyLabel,
+  loadingLabel = "Loading",
+  className,
+}: {
+  /** 1-based. */
+  page: number
+  pageSize: number
+  /** The API's total across every page. null while it is not known yet. */
+  total: number | null
+  onPageChange: (page: number) => void
+  /** Said instead of a range when there are no records: "0 sites". */
+  emptyLabel: React.ReactNode
+  /** Said while `total` is null. */
+  loadingLabel?: React.ReactNode
+  className?: string
+}) {
+  const totalPages = total ? Math.max(1, Math.ceil(total / Math.max(1, pageSize))) : 1
+  const current = Math.min(Math.max(1, page), totalPages)
+  const canPrevious = total !== null && current > 1
+  const canNext = total !== null && current < totalPages
+  const go = (target: number) => {
+    if (target !== current && target >= 1 && target <= totalPages) onPageChange(target)
+  }
+
+  return (
+    <PaginationBar className={className}>
+      <PaginationCount aria-live="polite">
+        {total === null
+          ? loadingLabel
+          : total === 0
+            ? emptyLabel
+            : `${formatNumber((current - 1) * pageSize + 1)}–${formatNumber(
+                Math.min(current * pageSize, total),
+              )} of ${formatNumber(total)}`}
+      </PaginationCount>
+      <Pagination>
+        <PaginationContent>
+          <PaginationItem>
+            <PaginationPrevious
+              aria-disabled={!canPrevious || undefined}
+              onClick={() => canPrevious && go(current - 1)}
+            />
+          </PaginationItem>
+          {total
+            ? pageSlots(current, totalPages).map((slot, index) =>
+                slot === "gap" ? (
+                  <PaginationItem key={`gap-${index}`} className="max-sm:hidden">
+                    <PaginationEllipsis />
+                  </PaginationItem>
+                ) : (
+                  <PaginationItem
+                    key={slot}
+                    className={cn(slot !== current && "max-sm:hidden")}
+                  >
+                    <PaginationLink
+                      isActive={slot === current}
+                      aria-label={`Page ${formatNumber(slot)}`}
+                      className="tabular-nums"
+                      onClick={() => go(slot)}
+                    >
+                      {formatNumber(slot)}
+                    </PaginationLink>
+                  </PaginationItem>
+                ),
+              )
+            : null}
+          <PaginationItem>
+            <PaginationNext
+              aria-disabled={!canNext || undefined}
+              onClick={() => canNext && go(current + 1)}
+            />
+          </PaginationItem>
+        </PaginationContent>
+      </Pagination>
+    </PaginationBar>
+  )
+}
+
 export {
   ListToolbar,
   ListSearch,
   ListViewSwitcher,
   ListDataArea,
+  ListPagination,
   type ListView,
 }

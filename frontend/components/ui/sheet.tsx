@@ -4,6 +4,7 @@ import * as React from "react"
 import { Dialog as SheetPrimitive } from "@base-ui/react/dialog"
 
 import { cn } from "@/lib/utils"
+import { BandScope, HeaderBand } from "@/components/ui/header-band"
 import { Button } from "@/components/ui/button"
 import { XIcon } from "lucide-react"
 
@@ -28,7 +29,11 @@ function SheetOverlay({ className, ...props }: SheetPrimitive.Backdrop.Props) {
     <SheetPrimitive.Backdrop
       data-slot="sheet-overlay"
       className={cn(
-        "fixed inset-0 z-50 bg-(--backdrop) transition-opacity duration-150 data-ending-style:opacity-0 data-starting-style:opacity-0 supports-backdrop-filter:backdrop-blur-xs",
+        // Section 24 rule 5: the one --backdrop token and nothing of its
+        // own, so no blur. It fades with the sheet (5.6).
+        "fixed inset-0 z-(--z-dialog) bg-(--backdrop)",
+        "data-open:animate-in data-open:fade-in-0 data-open:animation-duration-(--duration-slow) data-open:ease-enter",
+        "data-closed:animate-out data-closed:fade-out-0 data-closed:animation-duration-(--duration-medium) data-closed:ease-exit",
         className
       )}
       {...props}
@@ -47,46 +52,88 @@ function SheetContent({
   showCloseButton?: boolean
 }) {
   return (
-    <SheetPortal>
-      <SheetOverlay />
-      <SheetPrimitive.Popup
-        data-slot="sheet-content"
-        data-side={side}
-        className={cn(
-          "fixed z-50 flex flex-col gap-4 border-border-light bg-surface bg-clip-padding text-body text-text-primary shadow-lg transition duration-200 ease-in-out data-ending-style:opacity-0 data-starting-style:opacity-0 data-[side=bottom]:inset-x-0 data-[side=bottom]:bottom-0 data-[side=bottom]:h-auto data-[side=bottom]:border-t data-[side=bottom]:data-ending-style:translate-y-[2.5rem] data-[side=bottom]:data-starting-style:translate-y-[2.5rem] data-[side=left]:inset-y-0 data-[side=left]:left-0 data-[side=left]:h-full data-[side=left]:w-3/4 data-[side=left]:border-r data-[side=left]:data-ending-style:translate-x-[-2.5rem] data-[side=left]:data-starting-style:translate-x-[-2.5rem] data-[side=right]:inset-y-0 data-[side=right]:right-0 data-[side=right]:h-full data-[side=right]:w-3/4 data-[side=right]:border-l data-[side=right]:data-ending-style:translate-x-[2.5rem] data-[side=right]:data-starting-style:translate-x-[2.5rem] data-[side=top]:inset-x-0 data-[side=top]:top-0 data-[side=top]:h-auto data-[side=top]:border-b data-[side=top]:data-ending-style:translate-y-[-2.5rem] data-[side=top]:data-starting-style:translate-y-[-2.5rem] data-[side=left]:sm:max-w-sm data-[side=right]:sm:max-w-sm",
-          className
-        )}
-        {...props}
-      >
-        {children}
-        {showCloseButton && (
-          <SheetPrimitive.Close
-            data-slot="sheet-close"
-            render={
-              <Button
-                variant="ghost"
-                className="absolute top-3 right-3"
-                size="icon-sm"
+    // Section 36.4: a banded region, scope over the whole subtree.
+    <BandScope>
+      <SheetPortal>
+        <SheetOverlay />
+        <SheetPrimitive.Popup
+          data-slot="sheet-content"
+          data-side={side}
+          className={cn(
+            // Section 5.6: a sheet slides in from its own edge, slow, and
+            // leaves at medium. Keyframes (tw-animate) rather than
+            // transitions, so the one reduce-motion rule in globals.css
+            // turns the slide into a fade here as it does everywhere.
+            "fixed z-(--z-dialog) flex flex-col gap-4 border-border-light bg-surface bg-clip-padding text-body text-text-primary shadow-dialog",
+            "data-open:animate-in data-open:animation-duration-(--duration-slow) data-open:ease-enter",
+            "data-closed:animate-out data-closed:animation-duration-(--duration-medium) data-closed:ease-exit",
+            // With reduce motion the slide is removed centrally, so the
+            // sheet needs a fade of its own or it simply appears.
+            "motion-reduce:data-open:fade-in-0 motion-reduce:data-closed:fade-out-0",
+            "data-[side=bottom]:inset-x-0 data-[side=bottom]:bottom-0 data-[side=bottom]:h-auto data-[side=bottom]:border-t data-[side=bottom]:data-open:slide-in-from-bottom data-[side=bottom]:data-closed:slide-out-to-bottom",
+            "data-[side=top]:inset-x-0 data-[side=top]:top-0 data-[side=top]:h-auto data-[side=top]:border-b data-[side=top]:data-open:slide-in-from-top data-[side=top]:data-closed:slide-out-to-top",
+            "data-[side=left]:inset-y-0 data-[side=left]:left-0 data-[side=left]:h-full data-[side=left]:w-3/4 data-[side=left]:border-r data-[side=left]:sm:max-w-sm data-[side=left]:data-open:slide-in-from-left data-[side=left]:data-closed:slide-out-to-left",
+            "data-[side=right]:inset-y-0 data-[side=right]:right-0 data-[side=right]:h-full data-[side=right]:w-3/4 data-[side=right]:border-l data-[side=right]:sm:max-w-sm data-[side=right]:data-open:slide-in-from-right data-[side=right]:data-closed:slide-out-to-right",
+            className
+          )}
+          {...props}
+        >
+          {children}
+          {showCloseButton && (
+            <SheetPrimitive.Close
+              data-slot="sheet-close"
+              render={
+                // Section 6.3.2 - it sits on the header band.
+                <Button
+                  variant="on-brand"
+                  className="absolute top-3 right-3"
+                  size="icon-sm"
+                />
+              }
+            >
+              <XIcon
               />
-            }
-          >
-            <XIcon
-            />
-            <span className="sr-only">Close</span>
-          </SheetPrimitive.Close>
-        )}
-      </SheetPrimitive.Popup>
-    </SheetPortal>
+              <span className="sr-only">Close</span>
+            </SheetPrimitive.Close>
+          )}
+        </SheetPrimitive.Popup>
+      </SheetPortal>
+    </BandScope>
   )
 }
 
-function SheetHeader({ className, ...props }: React.ComponentProps<"div">) {
+/**
+ * Section 36: a brand band, one row, description below it (36.3).
+ * `pr-16` leaves room for the close button positioned on the popup.
+ */
+function SheetHeader({
+  className,
+  children,
+  ...props
+}: React.ComponentProps<"div">) {
+  const items = React.Children.toArray(children)
+  const isDescription = (child: React.ReactNode) =>
+    React.isValidElement(child) && child.type === SheetDescription
+
+  const description = items.filter(isDescription)
+  const banded = items.filter((child) => !isDescription(child))
+
   return (
     <div
       data-slot="sheet-header"
-      className={cn("flex flex-col gap-0.5 p-4", className)}
+      className={cn("flex shrink-0 flex-col", className)}
       {...props}
-    />
+    >
+      <HeaderBand className="pr-16">{banded}</HeaderBand>
+      {description.length > 0 ? (
+        <div
+          data-slot="sheet-header-description"
+          className="border-b border-border-light px-4 py-3"
+        >
+          {description}
+        </div>
+      ) : null}
+    </div>
   )
 }
 
@@ -104,10 +151,8 @@ function SheetTitle({ className, ...props }: SheetPrimitive.Title.Props) {
   return (
     <SheetPrimitive.Title
       data-slot="sheet-title"
-      className={cn(
-        "text-card-heading font-medium text-text-primary",
-        className
-      )}
+      // Inherits `on-brand` from the band (section 36).
+      className={cn("text-card-heading font-medium", className)}
       {...props}
     />
   )

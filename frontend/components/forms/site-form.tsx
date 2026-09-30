@@ -63,6 +63,7 @@ export function SiteForm({ siteId }: { siteId?: string }) {
   const [projectId, setProjectId] = React.useState(params.get("projectId") ?? "")
   const [name, setName] = React.useState("")
   const [siteLocationId, setSiteLocationId] = React.useState("")
+  const [donorName, setDonorName] = React.useState("")
   const [plannedTrees, setPlannedTrees] = React.useState("")
   const [startDate, setStartDate] = React.useState<Date | undefined>(undefined)
   const [completeDate, setCompleteDate] = React.useState<Date | undefined>(undefined)
@@ -70,6 +71,13 @@ export function SiteForm({ siteId }: { siteId?: string }) {
   const [supervisorId, setSupervisorId] = React.useState("")
 
   const [projects, setProjects] = React.useState<Record<string, string>>({})
+  /**
+   * Each project's own donor, kept alongside the name map above rather
+   * than as a second request — the project list the dropdown already
+   * loads carries `donorName` (it is `not null` on `projects`), so
+   * there is nothing more to fetch.
+   */
+  const [projectDonors, setProjectDonors] = React.useState<Record<string, string>>({})
   const [locations, setLocations] = React.useState<Record<string, string>>({})
   const [people, setPeople] = React.useState<Record<string, string>>({})
 
@@ -104,12 +112,16 @@ export function SiteForm({ siteId }: { siteId?: string }) {
       .then(([[projectList, locationList, peopleList], site]) => {
         if (cancelled) return
         setProjects(Object.fromEntries(projectList.data.map((p) => [p.id, p.name])))
+        setProjectDonors(
+          Object.fromEntries(projectList.data.map((p) => [p.id, p.donorName])),
+        )
         setLocations(Object.fromEntries(locationList.data.map((l) => [l.id, l.name])))
         setPeople(Object.fromEntries(peopleList.data.map((p) => [p.id, p.name])))
         if (site) {
           setProjectId(site.projectId ?? "")
           setName(site.name)
           setSiteLocationId(site.siteLocationId ?? "")
+          setDonorName(site.donorName ?? "")
           setPlannedTrees(String(site.plannedTrees))
           setStartDate(fromIsoDate(site.plantationStartDate))
           setCompleteDate(
@@ -131,6 +143,34 @@ export function SiteForm({ siteId }: { siteId?: string }) {
       cancelled = true
     }
   }, [siteId, reloadTick])
+
+  /**
+   * The donor most recently PREFILLED from a project, as opposed to
+   * typed. `null` means the field's current value (if any) was typed
+   * by the user, or the site was loaded with no project prefill in
+   * play -- either way, picking a project must not clobber it.
+   *
+   * This is what tells "still holds the previously-selected project's
+   * donor" apart from "the user made this value their own": the field
+   * can equal a project's donor by prefill OR by the user separately
+   * typing the same words, and only the former yields to a new pick.
+   */
+  const prefilledDonorRef = React.useRef<string | null>(null)
+
+  function handleProjectChange(nextProjectId: string) {
+    setProjectId(nextProjectId)
+    const nextDonor = nextProjectId ? projectDonors[nextProjectId] ?? "" : ""
+    setDonorName((current) => {
+      const untouched = current === "" || current === prefilledDonorRef.current
+      if (!untouched) return current
+      prefilledDonorRef.current = nextDonor || null
+      return nextDonor
+    })
+    // Clearing the project (nextProjectId === "") does NOT wipe a donor
+    // the user typed -- only a donor that still matches the prefill is
+    // touched above, and an empty `nextDonor` there simply blanks a
+    // field that was never more than the project's own default.
+  }
 
   function validate(): Record<string, string> {
     const found: Record<string, string> = {}
@@ -173,6 +213,7 @@ export function SiteForm({ siteId }: { siteId?: string }) {
         projectId: projectId || null,
         name,
         siteLocationId: siteLocationId || null,
+        donorName: donorName.trim() === "" ? null : donorName,
         plannedTrees: Number(plannedTrees),
         plantationStartDate: toIsoDate(startDate!),
         plantationCompleteDate: completeDate ? toIsoDate(completeDate) : null,
@@ -258,7 +299,7 @@ export function SiteForm({ siteId }: { siteId?: string }) {
                   id="projectId"
                   options={{ "": "None", ...projects }}
                   value={projectId}
-                  onValueChange={setProjectId}
+                  onValueChange={handleProjectChange}
                   disabled={loading}
                   placeholder="None"
                   searchPlaceholder="Search projects"
@@ -290,6 +331,28 @@ export function SiteForm({ siteId }: { siteId?: string }) {
                   disabled={loading}
                   placeholder="Choose a location"
                   searchPlaceholder="Search locations"
+                />
+              </FormField>
+
+              {/*
+                * Span 6 (section 17): a donor name is the same kind of
+                * text as a person or company name, not a short code.
+                *
+                * Optional and unmarked (section 11.3 rule 3) -- a site
+                * with no project, or a project the client has not named
+                * a donor for, is still a complete, ordinary site.
+                */}
+              <FormField span={6} label="Donor name" htmlFor="donorName">
+                <Input
+                  id="donorName"
+                  value={donorName}
+                  disabled={loading}
+                  onChange={(event) => {
+                    // A deliberate edit stops tracking as a prefill --
+                    // the next project pick must leave it alone.
+                    prefilledDonorRef.current = null
+                    setDonorName(event.target.value)
+                  }}
                 />
               </FormField>
 

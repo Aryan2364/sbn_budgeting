@@ -4,6 +4,7 @@ import * as React from "react"
 import { DownloadIcon, Loader2Icon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
+import { useOnBand } from "@/components/ui/header-band"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -107,6 +108,9 @@ export function ExportButton<T>({
   contextDescription?: string
 }) {
   const [loading, setLoading] = React.useState<ExportFormat | false>(false)
+  // 36.7 / 6.3.2: on a solid brand band the ghost button's neutral icon
+  // all but disappears, so there it takes the on-brand variant.
+  const onBand = useOnBand()
 
   const runExport = React.useCallback(
     async (format: ExportFormat) => {
@@ -181,7 +185,7 @@ export function ExportButton<T>({
               render={
                 <Button
                   type="button"
-                  variant="ghost"
+                  variant={onBand ? "on-brand" : "ghost"}
                   size="icon"
                   className={className}
                   aria-label={tooltipLabel}

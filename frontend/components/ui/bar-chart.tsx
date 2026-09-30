@@ -26,24 +26,22 @@ import { cn } from "@/lib/utils"
  *     caller cannot reach one. A chart that is genuinely about status
  *     is a different component and does not exist yet.
  *   - MAXIMUM SIX SERIES. Past that, group the smallest into "Other".
- *     This throws in development rather than drawing a seventh colour
- *     nobody chose.
+ *     This throws rather than drawing a seventh colour nobody chose.
  *   - BARS START AT ZERO. Not a default that a later prop can
  *     override — the domain is fixed here.
  *   - DIRECT LABELS, NOT A LEGEND. Every bar carries its own value at
  *     its end, so the eye never travels to a key and back. The series
- *     names sit beside the chart title as a two-word key, which is
- *     next to the bars rather than across the card from them.
+ *     names sit beside the chart as a short key, which is next to the
+ *     bars rather than across the card from them.
  *
- * HORIZONTAL BARS on purpose. Category names in this product are site
- * names and amounts are Indian-grouped rupees; both are long, and both
- * collide immediately under vertical bars. Sideways, each gets a whole
- * line to itself.
+ * HORIZONTAL BARS on purpose. A category label is usually a name and
+ * an amount is usually long; both collide immediately under vertical
+ * bars. Sideways, each gets a whole line to itself.
  *
  * The one thing that becomes a JS number is the bar's LENGTH, which is
  * a pixel measurement and cannot be anything else. The label beside it
- * is formatted from the original paise string, so the digits a person
- * reads never went through a float.
+ * is a string the caller formats, so the digits a person reads never
+ * went through a float.
  *
  * NOT `ResponsiveContainer`. The width below is measured by this file
  * and handed to the chart explicitly, for one reason worth stating
@@ -57,16 +55,9 @@ import { cn } from "@/lib/utils"
  * observer never fires at all, not even its initial callback. A chart
  * whose only source of width is an observer draws at zero, or at a
  * stale width, in exactly the conditions where nobody is looking to
- * notice. Measuring once directly, then observing for changes, is
- * correct in both.
- *
- * Verified by mounting the dashboard at 1280, 1024, 768 and 700 and
- * measuring the SVG against its own container each time: the plot
- * matches its container to the pixel and every value label stays
- * inside the card. **Live resizing was NOT verified** — that path
- * needs the observer, and the tab available for testing was
- * backgrounded, where Chrome delivers no observer callbacks. One
- * resize in a foreground tab would close it.
+ * notice, including automated checks run against a background tab.
+ * Measuring once directly, then observing for changes, is correct in
+ * both.
  */
 
 /**
@@ -77,6 +68,10 @@ import { cn } from "@/lib/utils"
  * is a Tailwind class that resolves to `--color-chart-N`, the other is
  * a `var()` reference to the same token. Change the token and both
  * follow, which is the whole point of section 2.1.
+ *
+ * **The two lists must stay in step.** A swatch needs the class form
+ * and a bar needs the `var()` form; there is no single form that
+ * reaches both.
  */
 const SERIES_SWATCH_CLASS = [
   "bg-chart-1",
@@ -99,7 +94,7 @@ const SERIES_COLOURS = [
 export const MAX_SERIES = SERIES_COLOURS.length
 
 export interface BarChartSeries<T> {
-  /** The words on the key. "Budget", "Actual". */
+  /** The words on the key, naming what this series is. */
   label: string
   /** The bar's length. A pixel measurement, so a number is correct. */
   value: (row: T) => number
@@ -191,15 +186,17 @@ export function CategoryBarChart<T>({
          *
          * Recharts wants `fill` and `fontSize` as props, which become
          * SVG presentation attributes — and a presentation attribute
-         * cannot hold a `var()`, so a token could not reach it. These
-         * are real CSS rules on the SVG text, which can.
+         * cannot hold a `var()`, so a token could not reach it. A
+         * chart styled that way needs a literal colour, which rule 1
+         * forbids. These are real CSS rules on the SVG text, which can
+         * hold one.
          */
         "[&_text]:fill-text-secondary [&_text]:text-meta",
         className,
       )}
       {...props}
     >
-      {/* The key. Two words beside the bars, not a legend across the
+      {/* The key. A few words beside the bars, not a legend across the
           card — section 21 asks for direct labelling where space
           allows, and this is what is left over once every bar carries
           its own number. */}
@@ -218,51 +215,51 @@ export function CategoryBarChart<T>({
         ))}
       </ul>
 
-      {/* The measured box. It is always in the tree, because the
-          observer needs something to observe; the chart waits for it
-          to have a width rather than drawing itself at zero. */}
+      {/* The measured box. It is always rendered, because the observer
+          needs something to observe; the chart waits for it to have a
+          width rather than drawing itself at zero. */}
       <div ref={plot} className="w-full">
         {width > 0 ? (
-        <RechartsBarChart
-          width={width}
-          height={height}
-          data={rows}
-          layout="vertical"
-          margin={{ top: 0, right: labelGutter, bottom: 0, left: 0 }}
-          barGap={4}
-        >
-          {/*
-            The value axis. Its ticks are hidden, not absent: every bar
-            already carries its own number, so a second set of numbers
-            down the edge would be the same value in two forms.
+          <RechartsBarChart
+            width={width}
+            height={height}
+            data={rows}
+            layout="vertical"
+            margin={{ top: 0, right: labelGutter, bottom: 0, left: 0 }}
+            barGap={4}
+          >
+            {/*
+              The value axis. Its ticks are hidden, not absent: every bar
+              already carries its own number, so a second set of numbers
+              down the edge would be the same value in two forms.
 
-            The DOMAIN still starts at zero, which is what section 21
-            actually requires — a bar whose baseline is not zero lies
-            about the ratio between two bars, whether or not the axis
-            is drawn.
-          */}
-          <XAxis type="number" domain={[0, "auto"]} hide />
-          <YAxis
-            type="category"
-            dataKey="category"
-            width={categoryGutter}
-            tickLine={false}
-            axisLine={false}
-          />
-          {series.map((s, position) => (
-            <Bar
-              key={s.label}
-              dataKey={`v${position}`}
-              name={s.label}
-              fill={SERIES_COLOURS[position]}
-              radius={[0, 4, 4, 0]}
-              barSize={18}
-              isAnimationActive={false}
-            >
-              <LabelList dataKey={`t${position}`} position="right" />
-            </Bar>
-          ))}
-        </RechartsBarChart>
+              The DOMAIN still starts at zero, which is what section 21
+              actually requires — a bar whose baseline is not zero lies
+              about the ratio between two bars, whether or not the axis
+              is drawn.
+            */}
+            <XAxis type="number" domain={[0, "auto"]} hide />
+            <YAxis
+              type="category"
+              dataKey="category"
+              width={categoryGutter}
+              tickLine={false}
+              axisLine={false}
+            />
+            {series.map((s, position) => (
+              <Bar
+                key={s.label}
+                dataKey={`v${position}`}
+                name={s.label}
+                fill={SERIES_COLOURS[position]}
+                radius={[0, 4, 4, 0]}
+                barSize={18}
+                isAnimationActive={false}
+              >
+                <LabelList dataKey={`t${position}`} position="right" />
+              </Bar>
+            ))}
+          </RechartsBarChart>
         ) : null}
       </div>
     </div>

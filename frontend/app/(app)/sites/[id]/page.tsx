@@ -475,7 +475,7 @@ function SiteDetail({ params }: { params: Promise<{ id: string }> }) {
                     */}
                     <PermissionTooltip
                       allowed={isAdmin}
-                      reason="Only an administrator can delete a site"
+                      reason="Only a budget administrator can delete a site"
                     >
                       <DropdownMenuItem
                         variant="danger"
@@ -581,6 +581,9 @@ function SiteDetail({ params }: { params: Promise<{ id: string }> }) {
                 </DetailField>
                 <DetailField label="Location">
                   {site ? (site.locationName ?? "—") : <Skeleton className="h-4 w-1/2" />}
+                </DetailField>
+                <DetailField label="Donor">
+                  {site ? (site.donorName ?? "—") : <Skeleton className="h-4 w-1/2" />}
                 </DetailField>
                 <DetailField label="Trees">
                   {site ? formatNumber(site.plannedTrees) : <Skeleton className="h-4 w-1/2" />}

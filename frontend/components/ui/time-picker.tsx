@@ -94,13 +94,10 @@ function OptionList({
     <div className="flex flex-col">
       <p className="px-3 py-1 text-meta text-text-muted">{label}</p>
       {/*
-        `aria-selected` is not valid on a plain button — a button's
-        implicit role does not support it, so a screen reader was told
-        nothing about which hour was chosen. The fix is the right role
-        rather than a suppression: a list of mutually exclusive values
-        IS a listbox, and `option` is the one role where `aria-selected`
-        means what it says. The styling is unchanged, because it keys on
-        the same attribute.
+        TRACKING'S A11Y, KEPT OVER THE KIT'S aria-pressed. A list of
+        mutually exclusive values IS a listbox, and `option` is the one
+        role where `aria-selected` means what it says; `aria-pressed`
+        announces a toggle button, which a chosen hour is not.
       */}
       <div
         role="listbox"
@@ -118,9 +115,9 @@ function OptionList({
               onClick={() => onSelect(option)}
               className={cn(
                 "flex h-control w-full cursor-pointer items-center rounded-lg px-3 text-body outline-none",
-                "not-aria-selected:hover:bg-surface-control",
-                "focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary-ring",
-                isSelected && "bg-primary-subtle text-primary-pressed"
+                "not-aria-selected:hover:bg-surface-control not-aria-selected:active:bg-surface-control-pressed",
+                "focus-visible:outline-2 focus-visible:[outline-style:solid] focus-visible:-outline-offset-2 focus-visible:outline-primary-ring",
+                isSelected && "bg-primary-subtle text-primary-text"
               )}
             >
               {option}
@@ -138,6 +135,7 @@ function TimePicker({
   id,
   disabled,
   invalid,
+  onInvalidEntry,
   placeholder = "9:30 AM",
   className,
 }: {
@@ -148,41 +146,52 @@ function TimePicker({
   invalid?: boolean
   placeholder?: string
   className?: string
+  /**
+   * Called on leaving the field when what was typed cannot be read as a
+   * time. The field keeps the text and marks itself invalid; the caller
+   * shows the section 11.3 rule 6 inline error and does not save.
+   */
+  onInvalidEntry?: (typed: string) => void
 }) {
   const [open, setOpen] = React.useState(false)
-  const formatted = formatTime(value)
-  const [text, setText] = React.useState(formatted)
-  const [lastFormatted, setLastFormatted] = React.useState(formatted)
+  const [unreadable, setUnreadable] = React.useState(false)
+  const [text, setText] = React.useState(() => formatTime(value))
 
-  /**
-   * Derived state, adjusted during render rather than in an effect.
-   *
-   * The typed text is the source of truth while the field has focus;
-   * outside of that it follows the value. Resyncing that in an effect
-   * renders the stale text once and then immediately renders again -
-   * which is what React's set-state-in-effect rule is pointing at.
-   *
-   * The comparison is on the FORMATTED value, not the object. A parent
-   * that builds a fresh TimeValue object on every render would otherwise
-   * change identity without changing meaning, and reset the field under
-   * the user's hands on every keystroke elsewhere on the form.
-   */
-  if (formatted !== lastFormatted) {
-    setLastFormatted(formatted)
+  // The typed text is the source of truth while the user edits; when the
+  // value itself changes it follows. Adjusted during render rather than
+  // in an effect, so there is no extra render with stale text.
+  //
+  // Compared on the FORMATTED value, not the object (Tracking): a parent
+  // that builds a fresh TimeValue on every render would otherwise reset
+  // the field under the user's hands on every keystroke elsewhere.
+  const formatted = formatTime(value)
+  const [shownValue, setShownValue] = React.useState(formatted)
+  if (formatted !== shownValue) {
+    setShownValue(formatted)
     setText(formatted)
+    setUnreadable(false)
   }
 
+  /*
+   * Section 20.1: an entry that cannot be read keeps what was typed and
+   * shows the inline error. It used to be replaced silently with the
+   * previous value, so a mistyped entry vanished and the old one looked
+   * as if it had been accepted.
+   */
   function commit() {
     if (text.trim() === "") {
+      setUnreadable(false)
       onValueChange?.(undefined)
       return
     }
     const parsed = parseTime(text)
     if (parsed) {
+      setUnreadable(false)
       onValueChange?.(parsed)
       setText(formatTime(parsed))
     } else {
-      setText(formatTime(value))
+      setUnreadable(true)
+      onInvalidEntry?.(text)
     }
   }
 
@@ -201,7 +210,7 @@ function TimePicker({
         id={id}
         value={text}
         disabled={disabled}
-        aria-invalid={invalid || undefined}
+        aria-invalid={invalid || unreadable || undefined}
         placeholder={placeholder}
         onChange={(e) => setText(e.target.value)}
         onBlur={commit}

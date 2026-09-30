@@ -120,6 +120,50 @@ export function formatCurrency(paise: AmountInput): string {
 }
 
 /**
+ * Section 18.1: the short Indian form, for dashboard tiles and chart
+ * labels ONLY. Tables, forms, detail pages and reports show the full
+ * amount (18.1 rule 4).
+ *
+ * | Magnitude               | Shown as     |
+ * |-------------------------|--------------|
+ * | below 1 lakh            | whole 98,500 |
+ * | 1 lakh to below 1 crore | 12.46 L      |
+ * | 1 crore and above       | 12.46 Cr     |
+ *
+ * Rounded to two decimals of the unit FIRST, then the unit is chosen
+ * (rule 1): 99,99,999 rounds to 100.00 L, so it reads 1.00 Cr. All in
+ * bigint, half-up on the magnitude, so no amount goes through a float.
+ * `hundredths` is the input in hundredths of a unit (paise for money).
+ */
+function formatShort(hundredths: bigint): string {
+  const { negative, magnitude } = splitSign(hundredths)
+  const sign = negative ? "-" : ""
+  const half = (step: bigint) => (magnitude + step / 2n) / step
+  const whole = half(100n)
+  if (whole < 100000n) return `${sign}${groupIndian(whole.toString())}`
+  // In hundredths of a lakh: 1 L = 1,00,000 units = 1,00,00,000 hundredths.
+  const lakhs = half(100000n)
+  const [n, unit] = lakhs < 10000n ? [lakhs, "L"] : [half(10000000n), "Cr"]
+  const fraction = (n % 100n).toString().padStart(2, "0")
+  return `${sign}${groupIndian((n / 100n).toString())}.${fraction} ${unit}`
+}
+
+/** ₹98,500 · ₹12.46 L · ₹12.46 Cr, from paise (18.1). Tiles and chart labels only. */
+export function formatShortCurrency(paise: AmountInput): string {
+  const exact = toBigInt(paise)
+  if (exact === null) return EMPTY_VALUE
+  const short = formatShort(exact)
+  return short.startsWith("-") ? `-${RUPEE}${short.slice(1)}` : `${RUPEE}${short}`
+}
+
+/** 98,500 · 12.46 L · 12.46 Cr, for a large count on a tile (18.1 rule 3). */
+export function formatShortNumber(value: AmountInput): string {
+  const exact = toBigInt(value)
+  if (exact === null) return EMPTY_VALUE
+  return formatShort(exact * 100n)
+}
+
+/**
  * One decimal: 12.4%.
  *
  * Rounded half-up on the DECIMAL value, not with toFixed. 12.35 is held

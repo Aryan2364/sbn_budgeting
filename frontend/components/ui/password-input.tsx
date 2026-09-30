@@ -15,27 +15,33 @@ import {
 /**
  * Section 32. A password field with a visibility toggle.
  *
- * **Every password field in the product is this component.** A bare
- * `<Input type="password" />` is a bug: somebody typing a password they
+ * **Every password field is this component.** A bare
+ * `<Input type="password" />` is a bug: somebody typing a secret they
  * cannot see, into a field that rejects it without saying why, has no
  * way to tell a typo from a wrong password.
  *
- * The toggle is an icon-only button (section 6.3), so it carries a
- * filled background, a 1px border, a hidden text label for screen
- * readers and a tooltip on hover. All four states come from the `ghost`
- * variant rather than being restated here.
+ * The toggle is an icon-only button sitting INSIDE the field, so it
+ * takes the `in-field` variant of section 6.3.1 rather than `ghost`:
+ * no fill and no border of its own, because the field around it is
+ * already the visible container. All four states plus focus come from
+ * that variant rather than being restated here. It carries a hidden
+ * text label for screen readers and a tooltip on hover.
  *
  * **It defaults to hidden on every mount and never remembers being
  * shown.** The state lives in this component and nowhere else — not
  * lifted to a parent that outlives the screen, not in storage, not in a
  * URL. Somebody who reveals a password, navigates away and comes back
  * must find it hidden again, because the reason to hide it in the first
- * place is that other people can see the screen.
+ * place is that other people can see the screen, and that does not
+ * expire because somebody revealed it once.
  *
- * The in-field button is 32×32 (`icon-sm`) rather than section 6.3's
- * 36×36, which is the same exception `date-picker` and `time-picker`
- * already take: a 36px button cannot sit inside a 36px field and still
- * show its own border.
+ * The in-field button is 32x32 (`icon-sm`) rather than section 6.3's
+ * 36x36, which is the same exception `date-picker` and `time-picker`
+ * already take: a 36px button cannot sit inside a 36px field.
+ *
+ * What it deliberately does NOT do, so the next person does not add
+ * them by reflex: no strength meter, no confirm-password field. See
+ * section 32.
  */
 function PasswordInput({
   className,
@@ -83,8 +89,9 @@ function PasswordInput({
               disabled={disabled}
               aria-label={label}
               aria-pressed={shown}
-              // A password manager should fill the field, not the
-              // toggle, and the toggle is not part of the form's data.
+              // A credential autofill tool should fill the field, not
+              // the toggle, and the toggle is not part of the form's
+              // data.
               tabIndex={0}
               onClick={() => setShown((current) => !current)}
               className="absolute right-1"

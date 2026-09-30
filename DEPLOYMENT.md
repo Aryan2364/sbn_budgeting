@@ -155,23 +155,61 @@ AWS spells it — an IP or a CNAME of your own will fail the handshake.
 
 ### Schemas
 
-The database is shared, so this app keeps to one schema. Every migration
-creates its objects unqualified and `search_path` decides where that is:
+One database, one schema per module, plus one schema the modules share
+(since migration 0009, 30 Sep 2026; plan `complain/plan-2026-09-30-1500.md`):
+
+| Schema | Holds |
+|---|---|
+| `budgeting` | projects, sites, site_budgets, cost_heads, expenses, the variance views, and `schema_migrations` |
+| `shared` | users, locations, designations, user_module_access, user_locations |
+| `complaints` | complaints, complaint_categories, complaint_photos, complaint_events, notifications |
+
+Foreign keys cross schemas freely (`budgeting.sites.manager_id` points at
+`shared.users`). The app names every table unqualified, and the
+connection's `search_path` is how it finds them:
 
 ```
-options=-c search_path=budgeting,shared,public
+options=-c search_path=budgeting,complaints,shared,public
 ```
 
-`budgeting` is first, so that is where tables are created — including
-`schema_migrations`, the checksum ledger `migrate.js` maintains, and
-`users`. `shared` and `public` are on the path for reading only; nothing
-here writes to them.
+**All three schemas must be on the path.** Without `shared`, `users` is
+not found and nobody can sign in.
 
-`shared` is scaffolding for a later cross-app table and is deliberately
-empty. It is not a home for anything this app owns — `users` stays in
-`budgeting` with the rest of the schema. Reordering that list would scatter the schema across two places
-on the next migration, and the damage would not be visible until
-something queried the wrong one.
+**`budgeting` stays first.** Migrations 0001–0008 created their tables
+unqualified, so they landed in the first schema on the path, and
+`migrate.js` creates `schema_migrations` there too. From 0009 on, each
+migration places its own tables with `set local search_path = …` at the
+top, which lasts only for that migration's transaction. A new migration
+**must** do the same:
+
+- a budget table: `set local search_path = budgeting, shared, public;`
+- a shared table: `set local search_path = shared, budgeting, public;`
+- a complaints table: `set local search_path = complaints, shared, budgeting, public;`
+- a new module gets its own schema: `create schema if not exists <module>;`
+  followed by `set local search_path = <module>, shared, public;`
+
+The split was rehearsed on 30 Sep 2026 against a copy of the dev database
+reshaped like production (tables in `budgeting`, an empty `shared`).
+0009 moved `users` and `site_locations` (renamed `locations`) into
+`shared` in place: ids, indexes and every foreign key followed, and the
+variance views needed no rebuild. Budget reads, variance reports, and a
+full complaint (raise with a photo → start → resolve → approve, with
+notifications) all passed on it.
+
+**Deploying 0009 for the first time**: change `DATABASE_URL` in
+`.env.production` to the new `search_path` **before** running
+`./deploy.sh`. The migrate container reads the same file, and the API has
+to find `shared.users` from its very first request.
+
+### Complaint photos
+
+Photos are files, not rows. The backend writes them under `UPLOAD_DIR`
+(`/app/uploads` in the container), which `docker-compose.deploy.yml`
+mounts as the named volume `sbn_uploads`, so they survive a redeploy.
+They are **not** in RDS, so RDS backups do not cover them. Back up the
+volume (`docker run --rm -v sbn_uploads:/d -v "$PWD":/b alpine tar czf
+/b/uploads-$(date +%F).tgz -C /d .`) on the same schedule you trust for
+the database.
 
 For a psql shell from the app server:
 
@@ -226,9 +264,10 @@ container-side queries go through `node -e` with `pg`.
 
 ### What gets destroyed
 
-Everything in the `budgeting` schema: projects, sites, budgets,
-expenses, cost heads, locations, users, and `schema_migrations` itself,
-plus the `variance` and `variance_cell` views. **There is no undo.** RDS
+Everything in the `budgeting`, `shared` and `complaints` schemas:
+projects, sites, budgets, expenses, cost heads, `schema_migrations` itself
+and the `variance` and `variance_cell` views; every person, location and
+designation; and every complaint and notification. **There is no undo.** RDS
 automated backups are on with 7-day retention, so a point-in-time
 restore is the fallback — confirm the window covers the moment before
 you start.
@@ -270,10 +309,19 @@ $EDITOR .env.production      # SEED_ADMIN_PASSWORD=<a real one>
 docker compose --env-file .env.production -f docker-compose.deploy.yml down
 ```
 
-**4. Drop and recreate the schema, empty:**
+**4. Drop and recreate the schemas, empty.** Since 0009 the data lives in
+three schemas, and all three go together. Dropping only `budgeting` would
+leave every person in `shared.users` and every complaint behind, and the
+re-run of 0001 would then create a second `users` table that 0009 cannot
+move into `shared`. `shared` is recreated empty because it existed before
+this app used it. `complaints` is not recreated, because 0010 creates it.
+Complaint photos live in the `sbn_uploads` volume, not in the database:
+empty it too (`docker volume rm sbn_uploads` with the app stopped), or the
+files outlive their rows.
+
 
 ```bash
-psql "$DBH" -c 'drop schema budgeting cascade; create schema budgeting;'
+psql "$DBH" -c 'drop schema if exists complaints cascade; drop schema if exists shared cascade; drop schema budgeting cascade; create schema budgeting; create schema shared;'
 ```
 
 **5. Re-run every migration from nothing:**
@@ -314,7 +362,7 @@ loop on purpose; the alternative is leaving a usable password on disk.
 ```bash
 psql "$DBH" -At -c 'select version, applied_at from budgeting.schema_migrations order by version'
 psql "$DBH" -At -F'|' -c "select 'cost_heads',count(*) from budgeting.cost_heads
-  union all select 'users',count(*) from budgeting.users
+  union all select 'users',count(*) from shared.users
   union all select 'projects',count(*) from budgeting.projects
   union all select 'sites',count(*) from budgeting.sites
   union all select 'expenses',count(*) from budgeting.expenses
@@ -377,7 +425,7 @@ Caddy is the only thing that should be reachable from outside; 3400 and
 4400 stay closed in the security group. Cloudflare proxies the domain,
 so the origin only ever needs 80 and 443 open — 80 included, because
 that is how Caddy answers the ACME challenge.
-| db       | — | RDS `sadbhavna_prod`, schema `budgeting`, ap-south-1 |
+| db       | — | RDS `sadbhavna_prod`, schemas `budgeting`, `shared`, `complaints`, ap-south-1 |
 
 ## Changing the domain
 

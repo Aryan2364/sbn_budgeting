@@ -51,7 +51,37 @@ const INTERACTIVE = [
   '[role="switch"]',
   '[role="checkbox"]',
   '[role="radio"]',
+  /*
+   * A whole-card click target (section 11.6, and section 35.5 for the
+   * board) is interactive and no generic selector reaches it: the
+   * element carrying the states is the card, while the focusable node
+   * is a button inside it with no states of its own. Left out, the card
+   * would be exactly what this check exists to catch - a forcing rule
+   * in globals.css that nothing ever compares.
+   */
+  '[data-slot="board-card"]',
+  // The same shape for a clickable record card (section 11.6): the card
+  // carries the states, the CardLink inside it carries none.
+  '[data-slot="card"][data-variant="record"]:has([data-slot="card-link"])',
 ].join(", ")
+
+/**
+ * Focusable nodes with no states of their own to compare: a CardLink's
+ * belong to the card around it, and the chosen side of a single-choice
+ * view switcher is not actionable - pressing it changes nothing - so it
+ * deliberately has no hover.
+ */
+const STATES_ON_PARENT =
+  '[data-slot="card-link"], [data-slot="view-switcher-item"][data-pressed]'
+
+/**
+ * The states this check is about: the ones section 6.4 requires every
+ * interactive element to define and that a forcing rule replays.
+ * `resting` is the baseline and `disabled` is compared by eye; anything
+ * else in `[data-force]` is a different kind of demo and not this
+ * check's business.
+ */
+const FORCED_CONTROL_STATES = ["hover", "pressed", "focus"]
 
 /** What we compare. Enough to catch a state that does nothing. */
 function signature(el: Element): string {
@@ -85,7 +115,10 @@ export function StateMatrixCheck() {
       const resting = new Map<string, string>()
       for (const el of document.querySelectorAll("[data-slot]")) {
         if (el.closest("[data-force]")) continue
-        if (!el.matches(INTERACTIVE)) continue
+        // Skipped here as well as in the forced cells: otherwise the chosen
+        // side of a view switcher becomes the "resting twin" of an unchosen
+        // one, the two always differ, and a missing hover rule is never seen.
+        if (!el.matches(INTERACTIVE) || el.matches(STATES_ON_PARENT)) continue
         const disabled =
           (el as HTMLInputElement).disabled ||
           el.hasAttribute("data-disabled") ||
@@ -97,9 +130,17 @@ export function StateMatrixCheck() {
       const found: string[] = []
       for (const cell of document.querySelectorAll("[data-force]")) {
         const state = cell.getAttribute("data-force")
-        if (!state || state === "resting" || state === "disabled") continue
+        // An ALLOWLIST, not "everything except resting and disabled".
+        // `[data-force]` is also used to hold a non-control state still
+        // for the page - section 35.6.1's drop target is a COLUMN
+        // state, and the cards and buttons sitting inside a tinted
+        // column are identical to resting because nothing claims
+        // otherwise. Blocklisting the two states known at the time
+        // meant the first new kind of forced state arrived as four
+        // false alarms, which is how a check stops being read.
+        if (!state || !FORCED_CONTROL_STATES.includes(state)) continue
         for (const el of cell.querySelectorAll("[data-slot]")) {
-          if (!el.matches(INTERACTIVE)) continue
+          if (!el.matches(INTERACTIVE) || el.matches(STATES_ON_PARENT)) continue
           const k = key(el)
           const base = resting.get(k)
           // No resting twin on the page means nothing to compare

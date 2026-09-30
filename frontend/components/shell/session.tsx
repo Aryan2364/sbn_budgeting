@@ -3,14 +3,22 @@
 import * as React from "react"
 import { usePathname, useRouter } from "next/navigation"
 
-import { api, ApiError, getToken, setToken, type AuthUser } from "@/lib/api"
+import {
+  api,
+  ApiError,
+  getToken,
+  login,
+  setToken,
+  type AuthUser,
+} from "@/lib/api"
 import { EmptyState } from "@/components/ui/empty-state"
 
 /**
  * Who is signed in, for the whole app.
  *
- * AGENTS.md section 26: permissions in the interface are appearance —
- * the real check is on the server, which is where `RolesGuard` lives.
+ * FRONTEND_RULES.md section 26: permissions in the interface are
+ * appearance — the real check is on the server, which is where the
+ * `ModuleAccess` / `ModuleRole` guards live.
  * This exists so a control the user cannot use is never shown, not so
  * that it is enforced.
  */
@@ -29,13 +37,91 @@ type SessionState =
   | { status: "unreachable"; user: null; message: string }
   | { status: "in"; user: AuthUser }
 
+/**
+ * What the signed-in user may open, read straight off `user.modules`
+ * (CONTRACT §4). Every screen gates on this, never on a role name.
+ * All null / false while the session is resolving or signed out.
+ */
+export interface SessionCan {
+  budget: "admin" | "staff" | null
+  complaints: "admin" | "member" | null
+  platformAdmin: boolean
+}
+
+const CAN_NOTHING: SessionCan = {
+  budget: null,
+  complaints: null,
+  platformAdmin: false,
+}
+
+export function canFrom(user: AuthUser | null): SessionCan {
+  if (!user) return CAN_NOTHING
+  return {
+    budget: user.modules?.budget ?? null,
+    complaints: user.modules?.complaints ?? null,
+    platformAdmin: user.modules?.platform === "admin",
+  }
+}
+
+/**
+ * The first module this user can open (CONTRACT §4: `/` goes there).
+ * Budget first, because it is the older module and its dashboard is
+ * where everyone who has it already lands. `/` itself means "none":
+ * app/page.tsx shows the no-access state there.
+ */
+export function homeHref(can: SessionCan): string {
+  if (can.budget) return "/dashboard"
+  if (can.complaints) return "/complaints"
+  if (can.platformAdmin) return "/settings/people"
+  return "/"
+}
+
+/**
+ * The Settings sections and who may open each (CONTRACT §4). Defined
+ * here, next to `can`, so the settings menu, the settings layout's
+ * guard and the sidebar's Settings entry all read ONE list: the
+ * sidebar shows Settings exactly when `settingsSections(can)` is not
+ * empty, and a section the user may not open is not in the menu.
+ */
+export interface SettingsSection {
+  label: string
+  href: string
+}
+
+export function settingsSections(can: SessionCan): SettingsSection[] {
+  const sections: SettingsSection[] = []
+  if (can.platformAdmin) {
+    sections.push(
+      { label: "People", href: "/settings/people" },
+      { label: "Designations", href: "/settings/designations" },
+      { label: "Locations", href: "/settings/locations" },
+    )
+  }
+  if (can.budget === "admin") {
+    sections.push({ label: "Cost heads", href: "/settings/cost-heads" })
+  }
+  if (can.complaints === "admin") {
+    sections.push({
+      label: "Complaint categories",
+      href: "/settings/complaint-categories",
+    })
+  }
+  return sections
+}
+
 interface SessionValue {
   status: SessionState["status"]
   user: AuthUser | null
+  can: SessionCan
+  /**
+   * Kept for the budget screens: means `can.budget === "admin"`, not
+   * "administrator of everything".
+   */
   isAdmin: boolean
   /** Set only while `status` is "unreachable". */
   message: string | null
-  signIn: (email: string, password: string) => Promise<void>
+  /** `login` is an email or a phone number (CONTRACT §1). */
+  signIn: (login: string, password: string) => Promise<void>
   signOut: () => void
   retry: () => void
 }
@@ -109,11 +195,8 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     }
   }, [attempt])
 
-  const signIn = React.useCallback(async (email: string, password: string) => {
-    const result = await api.post<{ token: string; user: AuthUser }>(
-      "/auth/login",
-      { email, password },
-    )
+  const signIn = React.useCallback(async (identifier: string, password: string) => {
+    const result = await login({ login: identifier, password })
     setToken(result.token)
     setState({ status: "in", user: result.user })
   }, [])
@@ -124,18 +207,19 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     router.replace("/login")
   }, [router])
 
-  const value = React.useMemo<SessionValue>(
-    () => ({
+  const value = React.useMemo<SessionValue>(() => {
+    const can = canFrom(state.user)
+    return {
       status: state.status,
       user: state.user,
-      isAdmin: state.user?.role === "admin",
+      can,
+      isAdmin: can.budget === "admin",
       message: state.status === "unreachable" ? state.message : null,
       signIn,
       signOut,
       retry: () => setAttempt((a) => a + 1),
-    }),
-    [state, signIn, signOut],
-  )
+    }
+  }, [state, signIn, signOut])
 
   return <SessionContext value={value}>{children}</SessionContext>
 }

@@ -25,9 +25,13 @@ function RadioGroupItem({ className, ...props }: RadioPrimitive.Root.Props) {
     <RadioPrimitive.Root
       data-slot="radio-group-item"
       className={cn(
-        "group/radio-group-item peer relative flex aspect-square size-4 shrink-0 cursor-pointer rounded-full border border-border-strong bg-surface transition-colors",
-        "after:absolute after:-inset-x-3 after:-inset-y-2",
-        "outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-ring",
+        "group/radio-group-item peer relative flex aspect-square size-4 shrink-0 cursor-pointer rounded-full border border-border-strong bg-surface transition-colors duration-(--duration-fast)",
+        // Owns ::after already, so no tap-area class: on a touch screen
+        // the same hit area becomes a centred --tap-target square
+        // (section 9 rule 4), sized absolutely rather than by inset,
+        // which measures from the padding box and falls 2px short.
+        "after:absolute after:-inset-x-3 after:-inset-y-2 pointer-coarse:after:inset-auto pointer-coarse:after:top-1/2 pointer-coarse:after:left-1/2 pointer-coarse:after:size-(--tap-target) pointer-coarse:after:-translate-x-1/2 pointer-coarse:after:-translate-y-1/2",
+        "outline-none focus-visible:outline-2 focus-visible:[outline-style:solid] focus-visible:outline-offset-2 focus-visible:outline-primary-ring",
         "data-checked:border-primary data-checked:bg-primary",
         /*
          * Section 6.4: hover changes the background, pressed changes it

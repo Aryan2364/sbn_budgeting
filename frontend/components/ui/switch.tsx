@@ -14,9 +14,13 @@ function Switch({ className, ...props }: SwitchPrimitive.Root.Props) {
     <SwitchPrimitive.Root
       data-slot="switch"
       className={cn(
-        "peer group/switch relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border border-transparent p-0.5 transition-colors",
-        "after:absolute after:-inset-x-3 after:-inset-y-2",
-        "outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-ring",
+        "peer group/switch relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border border-transparent p-0.5 transition-colors duration-(--duration-fast)",
+        // Owns ::after already, so no tap-area class. 60 by 36 on a
+        // pointer; on a touch screen a centred --tap-target square
+        // without the track changing size (section 9 rule 4). An inset
+        // measured from the track falls 2px short, from the padding box.
+        "after:absolute after:-inset-x-3 after:-inset-y-2 pointer-coarse:after:inset-auto pointer-coarse:after:top-1/2 pointer-coarse:after:left-1/2 pointer-coarse:after:size-(--tap-target) pointer-coarse:after:-translate-x-1/2 pointer-coarse:after:-translate-y-1/2",
+        "outline-none focus-visible:outline-2 focus-visible:[outline-style:solid] focus-visible:outline-offset-2 focus-visible:outline-primary-ring",
         "data-checked:bg-primary data-unchecked:bg-surface-control-pressed",
         /*
          * Section 6.4: hover changes the background, pressed changes it
@@ -35,7 +39,9 @@ function Switch({ className, ...props }: SwitchPrimitive.Root.Props) {
     >
       <SwitchPrimitive.Thumb
         data-slot="switch-thumb"
-        className="pointer-events-none block size-4 rounded-full bg-surface transition-transform data-checked:translate-x-4 data-unchecked:translate-x-0"
+        // Transform only (5.6 rule 1), fast, and still under reduce
+        // motion, where the knob simply lands.
+        className="pointer-events-none block size-4 rounded-full bg-surface transition-transform duration-(--duration-fast) ease-enter motion-reduce:transition-none data-checked:translate-x-4 data-unchecked:translate-x-0"
       />
     </SwitchPrimitive.Root>
   )

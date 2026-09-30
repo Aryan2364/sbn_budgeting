@@ -17,9 +17,10 @@ import {
 /**
  * Section 25.
  * Bottom right. Fixed 360px, never full width. Four seconds for a
- * simple confirmation, six when it carries an Undo link, and error
- * toasts never auto-dismiss - they stay until closed. Maximum three
- * stacked. Every toast has a close button.
+ * simple confirmation, ten when it carries an Undo link (section
+ * 38.1), and error toasts never auto-dismiss - they stay until closed.
+ * Maximum three stacked. Every toast has a close button. Toasts sit
+ * above dialogs (section 5.5 rule 2), on --z-toast.
  *
  * A toast never carries information available nowhere else. If the
  * user misses it, nothing is lost. A toast is a whisper, not a record.
@@ -61,6 +62,13 @@ const Toaster = ({ ...props }: ToasterProps) => {
           "--error-text": "var(--danger)",
           "--error-border": "var(--danger-border)",
           "--border-radius": "var(--radius-control)",
+          // Section 25: 360px. Sonner writes its own 356px default into
+          // this same inline style, so a stylesheet rule never reaches it.
+          "--width": "var(--spacing-toast)",
+          // Sonner's own stylesheet pins the toaster at 999999999. The
+          // layer comes from the token instead (section 5.5 rule 5), and
+          // inline because sonner injects its CSS unlayered.
+          zIndex: "var(--z-toast)",
         } as React.CSSProperties
       }
       {...props}
@@ -88,18 +96,71 @@ const toast = {
     sonnerToast.error(message, { duration: Infinity, ...options }),
 
   /**
-   * Section 22.2: after a bulk change the confirmation carries an Undo
-   * link lasting about ten seconds. Undo is kinder than a confirmation
-   * people click through anyway.
+   * Sections 22.2 and 38.1: a reversible action happens at once and
+   * confirms with an Undo that lasts ten seconds, the life of the toast.
+   * Undo is kinder than a confirmation people click through anyway.
+   *
+   * `message` says what happened, in the past tense ("Client archived").
+   * `onUndo` restores exactly the previous values. `undone`, when given,
+   * is the confirmation shown once it has ("Client restored").
+   *
+   * While the toast is showing, Ctrl+Z outside a text field presses its
+   * Undo (39.5) through pressShowingUndo(). Undo runs once however it is
+   * pressed, and disappears with the toast.
    */
-  undo: (message: string, onUndo: () => void, options?: ExternalToast) =>
-    sonnerToast.success(message, {
-      duration: 6000,
-      action: { label: "Undo", onClick: onUndo },
+  undo: (
+    message: string,
+    onUndo: () => void,
+    { undone, ...options }: ExternalToast & { undone?: string } = {}
+  ) => {
+    const entry: UndoEntry = { id: 0, run: () => {} }
+    let done = false
+    const forget = () => {
+      const i = showingUndos.indexOf(entry)
+      if (i !== -1) showingUndos.splice(i, 1)
+    }
+    entry.run = () => {
+      if (done) return
+      done = true
+      forget()
+      sonnerToast.dismiss(entry.id)
+      onUndo()
+      if (undone) sonnerToast.success(undone, { duration: 4000 })
+    }
+    entry.id = sonnerToast.success(message, {
+      duration: 10000,
+      action: { label: "Undo", onClick: entry.run },
       ...options,
-    }),
+      onDismiss: (t) => {
+        forget()
+        options.onDismiss?.(t)
+      },
+      onAutoClose: (t) => {
+        forget()
+        options.onAutoClose?.(t)
+      },
+    })
+    showingUndos.push(entry)
+    return entry.id
+  },
 
   dismiss: sonnerToast.dismiss,
 }
 
-export { Toaster, toast }
+type UndoEntry = { id: string | number; run: () => void }
+
+/** Undo toasts currently on screen, oldest first. */
+const showingUndos: UndoEntry[] = []
+
+/**
+ * Presses the Undo of the most recent Undo toast still showing (39.5,
+ * Ctrl+Z). Returns false, and does nothing, when there is none.
+ */
+function pressShowingUndo(): boolean {
+  const entry = showingUndos.at(-1)
+  if (!entry) return false
+  entry.run()
+  return true
+}
+
+export { Toaster, toast, pressShowingUndo }

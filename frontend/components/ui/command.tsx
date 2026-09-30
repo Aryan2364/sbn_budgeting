@@ -8,7 +8,6 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
-  DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
 import {
@@ -34,8 +33,8 @@ function Command({
 }
 
 function CommandDialog({
-  title = "Command Palette",
-  description = "Search for a command to run...",
+  title = "Command palette",
+  description = "Search for a command to run",
   children,
   className,
   showCloseButton = false,
@@ -49,10 +48,6 @@ function CommandDialog({
 }) {
   return (
     <Dialog {...props}>
-      <DialogHeader className="sr-only">
-        <DialogTitle>{title}</DialogTitle>
-        <DialogDescription>{description}</DialogDescription>
-      </DialogHeader>
       <DialogContent
         className={cn(
           "top-1/3 translate-y-0 overflow-hidden rounded-xl! p-0",
@@ -60,6 +55,13 @@ function CommandDialog({
         )}
         showCloseButton={showCloseButton}
       >
+        {/* Inside the popup, where Base UI wires them to aria-labelledby
+            and aria-describedby; outside it they were page content.
+            Bare Title and Description rather than DialogHeader, which
+            would make DialogContent build a padded scrolling body
+            around a palette that brings its own. */}
+        <DialogTitle className="sr-only">{title}</DialogTitle>
+        <DialogDescription className="sr-only">{description}</DialogDescription>
         {children}
       </DialogContent>
     </Dialog>
@@ -72,17 +74,21 @@ function CommandInput({
 }: React.ComponentProps<typeof CommandPrimitive.Input>) {
   return (
     <div data-slot="command-input-wrapper" className="p-1 pb-0">
-      <InputGroup className="h-8! rounded-lg! border-input/30 bg-input/30 shadow-none! *:data-[slot=input-group-addon]:pl-2!">
+      {/* The plain InputGroup: 36px, border and surface (sections 6.2,
+          6.5). No faded fill, no opacity on the icon. */}
+      <InputGroup className="*:data-[slot=input-group-addon]:pl-3">
+        {/* The group's focus ring is keyed to input-group-control, so
+            the search box has to carry that slot to show one (6.4). */}
         <CommandPrimitive.Input
-          data-slot="command-input"
+          data-slot="input-group-control"
           className={cn(
-            "w-full text-sm outline-hidden disabled:cursor-not-allowed disabled:opacity-50",
+            "h-full w-full min-w-0 bg-transparent px-2 text-body text-text-primary outline-hidden placeholder:text-text-muted disabled:cursor-default disabled:text-text-muted",
             className
           )}
           {...props}
         />
         <InputGroupAddon>
-          <SearchIcon className="size-4 shrink-0 opacity-50" />
+          <SearchIcon className="size-4 shrink-0" />
         </InputGroupAddon>
       </InputGroup>
     </div>
@@ -97,7 +103,9 @@ function CommandList({
     <CommandPrimitive.List
       data-slot="command-list"
       className={cn(
-        "no-scrollbar max-h-72 scroll-py-1 overflow-x-hidden overflow-y-auto outline-none",
+        // Section 16.2: seven rows, then it scrolls on the styled
+        // scrollbar of section 10.1 - not a hidden one.
+        "max-h-menu-max scroll-py-1 overflow-x-hidden overflow-y-auto outline-none",
         className
       )}
       {...props}
@@ -112,7 +120,7 @@ function CommandEmpty({
   return (
     <CommandPrimitive.Empty
       data-slot="command-empty"
-      className={cn("py-6 text-center text-sm", className)}
+      className={cn("py-6 text-center text-body text-text-muted", className)}
       {...props}
     />
   )
@@ -126,7 +134,7 @@ function CommandGroup({
     <CommandPrimitive.Group
       data-slot="command-group"
       className={cn(
-        "overflow-hidden p-1 text-foreground **:[[cmdk-group-heading]]:px-2 **:[[cmdk-group-heading]]:py-1.5 **:[[cmdk-group-heading]]:text-xs **:[[cmdk-group-heading]]:font-medium **:[[cmdk-group-heading]]:text-muted-foreground",
+        "overflow-hidden p-1 text-text-primary **:[[cmdk-group-heading]]:px-3 **:[[cmdk-group-heading]]:py-1 **:[[cmdk-group-heading]]:text-meta **:[[cmdk-group-heading]]:text-text-muted",
         className
       )}
       {...props}
@@ -141,7 +149,7 @@ function CommandSeparator({
   return (
     <CommandPrimitive.Separator
       data-slot="command-separator"
-      className={cn("-mx-1 h-px bg-border", className)}
+      className={cn("-mx-1 h-px bg-border-light", className)}
       {...props}
     />
   )
@@ -156,7 +164,12 @@ function CommandItem({
     <CommandPrimitive.Item
       data-slot="command-item"
       className={cn(
-        "group/command-item relative flex cursor-default items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-hidden select-none in-data-[slot=dialog-content]:rounded-lg! data-[disabled=true]:pointer-events-none data-[disabled=true]:opacity-50 data-selected:bg-muted data-selected:text-foreground [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 data-selected:*:[svg]:text-foreground",
+        // Section 16.2 rows: 36px, 12px sides. data-selected is cmdk's
+        // HIGHLIGHT (pointer or arrow keys), so it takes the neutral
+        // hover grey; a chosen value is the caller's to mark.
+        "group/command-item relative flex h-control cursor-pointer items-center gap-2 rounded-lg px-3 text-body outline-hidden select-none",
+        "data-selected:bg-surface-control data-[disabled=true]:pointer-events-none data-[disabled=true]:text-text-muted",
+        "[&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
         className
       )}
       {...props}
@@ -175,7 +188,7 @@ function CommandShortcut({
     <span
       data-slot="command-shortcut"
       className={cn(
-        "ml-auto text-xs tracking-widest text-muted-foreground group-data-selected/command-item:text-foreground",
+        "ml-auto text-meta tracking-widest text-text-muted",
         className
       )}
       {...props}

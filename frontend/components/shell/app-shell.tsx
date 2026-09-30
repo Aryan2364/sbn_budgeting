@@ -3,7 +3,9 @@
 import * as React from "react"
 import { usePathname } from "next/navigation"
 
-import { Sheet, SheetContent } from "@/components/ui/sheet"
+import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet"
+import { CONTENT_ID, SkipToContent } from "@/components/shell/content-area"
+import { ProgressBar, ProgressProvider } from "@/components/shell/progress-bar"
 import { SidebarBody } from "@/components/shell/sidebar"
 import { TopBar } from "@/components/shell/top-bar"
 import {
@@ -25,6 +27,13 @@ import {
  *   Below 1024px - the sidebar is hidden and the same toggle opens it
  *   as an overlay sliding OVER the content, never pushing the content
  *   sideways.
+ *
+ * Kit section 12: the sidebar is filled with primary (sidebar.tsx) and
+ * the 56px top bar stays neutral beside it, so the brand runs down the
+ * full height of the window. The progress bar of 5.6 hangs off the top
+ * bar's bottom edge; ProgressProvider is here so everything inside the
+ * shell (ShellLink, the notification panel, list reloads) drives it.
+ * "Skip to content" is the first Tab stop (39.1) and jumps to <main>.
  *
  * Scroll ownership (section 10) is decided by the page, not here. This
  * frame gives the page a fixed-height box and hides its own overflow;
@@ -71,12 +80,14 @@ function AppShell({ children }: { children: React.ReactNode }) {
       : "Collapse sidebar"
 
   return (
+    <ProgressProvider>
+    <SkipToContent />
     <div className="flex h-dvh overflow-hidden bg-surface-sunken">
       {/* 260px open, 64px rail collapsed. Hidden below 1024px, where
           the overlay below takes over. The width comes from
           <html data-sidebar> so a restored choice does not animate in
           on every page load. */}
-      <aside className="no-print hidden w-sidebar shrink-0 flex-col border-r border-border-light bg-surface transition-[width] duration-200 ease-out lg:flex rail:w-sidebar-rail">
+      <aside className="no-print z-(--z-shell) hidden w-sidebar shrink-0 flex-col bg-primary transition-[width] duration-(--duration-slow) ease-enter motion-reduce:transition-none lg:flex rail:w-sidebar-rail">
         <SidebarBody collapsible collapsed={collapsed} />
       </aside>
 
@@ -87,17 +98,33 @@ function AppShell({ children }: { children: React.ReactNode }) {
         <SheetContent
           side="left"
           aria-label="Main navigation"
-          className="flex flex-col gap-0 p-0 data-[side=left]:w-sidebar data-[side=left]:sm:max-w-none lg:hidden"
+          className="flex flex-col gap-0 border-0 bg-primary p-0 data-[side=left]:w-sidebar data-[side=left]:border-r-0 data-[side=left]:sm:max-w-none lg:hidden"
         >
-          <SidebarBody collapsible={false} collapsed={false} />
+          <SheetTitle className="sr-only">Navigation</SheetTitle>
+          <SidebarBody
+            collapsible={false}
+            collapsed={false}
+            onNavigate={() => setOverlayOpen(false)}
+          />
         </SheetContent>
       </Sheet>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <TopBar onToggle={handleToggle} toggleLabel={toggleLabel} />
-        <main className="min-h-0 flex-1 overflow-hidden">{children}</main>
+        <TopBar onToggle={handleToggle} toggleLabel={toggleLabel}>
+          <ProgressBar />
+        </TopBar>
+        {/* The skip link's target: focusable by script, not a tab stop,
+            and no ring because it is not a control. */}
+        <main
+          id={CONTENT_ID}
+          tabIndex={-1}
+          className="min-h-0 flex-1 overflow-hidden outline-none"
+        >
+          {children}
+        </main>
       </div>
     </div>
+    </ProgressProvider>
   )
 }
 

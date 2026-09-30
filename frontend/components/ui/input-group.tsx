@@ -8,13 +8,32 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 
+/**
+ * Section 6.5: the group owns the border, the radius, the height AND
+ * every state. The control inside is a child with its radius removed,
+ * so any state it painted would show as a sharp rectangle inside the
+ * rounded border - which is exactly what its own focus ring did before.
+ *
+ * It is a text-entry control (6.4): hover moves the border only, focus
+ * is the primary-ring outline on the GROUP, invalid turns the border
+ * danger. The ring arrives through `has-[:focus-visible]`, so the transition names
+ * border-color rather than using `transition-colors`, which would
+ * animate outline-color and leave the ring black (6.4).
+ */
 function InputGroup({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       data-slot="input-group"
       role="group"
       className={cn(
-        "group/input-group relative flex h-control w-full min-w-0 items-center rounded-lg border border-border transition-colors outline-none in-data-[slot=combobox-content]:focus-within:border-inherit in-data-[slot=combobox-content]:focus-within:ring-0 has-disabled:border-border-light has-disabled:bg-surface-sunken has-[[data-slot=input-group-control]:focus-visible]:border-ring has-[[data-slot=input-group-control]:focus-visible]:ring-3 has-[[data-slot=input-group-control]:focus-visible]:ring-ring/50 has-[[data-slot][aria-invalid=true]]:border-destructive has-[[data-slot][aria-invalid=true]]:ring-3 has-[[data-slot][aria-invalid=true]]:ring-destructive/20 has-[>[data-align=block-end]]:h-auto has-[>[data-align=block-end]]:flex-col has-[>[data-align=block-start]]:h-auto has-[>[data-align=block-start]]:flex-col has-[>textarea]:h-auto has-[>[data-align=block-end]]:[&>input]:pt-3 has-[>[data-align=block-start]]:[&>input]:pb-3 has-[>[data-align=inline-end]]:[&>input]:pr-1.5 has-[>[data-align=inline-start]]:[&>input]:pl-1.5",
+        "group/input-group relative flex h-control w-full min-w-0 items-center rounded-lg border border-border bg-surface outline-none",
+        "transition-[border-color] duration-(--duration-fast)",
+        "not-has-disabled:hover:border-border-strong",
+        "has-disabled:border-border-light has-disabled:bg-surface-sunken",
+        "has-[[data-slot=input-group-control]:focus-visible]:border-primary-ring has-[[data-slot=input-group-control]:focus-visible]:outline-2 has-[[data-slot=input-group-control]:focus-visible]:[outline-style:solid] has-[[data-slot=input-group-control]:focus-visible]:outline-offset-0 has-[[data-slot=input-group-control]:focus-visible]:outline-primary-ring",
+        "has-[[data-slot][aria-invalid=true]]:border-danger has-[[data-slot][aria-invalid=true]:focus-visible]:outline-danger",
+        "in-data-[slot=combobox-content]:focus-within:border-inherit",
+        "has-[>[data-align=block-end]]:h-auto has-[>[data-align=block-end]]:flex-col has-[>[data-align=block-start]]:h-auto has-[>[data-align=block-start]]:flex-col has-[>textarea]:h-auto has-[>[data-align=block-end]]:[&>input]:pt-3 has-[>[data-align=block-start]]:[&>input]:pb-3 has-[>[data-align=inline-end]]:[&>input]:pr-1.5 has-[>[data-align=inline-start]]:[&>input]:pl-1.5",
         className
       )}
       {...props}
@@ -66,7 +85,7 @@ function InputGroupAddon({
 }
 
 const inputGroupButtonVariants = cva(
-  "flex items-center gap-2 text-sm shadow-none",
+  "flex items-center gap-2 text-sm",
   {
     variants: {
       size: {
@@ -74,14 +93,7 @@ const inputGroupButtonVariants = cva(
         sm: "",
         "icon-xs":
           "size-control-sm rounded-lg p-0 has-[>svg]:p-0",
-        // Section 6.5: `InputGroup`'s content box is 34px (its
-        // `h-control` is border-box, minus the 1px border on each
-        // edge), so a 36px `size-control` button here would be taller
-        // than the space it has, the same overflow the rule calls out
-        // for `InputGroupInput`. `h-full` sizes it from the wrapper
-        // instead of repeating a fixed constant that can be larger
-        // than the box it sits in.
-        "icon-sm": "h-full aspect-square p-0 has-[>svg]:p-0",
+        "icon-sm": "size-control p-0 has-[>svg]:p-0",
       },
     },
     defaultVariants: {
@@ -90,10 +102,6 @@ const inputGroupButtonVariants = cva(
   }
 )
 
-/**
- * A button that sits INSIDE the field, so section 6.3.1: no fill and
- * no border of its own. The input group is the container.
- */
 function InputGroupButton({
   className,
   type = "button",
@@ -127,16 +135,6 @@ function InputGroupText({ className, ...props }: React.ComponentProps<"span">) {
   )
 }
 
-/**
- * Section 6.5: `InputGroup` is the element that owns the border, the
- * radius and the height — its `h-control` is a border-box measurement
- * that already includes the 1px border, leaving 34px of content. `Input`
- * carries its own fixed `h-control` (36px), so composing it here without
- * overriding that height would make it two pixels taller than the space
- * it has, overflowing the wrapper and painting over the border on both
- * edges. `h-full` makes it size from the wrapper's content box instead
- * of repeating the wrapper's own control height.
- */
 function InputGroupInput({
   className,
   ...props
@@ -145,7 +143,22 @@ function InputGroupInput({
     <Input
       data-slot="input-group-control"
       className={cn(
-        "h-full flex-1 rounded-none border-0 bg-transparent shadow-none ring-0 focus-visible:ring-0 disabled:bg-transparent aria-invalid:ring-0",
+        /*
+         * Section 6.5. `InputGroup` owns the border, the radius and the
+         * height, and this control sits inside it.
+         *
+         * `h-full`, NOT the `h-control` that `Input` carries on its
+         * own. The group's `h-control` is a border-box measurement and
+         * already includes its 1px border, so it leaves 34px of content
+         * box. An inner element given the same 36px is two pixels
+         * taller than the space it has, overflows, and paints across
+         * the border on both edges.
+         *
+         * `focus-visible:outline-0`: the ring is the group's (6.5).
+         * Input's own ring would paint a sharp rectangle inside the
+         * rounded border.
+         */
+        "h-full flex-1 rounded-none border-0 bg-transparent focus-visible:outline-0 disabled:bg-transparent",
         className
       )}
       {...props}
@@ -153,13 +166,6 @@ function InputGroupInput({
   )
 }
 
-/**
- * Section 6.5: `Textarea` has no fixed `h-control` of its own to begin
- * with (only `min-h-16`, since it grows with content), and the wrapper
- * switches to `h-auto` whenever it contains a `textarea` (see
- * `has-[>textarea]:h-auto` on `InputGroup` above), so there is no fixed
- * height on either side to conflict — no override needed here.
- */
 function InputGroupTextarea({
   className,
   ...props
@@ -168,7 +174,7 @@ function InputGroupTextarea({
     <Textarea
       data-slot="input-group-control"
       className={cn(
-        "flex-1 resize-none rounded-none border-0 bg-transparent py-2 shadow-none ring-0 focus-visible:ring-0 disabled:bg-transparent aria-invalid:ring-0",
+        "flex-1 resize-none rounded-none border-0 bg-transparent py-2 focus-visible:outline-0 disabled:bg-transparent",
         className
       )}
       {...props}

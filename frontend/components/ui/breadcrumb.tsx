@@ -53,9 +53,10 @@ function BreadcrumbLink({
     defaultTagName: "a",
     props: mergeProps<"a">(
       {
+        // A standing text link (6.6): primary-text, underlined on hover.
         className: cn(
-          "cursor-pointer rounded-lg text-primary transition-colors hover:text-primary-hover",
-          "outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-ring",
+          "tap-area cursor-pointer rounded-lg text-primary-text hover:underline",
+          "outline-none focus-visible:outline-2 focus-visible:[outline-style:solid] focus-visible:outline-offset-2 focus-visible:outline-primary-ring",
           className
         ),
       },

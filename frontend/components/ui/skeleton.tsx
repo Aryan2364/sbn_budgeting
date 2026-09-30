@@ -14,7 +14,7 @@ function Skeleton({ className, ...props }: React.ComponentProps<"span">) {
     <span
       data-slot="skeleton"
       className={cn(
-        "block animate-pulse rounded-lg bg-surface-control",
+        "block animate-pulse rounded-lg bg-surface-control motion-reduce:animate-none",
         className
       )}
       {...props}

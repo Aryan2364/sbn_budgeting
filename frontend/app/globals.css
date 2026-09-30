@@ -2,6 +2,12 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 
+/* /app/kitchen-sink/ is gitignored in Tracking, and Tailwind v4 skips
+   gitignored files when it scans for classes - so a class used ONLY on
+   the reference page (most of the token swatches) was never generated
+   and its swatch painted nothing. Named explicitly so it is scanned. */
+@source "./kitchen-sink";
+
 @custom-variant dark (&:is(.dark *));
 
 /* Section 12.1. The sidebar's open/collapsed choice is restored before
@@ -9,7 +15,7 @@
    data-sidebar onto <html>. Driving the width from that attribute in
    CSS - rather than from React state - is what stops the sidebar
    animating from 260px to 64px on every load for someone who collapsed
-   it last visit. */
+   it last visit. (Tracking.) */
 @custom-variant rail (html[data-sidebar="collapsed"] &);
 
 /* ============================================================
@@ -20,7 +26,9 @@
    ============================================================ */
 :root {
   /* Brand - 2.2.
-     All SEVEN of these are edited together when the brand changes.
+     All EIGHT of these are edited together when the brand changes,
+     with --on-brand-accent below them and the three scrollbar colours
+     further down (section 0.1).
      They are deliberately explicit values, not derivations of
      --primary: this colour is dark, so hover goes LIGHTER and pressed
      goes DARKER, and a light brand colour reverses both. No formula
@@ -28,7 +36,14 @@
      hexes anyway.
      Section 2.1 asks for the change to happen in one PLACE - this
      block - not on one line. Any replacement must measure at least
-     4.5:1 against its foreground. */
+     4.5:1 against its foreground.
+
+     SADBHAVNA (Tracking): the product's primary was already #174443,
+     the kit's own placeholder, so the kit's eight brand values, its
+     --on-brand-accent and its three scrollbar colours (10.1) apply
+     unchanged - they are the section 0.1 derivations of this exact hue.
+     Section 21.1: the nearest later chart position is 3 at 25.73, above
+     24.28, so no chart substitution is needed. (fe-kit, 30 Sep 2026) */
   --primary: #174443;
   --primary-hover: #1e5a58;
   --primary-pressed: #0f3231;
@@ -36,6 +51,39 @@
   --primary-subtle: #e8f2f1;
   --primary-border: #c6dedc;
   --primary-foreground: #ffffff;
+  /* The brand used as TEXT on surface: links, secondary buttons, the
+     active tab, accent-band labels. At least 4.5:1 on surface. A dark
+     brand equals --primary (10.8:1 here); a light brand darkens it. */
+  --primary-text: #174443;
+
+  /* Sign-in headline highlight - 11.7. primary's hue (178.67), 45%
+     saturation, 72% lightness because this brand is dark (28% for a
+     light one). Measures 6.74:1 on --primary; the floor is 4.5. Used
+     nowhere else. */
+  --on-brand-accent: #97d8d6;
+
+  /* On a brand ground - 36.8. Text, icons and control states for a
+     section 36 header band and for the sidebar.
+
+     DERIVED, and 2.2's argument against derivation does not reach
+     these. That argument is about DIRECTION: no formula can know
+     whether a brand hovers lighter or darker, which is why the five
+     brand shades above are explicit. There is no direction to get
+     wrong here. Every value below mixes --primary-foreground toward
+     --primary, and 2.2 already guarantees that pair at 4.5:1 or
+     better for ANY brand - so a dark brand (white foreground) mixes
+     light and a light brand (dark foreground) mixes dark. Correct in
+     both cases by construction, which is why 0.1 does not grow.
+
+     --on-brand-muted is the ONE value with a floor: 4.5:1 against
+     --primary. An 80% mix cannot clear it if --primary-foreground is
+     itself only just at 4.5. Live only where that pair measures below
+     about 7:1; this brand measures 10.8:1 and the mix lands near 7.5.
+     Where it fails, raise the mix - never lower the requirement. */
+  --on-brand: var(--primary-foreground);
+  --on-brand-muted: color-mix(in srgb, var(--primary-foreground) 80%, var(--primary));
+  --on-brand-hover: color-mix(in srgb, var(--primary-foreground) 12%, transparent);
+  --on-brand-pressed: color-mix(in srgb, var(--primary-foreground) 20%, transparent);
 
   /* Neutrals - 2.3. --text-muted is never set lighter than this. */
   --text-primary: #171717;
@@ -47,8 +95,11 @@
   --surface: #ffffff;
   --surface-sunken: #fafafa;
   --surface-control: #f5f5f5;
+  --surface-control-pressed: #e5e5e5;
+  /* Tracking-only, kept for backward compatibility. Section 2.3 has no
+     such token and the kit's quiet ghost button no longer reads it. Do
+     not add new uses. */
   --surface-control-hover: #e5e5e5;
-  --surface-control-pressed: #d4d4d4;
 
   /* Status - 2.4. These never change when the brand colour changes.
      They carry meaning, not brand. There is deliberately no blue. */
@@ -66,6 +117,11 @@
      are derived from --danger rather than picked, so a change to the
      status colour still only happens in one place. Flagged for
      ratification; if exact values are decided, replace these. */
+  /* Text on a danger fill - 6.1: white, whatever the brand. It was
+     primary-foreground, which a light brand sets dark: dark text on
+     red, under 4.5:1, and the brand leaking into a status colour
+     (2.4). Measures 8.31:1 on --danger. */
+  --on-danger: #ffffff;
   --danger-hover: color-mix(in srgb, var(--danger) 88%, #ffffff);
   --danger-pressed: color-mix(in srgb, var(--danger) 85%, #000000);
 
@@ -78,6 +134,14 @@
   --chart-4: #a34a5e;
   --chart-5: #6fa8a4;
   --chart-6: #7a7268;
+
+  /* The single-measure ramp - 21. Mixed from two brand tokens, so it
+     follows a brand change and always ends at the dark, readable end. */
+  --chart-ramp-1: color-mix(in srgb, var(--primary-text) 0%, var(--primary-subtle));
+  --chart-ramp-2: color-mix(in srgb, var(--primary-text) 25%, var(--primary-subtle));
+  --chart-ramp-3: color-mix(in srgb, var(--primary-text) 50%, var(--primary-subtle));
+  --chart-ramp-4: color-mix(in srgb, var(--primary-text) 75%, var(--primary-subtle));
+  --chart-ramp-5: color-mix(in srgb, var(--primary-text) 100%, var(--primary-subtle));
 
   /* Scrollbar - 10. The browser default is never used. */
   --scroll-track: #f0f4f3;
@@ -101,6 +165,62 @@
   --h-control: 36px;
   --h-control-sm: 32px;
   --h-control-lg: 40px;
+
+  /* Tap area on a touch screen - 9 rule 4. The visible size stays at
+     6.2; only the invisible extension of the tap-area utility grows. */
+  --tap-target: 44px;
+
+  /* Layers - 5.5, bottom to top. Use as z-(--z-dialog). Tailwind has no
+     z-index theme namespace, so these are not registered below, and no
+     z-index number is written anywhere else. */
+  --z-sticky: 10;
+  --z-shell: 20;
+  --z-dialog: 30;
+  --z-popover: 40;
+  --z-toast: 50;
+  --z-tooltip: 60;
+
+  /* Motion - 5.6. Use as duration-(--duration-medium). An exit takes
+     the next shorter duration: slow exits at medium, medium at fast.
+     The easings are registered below as ease-enter and ease-exit. */
+  --duration-fast: 150ms;
+  --duration-medium: 200ms;
+  --duration-slow: 250ms;
+
+  /* Page-loading bar - 5.6 "Page changes and slow loads". Nothing shows
+     for a load under the delay; once shown, the bar stays at least the
+     minimum. Read by components/shell/progress-bar.tsx. */
+  --progress-delay: 300ms;
+  --progress-min-visible: 500ms;
+
+  /* Menu height - 16.2: exactly seven 36px option rows plus the menu's
+     own p-1 (4px above, 4px below) = 260px. Then it scrolls. */
+  --menu-max-height: calc(7 * var(--h-control) + 8px);
+
+  /* Sign-in brand panel grid pattern - 11.7, drawn in on-brand. */
+  --brand-pattern-opacity: 6%;
+
+  /* Board - 35.6.1. A press that moves this far is a drag; less is a
+     click. Read by board.tsx at runtime. */
+  --drag-threshold: 5px;
+}
+
+/* Shadows - 5.4, and the two easings of 5.6.
+   In a plain @theme block rather than :root plus @theme inline: the
+   utility name comes from the variable name, so registering
+   --shadow-card as var(--shadow-card) would point it at itself. Here it
+   is defined once, emitted to :root, and read through
+   var(--text-primary) at use time, so it follows a theme change. Never
+   tinted with the brand or a status colour. */
+@theme {
+  --shadow-card: 0 1px 2px color-mix(in srgb, var(--text-primary) 6%, transparent);
+  --shadow-menu: 0 4px 12px color-mix(in srgb, var(--text-primary) 10%, transparent),
+    0 1px 3px color-mix(in srgb, var(--text-primary) 6%, transparent);
+  --shadow-dialog: 0 16px 40px color-mix(in srgb, var(--text-primary) 16%, transparent),
+    0 2px 6px color-mix(in srgb, var(--text-primary) 8%, transparent);
+
+  --ease-enter: cubic-bezier(0.2, 0, 0, 1);
+  --ease-exit: cubic-bezier(0.4, 0, 1, 1);
 }
 
 /* ------------------------------------------------------------
@@ -151,7 +271,10 @@
   --font-mono: var(--font-geist-mono);
   --font-heading: var(--font-geist-sans);
 
-  /* The type scale, by slot. */
+  /* The type scale, by slot. Display is the sign-in brand panel's
+     headline only (section 3 rule 6), never a page title. */
+  --text-display: 40px;
+  --text-display--line-height: 1.15;
   --text-page-title: 30px;
   --text-page-title--line-height: 1.25;
   --text-section: 20px;
@@ -231,65 +354,106 @@
   /* Application shell - 12. */
   --spacing-sidebar: 260px;
   --spacing-sidebar-rail: 64px;
-  --spacing-topbar: 52px;
+  --spacing-topbar: 56px;
   --spacing-content-max: 1600px;
-  /* 12.1: the active navigation item's left accent bar. Named rather
-     than written inline because 3px is not on the section 5.1 spacing
-     scale and must not look like it is. It is an accent width, the
-     same kind of exception as the 2px active tab in 5.3. */
-  --spacing-accent-bar: 3px;
-  /* 11.5: the settings section menu, "about 200px". */
+
+  /* Settings page menu - 11.5. */
   --spacing-settings-menu: 200px;
 
-  /* Table column widths - extends section 17's constrained-vocabulary
-     spirit to `RecordList` columns (components/templates/record-list.tsx).
-     `table-layout:fixed` needs SOME columns pinned so the free-text
-     ones (Description, Cost head) have a bounded remainder to share -
-     but the pinned ones must be the columns whose content has a KNOWN
-     maximum, sized to that maximum, never the free-text columns
-     themselves. Three names, not pixels, so the numbers live here and
-     nowhere else. Opt-in via `RecordColumn.width`; a column that
-     declares none keeps today's auto-fill behaviour (and, for
-     Description/Cost head, is exactly what lets it truncate instead of
-     forcing a fixed box on unpredictable text).
+  /* Tracking-only: the old active-item accent bar. Section 12.1 now
+     forbids an accent bar on the sidebar; kept only so any remaining
+     reader still compiles. 3px is not on the 5.1 scale and must not
+     look like it is. */
+  --spacing-accent-bar: 3px;
 
-     - `tight` (110px): Date ("26/08/26", 8 characters) and Period
-       ("Initial", 7 characters) - short, fixed-format values, plus
-       their sort icon when the column is sortable.
-     - `narrow` (140px): Bill no. - a realistic bill/voucher reference
-       ("INV-2026-0087"), not the 2-3 digit values seeded in demo data.
-     - `amount` (160px): Amount. MEASURED the same way section 31.1's
-       120px floor was: Geist 14px tabular figures render
-       "12,45,680.00" (no rupee sign; this column uses `formatAmount`,
-       not `formatCurrency`) at roughly 7.2px per character - 94px for
-       the 13-character `--spacing-grid-cell` example, minus the ₹
-       glyph. A site budget on this product's own dashboard reads
-       ₹1,71,60,000.00 - a 14-character amount before the decimals -
-       so the column must clear that, not today's shorter demo
-       figures, plus the 32px of `td`/`th` padding (`px-4` each side)
-       and the sort icon + gap the Amount header itself carries. */
-  --spacing-col-tight: 110px;
-  --spacing-col-narrow: 140px;
-  --spacing-col-amount: 160px;
+  /* Sign-in form - 11.7. */
+  --spacing-auth-form: 400px;
+
+  /* Page-loading progress bar height - 5.6. */
+  --spacing-progress: 3px;
 
   /* 31.1: the data entry grid's amount cell. MEASURED, not chosen -
-     Geist 14px tabular figures render "Rs12,45,680.00" at 94px, plus
-     24px of input padding and a 1.33px border. A truncated number is
-     worse than truncated text: there is no ellipsis convention that
-     reads as "more digits". Scoped to a repeating matrix (section 17). */
+     Geist 14px tabular figures render a full Indian-grouped amount at
+     94px, plus 24px of input padding and a 1.33px border. A truncated
+     number is worse than truncated text: there is no ellipsis
+     convention that reads as "more digits". Scoped to a repeating
+     matrix (section 17). */
   --spacing-grid-cell: 120px;
-  /* The frozen first column of that grid. */
+  /* The frozen first column of that grid, and of a section 34.3
+     report table that scrolls sideways. */
   --spacing-grid-head: 240px;
 
-  /* Menu height cap - 16.2: about seven rows, then it scrolls. */
-  --spacing-menu-max: 280px;
+  /* Section 36.3: a header band is ONE ROW, and 36.7 puts a 36px icon
+     button on it. So the band's minimum is a control plus the 8px
+     above and below it, not the control height alone - `min-h-control`
+     is a border-box minimum, which left a 39px band with a 36px button
+     hanging 9px past its bottom edge onto the surface below. Derived
+     from --h-control so it follows if the control height ever moves. */
+  --spacing-band: calc(var(--h-control) + 1rem);
+
+  /* Table column widths - 17.1. MEASURED, not chosen, the same way
+     31.1's grid cell was: the longest realistic value rendered in Geist
+     at 14px, plus the 32px of cell padding (px-4 on both sides),
+     rounded up to the nearest 8.
+
+       tick    48px  the tick box column as it renders today
+       count   96px  "1,24,500" tabular = 56px
+       date   128px  "22 Sept 2026" = 89.5px, the longest DD Mon YYYY
+       amount 136px  "1,23,45,680.00" tabular = 95.3px, a crore figure
+       ref    144px  "INV-2026-04471" = 108.4px
+       status 152px  a "Payment pending" badge = 112.9px
+       actions 80px  one 36px icon button (6.3)
+
+     These are the PREDICTABLE columns. Free-text columns take the
+     remainder and are the only ones where truncation is the intended
+     outcome - see 17.1. Re-measure for a different type scale, a
+     different currency format or longer status labels. */
+  --spacing-col-tick: 48px;
+  --spacing-col-count: 96px;
+  --spacing-col-date: 128px;
+  /* CONFLICT, resolved for Tracking (fe-kit): kit 136px, Tracking
+     160px. Tracking's amount columns carry a sort icon beside "Amount"
+     and show crore figures; measured in the browser and logged in
+     CONTRACT.md section 9. */
+  --spacing-col-amount: 160px;
+
+  /* Tracking-only RecordList widths (components/templates/record-list.tsx),
+     kept for backward compatibility. New screens use the 17.1 tokens.
+     - `tight` (110px): Date ("26/08/26") and Period ("Initial") plus a
+       sort icon.
+     - `narrow` (140px): a bill/voucher reference ("INV-2026-0087"). */
+  --spacing-col-tight: 110px;
+  --spacing-col-narrow: 140px;
+  --spacing-col-ref: 144px;
+  --spacing-col-status: 152px;
+  --spacing-col-actions: 80px;
+
+  /* Menu height cap - 16.2: seven rows, then it scrolls. */
+  --spacing-menu-max: var(--menu-max-height);
+
+  /* 35.4: a board column. Fixed, never grown to fill spare width - a
+     board whose columns resize as stages are added gives the user a
+     different layout every time the data changes. Sized to the card
+     it holds: a title truncating at a usable length beside a 36px
+     icon button (6.3), over an amount at the same 120px the data
+     entry grid measured in 31.1, inside 12px of column padding. */
+  --spacing-board-column: 280px;
+
+  /* A count inside a control - 6.8. 18px tall and at least 18px wide,
+     so a single digit is a circle; 6px either side of longer numbers.
+     Neither is spacing between elements, so neither is on the 5.1
+     scale: they are the pill's own measurements. */
+  --spacing-count: 18px;
+  --spacing-count-pad: 6px;
 
   /* Toast width - 25. Fixed, never full width. */
   --spacing-toast: 360px;
 
-  /* Notification centre panel - 12.2 and 7.3. Wide enough for a line
-     of neutral notification text without becoming a second page. */
-  --spacing-notifications: 360px;
+  /* Notification centre panel - 7.4. The same 360px as a toast, but its
+     own token: the two are unrelated and may not move together. */
+  --spacing-notification-panel: 360px;
+  /* Tracking's older name for the same panel; kept as an alias. */
+  --spacing-notifications: var(--spacing-notification-panel);
 
   /* Icon sizes - 23. Three exist: 16 in buttons and inputs, 18 in
      navigation and toolbars, 22 in empty states. */
@@ -308,6 +472,13 @@
   --color-primary-subtle: var(--primary-subtle);
   --color-primary-border: var(--primary-border);
   --color-primary-foreground: var(--primary-foreground);
+  --color-primary-text: var(--primary-text);
+  --color-on-brand-accent: var(--on-brand-accent);
+
+  --color-on-brand: var(--on-brand);
+  --color-on-brand-muted: var(--on-brand-muted);
+  --color-on-brand-hover: var(--on-brand-hover);
+  --color-on-brand-pressed: var(--on-brand-pressed);
 
   --color-text-primary: var(--text-primary);
   --color-text-secondary: var(--text-secondary);
@@ -320,8 +491,8 @@
   --color-surface: var(--surface);
   --color-surface-sunken: var(--surface-sunken);
   --color-surface-control: var(--surface-control);
-  --color-surface-control-hover: var(--surface-control-hover);
   --color-surface-control-pressed: var(--surface-control-pressed);
+  --color-surface-control-hover: var(--surface-control-hover);
 
   --color-success: var(--success);
   --color-success-bg: var(--success-bg);
@@ -333,6 +504,7 @@
   --color-danger-bg: var(--danger-bg);
   --color-danger-border: var(--danger-border);
   --color-danger-hover: var(--danger-hover);
+  --color-on-danger: var(--on-danger);
   --color-danger-pressed: var(--danger-pressed);
 
   --color-chart-1: var(--chart-1);
@@ -341,6 +513,11 @@
   --color-chart-4: var(--chart-4);
   --color-chart-5: var(--chart-5);
   --color-chart-6: var(--chart-6);
+  --color-chart-ramp-1: var(--chart-ramp-1);
+  --color-chart-ramp-2: var(--chart-ramp-2);
+  --color-chart-ramp-3: var(--chart-ramp-3);
+  --color-chart-ramp-4: var(--chart-ramp-4);
+  --color-chart-ramp-5: var(--chart-ramp-5);
 
   /* Colours, shadcn vocabulary (components/ui) */
   --color-background: var(--background);
@@ -413,31 +590,154 @@
     font-variant-numeric: tabular-nums;
   }
 
-  /* Autofill. Chrome paints an autofilled field its own pale blue and
-     ignores `background-color`, so a signed-in-before user sees an
-     off-palette field on the sign-in screen — a colour arriving from
-     outside this file, which rule 1 exists to prevent.
-     `box-shadow` is the only property that reaches it, and the delay
-     keeps the browser from repainting over ours. */
+  /* Autofill - 1 rule 5. Chrome paints an autofilled field pale blue
+     and ignores background-color, so the surface is painted back over
+     it with an inset shadow and the text colour is set through the
+     WebKit fill property. This is a paint fix, not a 5.4 shadow: it
+     does not float anything. */
   input:-webkit-autofill,
   input:-webkit-autofill:hover,
   input:-webkit-autofill:focus,
-  input:-webkit-autofill:active {
-    -webkit-text-fill-color: var(--text-primary);
+  textarea:-webkit-autofill,
+  select:-webkit-autofill {
     -webkit-box-shadow: 0 0 0 1000px var(--surface) inset;
     box-shadow: 0 0 0 1000px var(--surface) inset;
-    transition: background-color 100000s ease-in-out 0s;
+    -webkit-text-fill-color: var(--text-primary);
     caret-color: var(--text-primary);
   }
 }
 
-/* Toast - section 25. Fixed 360px, bottom right, close button on
-   every toast. Colours come from the tokens above. */
-@layer components {
-  [data-sonner-toaster] {
-    --width: var(--spacing-toast);
+/* Reduce motion - 5.6 rule 3. Every enter and exit animation in the kit
+   runs through tw-animate-css, which moves things only through these
+   variables. Neutralising them here removes every slide, scale and
+   rotation at once and leaves the fade, at the fast duration. Unlayered,
+   so it beats the utility that set them.
+
+   It does NOT cover motion made any other way - a transition on
+   transform, the skeleton pulse, the sidebar width, the board settle.
+   Each of those carries its own motion-reduce handling.
+
+   The duration is set on the property itself as well as the variable:
+   the animation-duration-(...) utilities write animation-duration
+   directly, so the variable alone left a reduced dialog at 250ms. It is
+   scoped to the enter and exit classes so a looping animation (a
+   loading icon) is not sped up. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    --tw-enter-translate-x: 0;
+    --tw-enter-translate-y: 0;
+    --tw-exit-translate-x: 0;
+    --tw-exit-translate-y: 0;
+    --tw-enter-scale: 1;
+    --tw-exit-scale: 1;
+    --tw-enter-rotate: 0;
+    --tw-exit-rotate: 0;
+    --tw-animation-duration: var(--duration-fast);
   }
 
+  [class*="animate-in"],
+  [class*="animate-out"] {
+    animation-duration: var(--duration-fast);
+  }
+}
+
+/* Tap area - 9 rule 4. On a touch screen, grows a control's TAP area to
+   at least 44 by 44px with an invisible ::after centred on it. The
+   visible size does not change (6.2).
+
+   - Needs a positioned element. It sets position: relative only when
+     the element is not already absolute, fixed or sticky, since those
+     are already containing blocks and must not be moved.
+   - It owns ::after. A control that already draws with ::after (a
+     tab's accent, a tick box's hit area) extends that element instead
+     of taking this class.
+   - Neighbours sit at least 8px apart (9 rule 4), so extensions never
+     overlap. */
+@utility tap-area {
+  @media (pointer: coarse) {
+    &:where(:not(.absolute, .fixed, .sticky)) {
+      position: relative;
+    }
+
+    &::after {
+      content: "";
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: max(100%, var(--tap-target));
+      height: max(100%, var(--tap-target));
+      transform: translate(-50%, -50%);
+    }
+  }
+}
+
+/* Toast width - section 25 - is set in sonner.tsx, not here: sonner
+   writes its own 356px into the toaster's inline style, which no
+   stylesheet rule can beat. A rule here once did nothing for that
+   reason. */
+@layer components {
+  /* ------------------------------------------------------------
+     Section 36: A BAND NEVER CONTAINS UNREADABLE TEXT.
+
+     The neutral text tokens are measured on white (section 2.3), so
+     text-muted on a brand ground measures under 2:1. A component or a
+     screen that puts one inside a band is not obviously wrong when it
+     is written - the class name still reads correctly - and the result
+     is invisible text rather than an error.
+
+     So the band REMAPS them rather than relying on nobody reaching for
+     them. This is a safety net under the rule, not the rule: a
+     description still belongs below the band (36.3), and the
+     components pull it out. This is what catches the case they cannot
+     see - a description wrapped in a div, or a screen's own markup.
+     ------------------------------------------------------------ */
+  /* The remap rules themselves sit OUTSIDE this layer, just below it
+     (Tracking, fe-kit): inside @layer components they lost to the
+     text-text-* UTILITY they exist to override - utilities are a later
+     layer, and layer order beats specificity - so the net caught
+     nothing. Found on the variance report's sortable headers. */
+
+  /* ------------------------------------------------------------
+     THE BAND DOES NOT REACH THE SCROLL GUTTER, AND THAT IS SETTLED.
+
+     A sticky column header lives INSIDE the scroll viewport, so the
+     scrollbar gutter runs the viewport's full height while the band
+     stops at the table's edge. There is a pale notch beside the dark
+     band at the top of every scrolling table. It is known and it is
+     left alone.
+
+     TWO ATTEMPTS AT FIXING IT ARE RECORDED IN _kit-only/SYNC.md. Read that
+     before trying a third. In short: the only CSS lever that moves
+     where a scrollbar starts is a border on the scrolling element, and
+     using it moves the sticky header down with it, because a sticky
+     header pins to the scrollport rather than to the element's outer
+     edge - and content pulled back up into the border strip is clipped
+     at the padding box. Separating the two means taking the header out
+     of the scroller, which costs synchronised column widths and the
+     cell-to-header association a screen reader relies on.
+
+     The second attempt DID work visually - transparent track plus a
+     painted gutter - and was reverted on the author's judgement: a
+     scrollbar with no track of its own read worse than the notch it
+     removed. That is the reason this block is a comment and not a
+     rule.
+     ------------------------------------------------------------ */
+}
+
+/* Section 36's band safety net, unlayered so it beats the text-text-*
+   utilities (see the note inside @layer components above). */
+[data-slot="header-band"][data-band-level="1"] .text-text-primary,
+[data-slot="table-header"][data-band-level="1"] .text-text-primary {
+  color: var(--on-brand);
+}
+
+[data-slot="header-band"][data-band-level="1"] .text-text-secondary,
+[data-slot="header-band"][data-band-level="1"] .text-text-muted,
+[data-slot="table-header"][data-band-level="1"] .text-text-secondary,
+[data-slot="table-header"][data-band-level="1"] .text-text-muted {
+  color: var(--on-brand-muted);
 }
 
 /* ----------------------------------------------------------------
@@ -454,68 +754,96 @@
    Unlayered CSS beats every layer, which is the only way a forced
    state can override the utility that paints the resting one.
    ---------------------------------------------------------------- */
-[data-force="hover"] [data-slot="button"][data-variant="primary"] {
+[data-force="hover"] button[data-variant="primary"] {
   background-color: var(--primary-hover);
   border-color: var(--primary-hover);
 }
-[data-force="pressed"] [data-slot="button"][data-variant="primary"] {
+[data-force="pressed"] button[data-variant="primary"] {
   background-color: var(--primary-pressed);
   border-color: var(--primary-pressed);
 }
-[data-force="hover"] [data-slot="button"][data-variant="secondary"] {
+[data-force="hover"] button[data-variant="secondary"] {
   background-color: var(--surface-control);
 }
-[data-force="pressed"] [data-slot="button"][data-variant="secondary"] {
+[data-force="pressed"] button[data-variant="secondary"] {
   background-color: var(--surface-control-pressed);
 }
-[data-force="hover"] [data-slot="button"][data-variant="ghost"] {
-  background-color: var(--surface-control-hover);
-  border-color: var(--border-strong);
+[data-force="hover"] button[data-variant="ghost"] {
+  background-color: var(--surface-control);
+  color: var(--text-primary);
 }
-[data-force="pressed"] [data-slot="button"][data-variant="ghost"] {
+[data-force="pressed"] button[data-variant="ghost"] {
   background-color: var(--surface-control-pressed);
-  border-color: var(--border-strong);
+  color: var(--text-primary);
 }
-[data-force="hover"] [data-slot="button"][data-variant="danger"] {
+[data-force="hover"] button[data-variant="danger"] {
   background-color: var(--danger-hover);
   border-color: var(--danger-hover);
 }
-[data-force="pressed"] [data-slot="button"][data-variant="danger"] {
+[data-force="pressed"] button[data-variant="danger"] {
   background-color: var(--danger-pressed);
   border-color: var(--danger-pressed);
 }
 
+/* Toasts - 5.4, 25. Sonner injects its own stylesheet unlayered, so a
+   layered utility cannot reach it; this sits outside @layer for the same
+   reason the forcing rules do. A toast floats like a menu. */
+[data-sonner-toaster] [data-sonner-toast][data-styled="true"] {
+  box-shadow: var(--shadow-menu);
+}
+/* Sonner draws its own grey focus ring as a box-shadow. Section 6.4's
+   ring is primary-ring, an outline, never animated. */
+[data-sonner-toaster] [data-sonner-toast][data-styled="true"]:focus-visible,
+[data-sonner-toaster] [data-sonner-toast][data-styled="true"] [data-close-button]:focus-visible,
+[data-sonner-toaster] [data-sonner-toast][data-styled="true"] [data-button]:focus-visible {
+  box-shadow: var(--shadow-menu);
+  outline: 2px solid var(--primary-ring);
+  outline-offset: 2px;
+}
+
+/* Keyed on the ELEMENT and the variant, not on data-slot. A Base UI
+   trigger given render={<Button/>} keeps its OWN data-slot - a menu
+   trigger is data-slot="dropdown-menu-trigger", not "button" - so a
+   rule written against the button slot silently stops matching the
+   moment a button becomes a trigger, and the matrix shows the resting
+   appearance in every forced column. state-matrix-check caught exactly
+   that when the board card, whose menu trigger is a ghost Button,
+   first entered the matrix. */
+
 /* Section 6.3.1: an icon button inside a field. Its states live on the
    background, not the border, because it has no border of its own. */
-[data-force="hover"] [data-slot="button"][data-variant="in-field"] {
+[data-force="hover"] button[data-variant="in-field"] {
   background-color: var(--surface-control);
   color: var(--text-primary);
 }
-[data-force="pressed"] [data-slot="button"][data-variant="in-field"] {
+[data-force="pressed"] button[data-variant="in-field"] {
   background-color: var(--surface-control-pressed);
   color: var(--text-primary);
 }
 
+/* Section 6.3.2: an icon button ON a section 36 header band. Same
+   shape as in-field one container out - the band is the ground, so the
+   states are a lightening OF that ground rather than a neutral tint.
+   The tokens are translucent white over whatever the brand is, which
+   is why one pair of values works for any brand. */
+[data-force="hover"] button[data-variant="on-brand"] {
+  background-color: var(--on-brand-hover);
+}
+[data-force="pressed"] button[data-variant="on-brand"] {
+  background-color: var(--on-brand-pressed);
+}
+
 /* These mirror what the components' own hover/active classes do. They
    are a RESTATEMENT, not a source of truth: if a component's real
-   states and these ever disagree, the matrix shows a lie. The
-   self-check in /kitchen-sink exists because that already happened —
-   input, textarea and select-trigger were forced here while having no
-   hover styles of their own at all.
+   states and these ever disagree, the matrix shows a lie.
 
-   Section 6.4: `input` and `textarea` are text-entry, not
-   press-targets — they define no hover/pressed background fill, only
-   a border response. `select-trigger` is a press-target (its text
-   half is not editable; the whole thing opens a menu), so it keeps
-   both, matching its own `enabled:hover:bg-surface-control` class. */
-[data-force="hover"] [data-slot="input"],
-[data-force="hover"] [data-slot="textarea"] {
-  border-color: var(--border-strong);
-}
-[data-force="pressed"] [data-slot="input"],
-[data-force="pressed"] [data-slot="textarea"] {
-  border-color: var(--border-strong);
-}
+   INPUT AND TEXTAREA ARE DELIBERATELY ABSENT FROM THIS BLOCK. Section
+   6.4: a text-entry control is not pressed, it is focused, so it has
+   no hover fill and no pressed fill to replay. They were forced here
+   once, which is what pushed the fills into the components in the
+   first place - the check reported "no states" and the wrong half was
+   fixed. A select trigger stays, because it IS pressed: it is a menu
+   trigger, and section 6.4 counts those with buttons and tabs. */
 [data-force="hover"] [data-slot="select-trigger"] {
   background-color: var(--surface-control);
   border-color: var(--border-strong);
@@ -525,13 +853,71 @@
   border-color: var(--border-strong);
 }
 
-/* The remaining interactive slots. */
-[data-force="hover"] [data-slot="tabs-trigger"] {
+/* Section 6.4: a text-entry control DOES have a hover - the border
+   moves. It is only the FILL it does not have, so this restates
+   `enabled:hover:border-border-strong` and nothing else. There is no
+   pressed rule here because there is no pressed state to replay, and
+   the matrix does not render that column for these two. */
+[data-force="hover"] [data-slot="input"],
+[data-force="hover"] [data-slot="textarea"] {
+  border-color: var(--border-strong);
+}
+
+/* Section 35.6: the column a card would land in, tinted primary-subtle.
+   Real state, produced by dnd-kit's `isOver` through the column's own
+   `data-[drop-target]:` classes; this only replays it on the reference
+   page, where there is no pointer mid-drag to photograph. A
+   RESTATEMENT, like the rest of this block - if these and the
+   component's own classes ever disagree, the page shows a lie.
+
+   Scoped to the first column so the reference page shows the target
+   BESIDE an untargeted one. A screenshot of every column tinted proves
+   only that the tint exists, not that it distinguishes anything. */
+[data-force="drop-target"] [data-slot="board-column"]:first-child {
+  background-color: var(--primary-subtle);
+  border-color: var(--primary-border);
+}
+
+/* Section 35.5: the whole board card is clickable (11.6), so the whole
+   card carries the states rather than the title inside it. */
+[data-force="hover"] [data-slot="board-card"] {
+  background-color: var(--surface-control);
+  box-shadow: var(--shadow-menu);
+}
+[data-force="pressed"] [data-slot="board-card"] {
+  background-color: var(--surface-control-pressed);
+}
+
+/* Section 11.6 and 5.4 rule 3: a clickable record card, the same shape as
+   the board card above. Only a record card holding a CardLink has these
+   states; a panel, or a record card with nothing to open, has none. */
+[data-force="hover"] [data-slot="card"][data-variant="record"]:has([data-slot="card-link"]) {
+  background-color: var(--surface-control);
+  box-shadow: var(--shadow-menu);
+}
+[data-force="pressed"] [data-slot="card"][data-variant="record"]:has([data-slot="card-link"]) {
+  background-color: var(--surface-control-pressed);
+}
+[data-force="focus"] [data-slot="card"][data-variant="record"]:has([data-slot="card-link"]) {
+  outline: 2px solid var(--primary-ring);
+  outline-offset: 2px;
+}
+
+/* Section 11.1 zone 2: the view switcher. Only the sides not chosen have
+   states; the chosen side is tinted and inert. */
+[data-force="hover"] [data-slot="view-switcher-item"]:not([data-pressed]) {
+  background-color: var(--surface-control);
   color: var(--text-primary);
 }
-[data-force="pressed"] [data-slot="tabs-trigger"] {
-  color: var(--primary-pressed);
+[data-force="pressed"] [data-slot="view-switcher-item"]:not([data-pressed]) {
+  background-color: var(--surface-control-pressed);
+  color: var(--text-primary);
 }
+[data-force="focus"] [data-slot="view-switcher-item"] {
+  outline: 2px solid var(--primary-ring);
+  outline-offset: -2px;
+}
+
 [data-force="hover"] [data-slot="switch"][data-unchecked] {
   background-color: var(--border);
 }
@@ -544,21 +930,9 @@
 [data-force="pressed"] [data-slot="switch"][data-checked] {
   background-color: var(--primary-pressed);
 }
-[data-force="hover"] [data-slot="table-row"],
-[data-force="hover"] [data-slot="select-item"],
-[data-force="hover"] [data-slot="dropdown-menu-item"] {
-  background-color: var(--surface-sunken);
-}
-[data-force="pressed"] [data-slot="table-row"],
-[data-force="pressed"] [data-slot="select-item"],
-[data-force="pressed"] [data-slot="dropdown-menu-item"] {
-  background-color: var(--surface-control);
-}
 
-/* Section 6.4 for the tick box, the radio and the switch. These were
-   absent from this block, which is why the kitchen sink's state matrix
-   reported them as passing: THE MATRIX CAN ONLY VERIFY WHAT IT FORCES,
-   and it was forcing nothing here. */
+/* Checked and unchecked separately: the checked background is primary,
+   and tinting that with a neutral would be invisible. */
 [data-force="hover"] [data-slot="checkbox"]:not([data-checked]),
 [data-force="hover"] [data-slot="radio-group-item"]:not([data-checked]) {
   background-color: var(--surface-control);
@@ -578,6 +952,70 @@
 [data-force="pressed"] [data-slot="radio-group-item"][data-checked] {
   background-color: var(--primary-pressed);
   border-color: var(--primary-pressed);
+}
+
+/* Section 6.4: the focus ring is primary-ring and is never removed.
+
+   The general rule matches `button[data-variant]` rather than a list of
+   data-slot values, for the reason the hover and pressed rules above
+   already carry: a Base UI trigger given render={<Button/>} keeps its
+   OWN slot, so a button becomes "dropdown-menu-trigger" or
+   "tooltip-trigger" depending on what wraps it, and a slot list is a
+   list of the wrappers somebody had already thought of. It cost two
+   rounds of exactly that - the menu trigger first, then the board's
+   drag handle, which is a tooltip trigger one layer further out. Every
+   kit button carries data-variant whatever wraps it.
+
+   ORDER IS LOAD-BEARING BELOW. The in-field override has the same
+   specificity as the general rule, so it wins by coming last. Moving it
+   back above the general rule puts the ring outside the field again
+   (section 6.3.1) with nothing reporting it. */
+[data-force="focus"] button[data-variant],
+[data-force="focus"] [data-slot="board-card"],
+[data-force="focus"] [data-slot="input"],
+[data-force="focus"] [data-slot="textarea"],
+[data-force="focus"] [data-slot="select-trigger"],
+[data-force="focus"] [data-slot="checkbox"],
+[data-force="focus"] [data-slot="radio-group-item"],
+[data-force="focus"] [data-slot="switch"] {
+  outline: 2px solid var(--primary-ring);
+  outline-offset: 2px;
+}
+[data-force="focus"] [data-slot="input"],
+[data-force="focus"] [data-slot="textarea"],
+[data-force="focus"] [data-slot="select-trigger"] {
+  border-color: var(--primary-ring);
+  outline-offset: 0;
+}
+/* Section 6.3.1 hugs the ring to the icon INSIDE the field rather than
+   straddling the field's own border. Last on purpose - see above. */
+[data-force="focus"] button[data-variant="in-field"] {
+  outline: 2px solid var(--primary-ring);
+  outline-offset: 0;
+}
+/* Section 6.3.2: on a band the ring REVERSES. primary-ring is a
+   mid-tone of the brand, so on a primary ground it is very nearly the
+   ground - a ring that vanishes on exactly the surface it was
+   specified for, leaving a keyboard user with no signal at all. Last,
+   with the in-field rule, for the same specificity reason. */
+[data-force="focus"] button[data-variant="on-brand"] {
+  outline: 2px solid var(--on-brand);
+  outline-offset: 0;
+}
+
+/* ----------------------------------------------------------------
+   Tracking's own forcing rules, kept from before the kit merge, for
+   slots the kit block above does not replay. Restated from the
+   components' own classes.
+   ---------------------------------------------------------------- */
+[data-force="hover"] [data-slot="tabs-trigger"] {
+  color: var(--text-primary);
+}
+[data-force="focus"] [data-slot="tabs-trigger"],
+[data-force="focus"] [data-slot="select-item"],
+[data-force="focus"] [data-slot="dropdown-menu-item"] {
+  outline: 2px solid var(--primary-ring);
+  outline-offset: 2px;
 }
 
 /* ----------------------------------------------------------------
@@ -693,28 +1131,4 @@
     break-inside: avoid;
     page-break-inside: avoid;
   }
-}
-
-/* Section 6.4: the focus ring is primary-ring and is never removed. */
-[data-force="focus"] [data-slot="button"][data-variant="in-field"] {
-  outline: 2px solid var(--primary-ring);
-  outline-offset: 0;
-}
-[data-force="focus"] [data-slot="button"],
-[data-force="focus"] [data-slot="input"],
-[data-force="focus"] [data-slot="textarea"],
-[data-force="focus"] [data-slot="select-trigger"],
-[data-force="focus"] [data-slot="checkbox"],
-[data-force="focus"] [data-slot="radio-group-item"],
-[data-force="focus"] [data-slot="switch"],
-[data-force="focus"] [data-slot="tabs-trigger"],
-[data-force="focus"] [data-slot="select-item"],
-[data-force="focus"] [data-slot="dropdown-menu-item"] {
-  outline: 2px solid var(--primary-ring);
-  outline-offset: 2px;
-}
-[data-force="focus"] [data-slot="input"],
-[data-force="focus"] [data-slot="select-trigger"] {
-  border-color: var(--primary-ring);
-  outline-offset: 0;
 }

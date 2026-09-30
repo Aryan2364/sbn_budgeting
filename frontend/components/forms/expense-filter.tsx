@@ -403,7 +403,7 @@ export function expenseFilterChips(
   return chips
 }
 
-function FilterChip({ label, onRemove }: { label: string; onRemove: () => void }) {
+export function FilterChip({ label, onRemove }: { label: string; onRemove: () => void }) {
   return (
     <Badge variant="neutral" className="gap-1.5 py-1 pr-1">
       {label}

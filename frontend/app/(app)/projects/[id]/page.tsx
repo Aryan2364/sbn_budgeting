@@ -284,7 +284,7 @@ export default function ProjectDetailPage({
                     */}
                     <PermissionTooltip
                       allowed={isAdmin}
-                      reason="Only an administrator can delete a project"
+                      reason="Only a budget administrator can delete a project"
                     >
                       <DropdownMenuItem
                         variant="danger"

@@ -4,7 +4,6 @@ import * as React from "react"
 import { PencilIcon, PlusIcon, TrashIcon } from "lucide-react"
 
 import { cn } from "@/lib/utils"
-import { formatNumber } from "@/lib/format"
 import { errorMessage } from "@/components/shell/session"
 import { Button } from "@/components/ui/button"
 import {
@@ -18,15 +17,7 @@ import {
 import { EmptyState } from "@/components/ui/empty-state"
 import { ExportButton } from "@/components/ui/export-button"
 import type { ExportColumn } from "@/lib/pdf-export"
-import {
-  Pagination,
-  PaginationBar,
-  PaginationContent,
-  PaginationCount,
-  PaginationItem,
-  PaginationNext,
-  PaginationPrevious,
-} from "@/components/ui/pagination"
+import { ListPagination } from "@/components/templates/list-page"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
   Table,
@@ -101,8 +92,14 @@ export function MasterSection<T extends { id: string }>({
   page,
   totalPages,
   total,
+  pageSize = MASTER_PAGE_SIZE,
   onPageChange,
   exportList,
+  toolbar,
+  tableClassName,
+  filtered = false,
+  onClearFilters,
+  nothingFoundHeading,
 }: {
   title: string
   description: string
@@ -175,6 +172,8 @@ export function MasterSection<T extends { id: string }>({
   page?: number
   totalPages?: number
   total?: number
+  /** What each page asks for; every caller today asks MASTER_PAGE_SIZE. */
+  pageSize?: number
   onPageChange?: (page: number) => void
   /**
    * Optional and additive: a caller that omits this is completely
@@ -193,6 +192,26 @@ export function MasterSection<T extends { id: string }>({
    * separate fetch rather than exporting `rows` as given, which would
    * silently produce a file containing only the page on screen.
    */
+  /**
+   * Optional and additive: search and a filter button (section 27),
+   * drawn above the table inside the card. Callers that omit it are
+   * unchanged.
+   */
+  toolbar?: React.ReactNode
+  /**
+   * Optional: e.g. "table-fixed" for a list with several free-text
+   * columns, so they share the width and truncate (sections 8, 17.1)
+   * instead of pushing the table past its card.
+   */
+  tableClassName?: string
+  /**
+   * True while a search or filter narrows the list. An empty result is
+   * then section 13's "nothing found" with Clear filters, never
+   * "nothing yet" and its Add.
+   */
+  filtered?: boolean
+  onClearFilters?: () => void
+  nothingFoundHeading?: string
   exportList?: {
     /** The PDF heading and the downloaded filename's seed. */
     title: string
@@ -209,10 +228,11 @@ export function MasterSection<T extends { id: string }>({
   return (
     <Card>
       <CardHeader>
-        <div className="min-w-0">
-          <CardTitle>{title}</CardTitle>
-          <CardDescription>{description}</CardDescription>
-        </div>
+        {/* Section 36.3: the band holds the title and its controls; the
+            description sits below it (CardHeader moves any direct
+            CardDescription child there). */}
+        <CardTitle>{title}</CardTitle>
+        <CardDescription>{description}</CardDescription>
         {/*
           Section 26: shown and DISABLED, not hidden. Two people looking
           at this screen see the same software; only one of them can use
@@ -241,6 +261,9 @@ export function MasterSection<T extends { id: string }>({
       </CardHeader>
 
       <CardContent className="p-0">
+        {toolbar ? (
+          <div className="border-b border-border-light p-4">{toolbar}</div>
+        ) : null}
         {error !== null && !loading ? (
           <EmptyState
             variant="failed"
@@ -256,6 +279,15 @@ export function MasterSection<T extends { id: string }>({
             <Skeleton className="h-4 w-4/5" />
             <Skeleton className="h-4 w-3/5" />
           </div>
+        ) : rows.length === 0 && filtered ? (
+          <EmptyState
+            variant="nothing-found"
+            heading={nothingFoundHeading ?? "Nothing matches"}
+            actionLabel="Clear filters"
+            onAction={onClearFilters}
+          >
+            Nothing matches the search and filters. Clear them to see the whole list.
+          </EmptyState>
         ) : rows.length === 0 ? (
           <EmptyState
             variant="nothing-yet"
@@ -266,7 +298,7 @@ export function MasterSection<T extends { id: string }>({
             {emptyBody}
           </EmptyState>
         ) : (
-          <Table>
+          <Table className={tableClassName}>
             <TableHeader>
               <TableRow>
                 {columns.map((column) => (
@@ -387,42 +419,13 @@ export function MasterSection<T extends { id: string }>({
         came back, so it cannot quietly under-report.
       */}
       {onPageChange && page !== undefined && totalPages !== undefined && totalPages > 1 ? (
-        <PaginationBar>
-          <PaginationCount>
-            {formatNumber(total ?? 0)} in total
-          </PaginationCount>
-          <Pagination>
-            <PaginationContent>
-              <PaginationItem>
-                <PaginationPrevious
-                  href="#"
-                  aria-disabled={page <= 1}
-                  className={cn(page <= 1 && "pointer-events-none opacity-50")}
-                  onClick={(event) => {
-                    event.preventDefault()
-                    onPageChange(Math.max(1, page - 1))
-                  }}
-                />
-              </PaginationItem>
-              <PaginationItem>
-                <span className="px-3 text-label text-text-secondary">
-                  Page {formatNumber(page)} of {formatNumber(totalPages)}
-                </span>
-              </PaginationItem>
-              <PaginationItem>
-                <PaginationNext
-                  href="#"
-                  aria-disabled={page >= totalPages}
-                  className={cn(page >= totalPages && "pointer-events-none opacity-50")}
-                  onClick={(event) => {
-                    event.preventDefault()
-                    onPageChange(Math.min(totalPages, page + 1))
-                  }}
-                />
-              </PaginationItem>
-            </PaginationContent>
-          </Pagination>
-        </PaginationBar>
+        <ListPagination
+          page={page}
+          pageSize={pageSize}
+          total={total ?? 0}
+          onPageChange={onPageChange}
+          emptyLabel={`0 ${title.toLowerCase()}`}
+        />
       ) : null}
 
       {deleting ? (

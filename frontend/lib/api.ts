@@ -8,6 +8,12 @@
 const BASE =
   process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4100/api'
 
+/**
+ * Exported for the one caller that cannot go through `api`: a photo
+ * loader that needs the raw `Response` to make a blob URL.
+ */
+export const API_BASE = BASE
+
 const TOKEN_KEY = 'sadbhavna.token'
 
 /**
@@ -65,22 +71,43 @@ export class ApiError extends Error {
   }
 }
 
+/** Per-call overrides, used by uploads that need longer and say more. */
+export interface RequestOptions {
+  /** Defaults to REQUEST_TIMEOUT_MS. */
+  timeoutMs?: number
+  /** What a timeout says, cause then next action (7.2). */
+  timeoutMessage?: string
+  /** Replaces the message for a status, e.g. 413 on an upload. */
+  statusMessages?: Partial<Record<number, string>>
+}
+
 async function request<T>(
   method: string,
   path: string,
   body?: unknown,
+  options: RequestOptions = {},
 ): Promise<T> {
   const token = getToken()
+  /**
+   * Multipart (complaint photos): the browser sets the content type,
+   * boundary included, so this must not.
+   */
+  const isForm = typeof FormData !== 'undefined' && body instanceof FormData
 
   let response: Response
   try {
     response = await fetch(`${BASE}${path}`, {
       method,
       headers: {
-        ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+        ...(body === undefined || isForm ? {} : { 'content-type': 'application/json' }),
         ...(token ? { authorization: `Bearer ${token}` } : {}),
       },
-      body: body === undefined ? undefined : JSON.stringify(body),
+      body:
+        body === undefined
+          ? undefined
+          : isForm
+            ? (body as FormData)
+            : JSON.stringify(body),
       /**
        * fetch has no timeout of its own: a request that stalls never
        * settles, so every `.then`/`.catch` downstream simply never
@@ -88,13 +115,13 @@ async function request<T>(
        * reject cannot be shown as an error, however good the error
        * state is. This makes the failure reachable.
        */
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: AbortSignal.timeout(options.timeoutMs ?? REQUEST_TIMEOUT_MS),
     })
   } catch (caught) {
     // Section 7.2 rule 3: never a raw technical error. Both of these
     // are failures the user can actually act on by retrying.
     if (caught instanceof DOMException && caught.name === 'TimeoutError') {
-      throw new ApiError(0, 'The server took too long to answer. Try again.')
+      throw new ApiError(0, options.timeoutMessage ?? 'The server took too long to answer. Try again.')
     }
     throw new ApiError(0, 'Could not reach the server. Check your connection and try again.')
   }
@@ -108,7 +135,11 @@ async function request<T>(
     const fieldErrors = Array.isArray(raw) ? raw : []
     const fromServer = Array.isArray(raw) ? raw[0] : raw
 
-    throw new ApiError(response.status, humanMessage(response.status, fromServer), fieldErrors)
+    throw new ApiError(
+      response.status,
+      options.statusMessages?.[response.status] ?? humanMessage(response.status, fromServer),
+      fieldErrors,
+    )
   }
 
   return payload as T
@@ -150,6 +181,12 @@ export const api = {
   patch: <T,>(path: string, body: unknown) => request<T>('PATCH', path, body),
   put: <T,>(path: string, body: unknown) => request<T>('PUT', path, body),
   delete: <T,>(path: string) => request<T>('DELETE', path),
+  /**
+   * Multipart POST (complaint photos): same auth, timeout and error
+   * mapping as every other call; the browser sets the content type.
+   */
+  postForm: <T,>(path: string, form: FormData, options?: RequestOptions) =>
+    request<T>('POST', path, form, options),
 }
 
 /** Builds a query string, dropping anything empty. */
@@ -191,11 +228,30 @@ export interface Matchable {
   matchedValue: string | null
 }
 
+/** CONTRACT §1. What was `role` is now `modules.budget`. */
+export type ModuleAccess = {
+  platform?: 'admin'
+  budget?: 'admin' | 'staff'
+  complaints?: 'admin' | 'member'
+}
+
 export interface AuthUser {
   id: string
   name: string
-  email: string
-  role: 'admin' | 'staff'
+  email: string | null
+  phone: string | null
+  designation: { id: string; name: string; seedKey: string | null } | null
+  modules: ModuleAccess
+}
+
+/** `POST /auth/login`. `login` is an email or a phone number. */
+export interface LoginBody {
+  login: string
+  password: string
+}
+
+export function login(body: LoginBody): Promise<{ token: string; user: AuthUser }> {
+  return api.post<{ token: string; user: AuthUser }>('/auth/login', body)
 }
 
 export interface Project {
@@ -216,6 +272,8 @@ export interface Site {
   name: string
   siteLocationId: string | null
   locationName: string | null
+  /** Null where no donor has been recorded for this site. */
+  donorName: string | null
   plannedTrees: number
   plantationStartDate: string
   /**
@@ -253,10 +311,33 @@ export interface CostHead {
   expenseCount: number
 }
 
-export interface SiteLocation {
+/**
+ * A location (CONTRACT §2). `/site-locations` is an alias of
+ * `/locations`, so budget screens that only need id, name and siteCount
+ * keep reading the same shape.
+ */
+export interface Location {
   id: string
   name: string
+  isActive: boolean
   siteCount: number
+  userCount: number
+  complaintCount: number
+  supervisor: { id: string; name: string } | null
+  manager: { id: string; name: string } | null
+}
+
+/** Kept for the budget screens: a location is a site location. */
+export type SiteLocation = Location
+
+export interface Designation {
+  id: string
+  name: string
+  /** Set on the seeded ones (supervisor, manager, hod, ceo). Never deletable. */
+  seedKey: string | null
+  sortOrder: number
+  isActive: boolean
+  userCount: number
 }
 
 export interface Person {
@@ -264,16 +345,69 @@ export interface Person {
   name: string
   email: string | null
   phone: string | null
-  role: 'admin' | 'staff'
   canLogin: boolean
+  designation: { id: string; name: string } | null
+  reportsTo: { id: string; name: string } | null
+  locations: { id: string; name: string }[]
+  modules: ModuleAccess
   /**
-   * What points at this person — sites they manage or supervise, and
-   * expenses they booked. The API refuses to delete one while either is
-   * above zero, so the screen reads these rather than finding out after
-   * the click (§26).
+   * What points at this person — sites they manage or supervise,
+   * expenses they booked, complaints still open with them. The API
+   * refuses to delete one while any is above zero, so the screen reads
+   * these rather than finding out after the click (§26).
    */
   siteCount: number
   expenseCount: number
+  openComplaintCount: number
+}
+
+/** `POST/PATCH /users`. `null` in `modules` removes that module. */
+export interface PersonBody {
+  name: string
+  email?: string | null
+  phone?: string | null
+  designationId?: string | null
+  reportsToId?: string | null
+  locationIds?: string[]
+  modules?: {
+    platform?: 'admin' | null
+    budget?: 'admin' | 'staff' | null
+    complaints?: 'admin' | 'member' | null
+  }
+  canLogin: boolean
+  password?: string
+}
+
+/** One spreadsheet row, as the import endpoints take it (CONTRACT §2). */
+export interface ImportRow {
+  name: string
+  phone: string
+  email?: string
+  designation?: string
+  locations?: string[]
+  reportsToPhone?: string
+  canLogin?: boolean
+  password?: string
+}
+
+export type ImportRowStatus = 'new' | 'update' | 'unchanged' | 'error'
+
+export interface ImportPreview {
+  rows: Array<{
+    index: number
+    status: ImportRowStatus
+    matchedUserId?: string
+    changes: Array<{ field: string; from: string | null; to: string | null }>
+    messages: string[]
+  }>
+  newLocations: string[]
+  summary: Record<ImportRowStatus, number>
+}
+
+export interface ImportResult {
+  created: number
+  updated: number
+  unchanged: number
 }
 
 export interface BudgetCell {

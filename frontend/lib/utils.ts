@@ -13,6 +13,11 @@ import { extendTailwindMerge } from "tailwind-merge"
  *
  * Anything added to the type scale in globals.css must be added here
  * too, or it will be dropped the same way.
+ *
+ * The shadow and easing names of sections 5.4 and 5.6 have the same
+ * problem one namespace over: unregistered, `shadow-card` reads as a
+ * shadow COLOUR, so `cn("shadow-lg", "shadow-card")` keeps both and
+ * `cn("shadow-card", "shadow-none")` does not cancel. Measured (kit).
  */
 const twMerge = extendTailwindMerge({
   extend: {
@@ -20,6 +25,7 @@ const twMerge = extendTailwindMerge({
       "font-size": [
         {
           text: [
+            "display",
             "page-title",
             "section",
             "card-heading",
@@ -50,6 +56,8 @@ const twMerge = extendTailwindMerge({
      */
     theme: {
       spacing: ["control", "control-sm", "control-lg"],
+      shadow: ["card", "menu", "dialog"],
+      ease: ["enter", "exit"],
     },
   },
 })

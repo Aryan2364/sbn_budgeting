@@ -1,10 +1,9 @@
 "use client"
 
 import * as React from "react"
-import Link from "next/link"
-import { BellIcon, LogOutIcon, PanelLeftIcon, SearchIcon, UserIcon } from "lucide-react"
+import { LogOutIcon, PanelLeftIcon, SearchIcon } from "lucide-react"
 
-import { cn } from "@/lib/utils"
+import { NotificationBell } from "@/components/complaints/notification-bell"
 import { useSession } from "@/components/shell/session"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
@@ -29,8 +28,9 @@ import {
 } from "@/components/ui/tooltip"
 
 /**
- * Section 12.2. 52 to 56px tall, spanning the content area, and it
- * contains FOUR things:
+ * Section 12.2. 56px tall (--spacing-topbar), neutral, spanning the
+ * content area beside the primary-filled sidebar, and it contains FOUR
+ * things:
  *
  *   1. the sidebar toggle, at the far left
  *   2. global search
@@ -40,30 +40,11 @@ import {
  * Nothing else. Page actions belong to the page header, because every
  * extra control here appears on every screen whether it is relevant or
  * not.
+ *
+ * The bell is `components/complaints/notification-bell.tsx`, owned by
+ * fe-complaints: the kit's notification panel over `/notifications`.
+ * It renders nothing until that file replaces fe-kit's stub.
  */
-
-/**
- * Placeholder rows until the notification feed arrives with the API in
- * Phase 3. They are here rather than omitted because section 7.3 has
- * real styling to build and check: a notification is NEUTRAL - grey
- * text on a plain surface - and the brand colour appears only as the
- * unread dot and a faint row tint. A status colour would only appear
- * as a badge inside a row that is genuinely a success or a failure.
- */
-const NOTIFICATIONS = [
-  {
-    id: "n1",
-    text: "Rakesh Nair assigned you a site",
-    when: "2 hours ago",
-    unread: true,
-  },
-  {
-    id: "n2",
-    text: "Budget updated for Ranthambore East",
-    when: "Yesterday",
-    unread: false,
-  },
-]
 
 function SidebarToggle({
   onToggle,
@@ -124,83 +105,6 @@ function GlobalSearch() {
   )
 }
 
-function NotificationBell() {
-  const unread = NOTIFICATIONS.filter((item) => item.unread).length
-
-  const label =
-    unread > 0 ? `Notifications, ${unread} unread` : "Notifications"
-
-  return (
-    <DropdownMenu>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <DropdownMenuTrigger
-              render={
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="relative"
-                  aria-label={label}
-                />
-              }
-            />
-          }
-        >
-          <BellIcon />
-          {unread > 0 && (
-            // Section 12.2: the unread dot is the one place the brand
-            // colour appears in the notification area.
-            <span
-              aria-hidden="true"
-              className="absolute top-2 right-2 size-2 rounded-full bg-primary"
-            />
-          )}
-        </TooltipTrigger>
-        <TooltipContent side="bottom">{label}</TooltipContent>
-      </Tooltip>
-      <DropdownMenuContent align="end" className="w-notifications max-w-full p-0">
-        <p className="border-b border-border-light px-3 py-3 text-body font-medium text-text-primary">
-          Notifications
-        </p>
-        <ul className="max-h-menu-max overflow-y-auto">
-          {NOTIFICATIONS.map((item) => (
-            <li
-              key={item.id}
-              data-unread={item.unread || undefined}
-              className={cn(
-                "flex items-start gap-2 border-b border-border-light px-3 py-3 last:border-b-0",
-                // Section 7.3: the row container stays neutral. A faint
-                // primary tint is the only brand signal on an unread row.
-                "data-unread:bg-primary-subtle"
-              )}
-            >
-              <span
-                aria-hidden="true"
-                className="mt-2 flex size-2 shrink-0 items-center justify-center"
-              >
-                {item.unread ? (
-                  <span className="size-2 rounded-full bg-primary" />
-                ) : null}
-              </span>
-              <span className="min-w-0">
-                <span className="block text-body text-text-primary">
-                  {item.text}
-                </span>
-                {/* Section 18: relative time is allowed in a feed and
-                    nowhere else. */}
-                <span className="block text-meta text-text-muted">
-                  {item.when}
-                </span>
-              </span>
-            </li>
-          ))}
-        </ul>
-      </DropdownMenuContent>
-    </DropdownMenu>
-  )
-}
-
 function UserMenu() {
   const { user, signOut } = useSession()
 
@@ -223,19 +127,24 @@ function UserMenu() {
           </Button>
         }
       />
-      <DropdownMenuContent align="end">
+      <DropdownMenuContent align="end" className="min-w-56">
         {/* Base UI requires GroupLabel to sit inside a Group - without
             one it throws MenuGroupContext is missing the moment the
-            menu opens. */}
+            menu opens. Settings is not repeated here: it is in the
+            sidebar of every module, for everyone allowed there, and one
+            action lives in one place. */}
         <DropdownMenuGroup>
-          <DropdownMenuLabel>Signed in as {user?.name}</DropdownMenuLabel>
+          <DropdownMenuLabel className="flex flex-col gap-0.5 py-2">
+            <span className="truncate text-body font-medium text-text-primary">
+              {user?.name}
+            </span>
+            {user?.email || user?.phone ? (
+              <span className="truncate text-meta text-text-muted">
+                {user.email ?? user.phone}
+              </span>
+            ) : null}
+          </DropdownMenuLabel>
           <DropdownMenuSeparator />
-          {user?.role === "admin" ? (
-            <DropdownMenuItem render={<Link href="/settings" />}>
-              <UserIcon />
-              Settings
-            </DropdownMenuItem>
-          ) : null}
           <DropdownMenuItem onClick={signOut}>
             <LogOutIcon />
             Sign out
@@ -249,18 +158,25 @@ function UserMenu() {
 function TopBar({
   onToggle,
   toggleLabel,
+  children,
 }: {
   onToggle: () => void
   toggleLabel: string
+  /** The progress bar (5.6), which hangs off the bottom edge. */
+  children?: React.ReactNode
 }) {
   return (
-    <header className="no-print flex h-topbar shrink-0 items-center gap-3 border-b border-border-light bg-surface px-4">
+    <header
+      data-slot="top-bar"
+      className="no-print relative z-(--z-shell) flex h-topbar shrink-0 items-center gap-3 border-b border-border-light bg-surface px-4"
+    >
       <SidebarToggle onToggle={onToggle} label={toggleLabel} />
       <GlobalSearch />
       <div className="ml-auto flex shrink-0 items-center gap-2">
         <NotificationBell />
         <UserMenu />
       </div>
+      {children}
     </header>
   )
 }

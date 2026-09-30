@@ -66,14 +66,16 @@ function SearchableSelect({
             aria-haspopup="listbox"
             data-slot="searchable-select-trigger"
             data-placeholder={value ? undefined : ""}
-            className={cn(selectTriggerClassName, className)}
+            className={cn("group", selectTriggerClassName, className)}
           />
         }
       >
         <span className="flex-1 truncate text-left">
           {value ? options[value] : placeholder}
         </span>
-        <ChevronDownIcon className="pointer-events-none size-4 shrink-0 text-text-secondary transition-transform data-popup-open:rotate-180" />
+        {/* The trigger, not the icon, carries data-popup-open, so the
+            chevron reads it through the group (16.1: up while open). */}
+        <ChevronDownIcon className="pointer-events-none size-4 shrink-0 text-text-secondary transition-transform group-data-popup-open:rotate-180" />
       </PopoverTrigger>
       <PopoverContent
         align="start"
@@ -106,7 +108,11 @@ function SearchableSelect({
                     }}
                     className={cn(
                       "h-control rounded-lg px-3",
-                      isSelected && "bg-primary-subtle text-primary-pressed"
+                      // data-selected is cmdk's highlight. Without restating the
+                      // chosen fill under it, the chosen row turned hover
+                      // grey when highlighted - the 16.2 defect again.
+                      isSelected &&
+                        "bg-primary-subtle text-primary-text data-selected:bg-primary-subtle data-selected:text-primary-text"
                     )}
                   >
                     <span className="flex-1 truncate">{label}</span>

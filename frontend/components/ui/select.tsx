@@ -11,9 +11,9 @@ import { cn } from "@/lib/utils"
  *
  * Trigger is 36px, matching an input, with the chevron on the right;
  * it points down when closed and up when open. The menu is exactly the
- * trigger's width, 12px radius, capped at about seven rows before it
- * scrolls on the styled scrollbar from section 10, and it flips upward
- * when there is no room below.
+ * trigger's width, 12px radius, capped at exactly seven rows
+ * (--menu-max-height) before it scrolls on the styled scrollbar from
+ * section 10, and it flips upward when there is no room below.
  *
  * Selected and hovered must look different (16.2). Selected is
  * primary-subtle with a tick on the right; hovered is neutral grey.
@@ -23,19 +23,18 @@ import { cn } from "@/lib/utils"
  * of value to label. Pass it whenever the value is a code rather than
  * the words the user should read.
  *
- * Not covered here: section 16.3 says a list of more than six options
- * needs a search box fixed at the top, and more than about twenty
- * should not be a dropdown at all. That is a composite of Popover and
- * Command rather than a primitive, and is not built yet.
+ * Section 16.3: this is for 6 options or fewer. 7 or more is
+ * SearchableSelect (searchable-select.tsx), whose search box sits fixed
+ * above the list.
  */
 /**
  * The trigger's appearance, shared so the searchable picker in
  * section 16.3 cannot drift away from the plain dropdown.
  */
 const selectTriggerClassName = [
-  "flex h-control w-full max-w-field-max min-w-0 cursor-pointer items-center justify-between gap-2",
+  "tap-area flex h-control w-full max-w-field-max min-w-0 cursor-pointer items-center justify-between gap-2",
   "rounded-lg border border-border bg-surface px-3 text-body text-text-primary whitespace-nowrap transition-colors select-none",
-  "outline-none focus-visible:border-primary-ring focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-primary-ring",
+  "outline-none focus-visible:border-primary-ring focus-visible:outline-2 focus-visible:[outline-style:solid] focus-visible:outline-offset-0 focus-visible:outline-primary-ring",
   // Section 6.4, same gap as input and textarea: the trigger had no
   // hover and no pressed of its own while globals.css forced one.
   "not-data-disabled:hover:border-border-strong not-data-disabled:hover:bg-surface-control",
@@ -47,14 +46,14 @@ const selectTriggerClassName = [
 ].join(" ")
 
 /**
- * Section 16.3, made self-enforcing.
- *
- * "More than 6 options: the menu gets a search box fixed at the top.
- * More than about 20 options: it should not be a dropdown at all."
+ * Section 16.3, made self-enforcing: 6 options or fewer here, 7 or more
+ * in SearchableSelect.
  *
  * Choosing the right control was the caller's job, which means it gets
  * forgotten by the fourth screen. This warns in development, once per
- * mounted Select, and compiles away in production.
+ * mounted Select, and compiles away in production. It warns rather than
+ * throws: a seventh option is the wrong control, not a broken screen,
+ * and throwing would blank a working form over it.
  */
 function useLongListWarning(children: React.ReactNode) {
   const warned = React.useRef(false)
@@ -88,10 +87,9 @@ function useLongListWarning(children: React.ReactNode) {
       warned.current = true
       console.warn(
         `[design-system] A Select was rendered with ${count} options. ` +
-          `AGENTS.md section 16.3: past six options the menu needs a search ` +
-          `box fixed at the top, and past about twenty it should not be a ` +
-          `dropdown at all. Use SearchableSelect from ` +
-          `components/ui/searchable-select.tsx instead.`
+          `FRONTEND_RULES.md section 16.3: 7 options or more use ` +
+          `SearchableSelect from components/ui/searchable-select.tsx, ` +
+          `whose search box sits fixed above the list.`
       )
     }
   }, [children])
@@ -164,14 +162,19 @@ function SelectContent({
         align={align}
         alignOffset={alignOffset}
         alignItemWithTrigger={alignItemWithTrigger}
-        className="isolate z-50"
+        className="isolate z-(--z-popover)"
       >
         <SelectPrimitive.Popup
           data-slot="select-content"
           className={cn(
-            "relative isolate z-50 flex w-(--anchor-width) origin-(--transform-origin) flex-col",
-            "rounded-xl border border-border bg-surface text-body text-text-primary shadow-lg",
-            "data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0",
+            "relative isolate flex w-(--anchor-width) origin-(--transform-origin) flex-col",
+            "rounded-xl border border-border bg-surface text-body text-text-primary shadow-menu",
+            // Section 5.6: fade in with a 4px slide away from the trigger,
+            // medium; out one step shorter, at fast. animation-duration-*,
+            // not duration-*, for the reason given in dialog.tsx.
+            "data-open:animate-in data-open:fade-in-0 data-open:animation-duration-(--duration-medium) data-open:ease-enter",
+            "data-[side=bottom]:data-open:slide-in-from-top-1 data-[side=top]:data-open:slide-in-from-bottom-1 data-[side=left]:data-open:slide-in-from-right-1 data-[side=right]:data-open:slide-in-from-left-1",
+            "data-closed:animate-out data-closed:fade-out-0 data-closed:animation-duration-(--duration-fast) data-closed:ease-exit",
             className
           )}
           {...props}
@@ -214,7 +217,7 @@ function SelectItem({
         // row is not the selected one, so selection stays visible.
         "[&[data-highlighted]:not([aria-selected='true'])]:bg-surface-control",
         // Selected: primary-subtle with a tick on the right.
-        "[&[aria-selected='true']]:bg-primary-subtle [&[aria-selected='true']]:text-primary-pressed",
+        "[&[aria-selected='true']]:bg-primary-subtle [&[aria-selected='true']]:text-primary-text",
         "data-disabled:pointer-events-none data-disabled:text-text-muted",
         "[&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
         className
@@ -256,7 +259,7 @@ function SelectScrollUpButton({
     <SelectPrimitive.ScrollUpArrow
       data-slot="select-scroll-up-button"
       className={cn(
-        "top-0 z-10 flex w-full cursor-default items-center justify-center bg-surface py-1 text-text-secondary [&_svg:not([class*='size-'])]:size-4",
+        "top-0 z-(--z-sticky) flex w-full cursor-default items-center justify-center bg-surface py-1 text-text-secondary [&_svg:not([class*='size-'])]:size-4",
         className
       )}
       {...props}
@@ -274,7 +277,7 @@ function SelectScrollDownButton({
     <SelectPrimitive.ScrollDownArrow
       data-slot="select-scroll-down-button"
       className={cn(
-        "bottom-0 z-10 flex w-full cursor-default items-center justify-center bg-surface py-1 text-text-secondary [&_svg:not([class*='size-'])]:size-4",
+        "bottom-0 z-(--z-sticky) flex w-full cursor-default items-center justify-center bg-surface py-1 text-text-secondary [&_svg:not([class*='size-'])]:size-4",
         className
       )}
       {...props}

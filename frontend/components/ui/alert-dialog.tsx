@@ -61,8 +61,9 @@ function AlertDialogOverlay({
     <AlertDialogPrimitive.Backdrop
       data-slot="alert-dialog-overlay"
       className={cn(
-        "fixed inset-0 isolate z-50 bg-(--backdrop)",
-        "data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0",
+        "fixed inset-0 isolate z-(--z-dialog) bg-(--backdrop)",
+        "data-open:animate-in data-open:fade-in-0 data-open:animation-duration-(--duration-slow) data-open:ease-enter",
+        "data-closed:animate-out data-closed:fade-out-0 data-closed:animation-duration-(--duration-medium) data-closed:ease-exit",
         className
       )}
       {...props}
@@ -81,7 +82,10 @@ function AlertDialogContent({
       <AlertDialogPrimitive.Popup
         data-slot="alert-dialog-content"
         className={cn(
-          "fixed top-1/2 left-1/2 z-50 flex w-[calc(100%-2rem)] max-w-dialog-sm -translate-x-1/2 -translate-y-1/2 flex-col",
+          "fixed top-1/2 left-1/2 z-(--z-dialog) flex w-[calc(100%-2rem)] max-w-dialog-sm -translate-x-1/2 -translate-y-1/2 flex-col",
+          "rounded-xl border border-border-light bg-surface text-body text-text-primary shadow-dialog outline-none",
+          "data-open:animate-in data-open:fade-in-0 data-open:zoom-in-98 data-open:animation-duration-(--duration-slow) data-open:ease-enter",
+          "data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-98 data-closed:animation-duration-(--duration-medium) data-closed:ease-exit",
           /*
            * Section 24 applies to this component too, and it had NO
            * height cap at all — not a weaker one, none. A confirmation
@@ -92,8 +96,6 @@ function AlertDialogContent({
            * Cancel cannot be reached is worse than no confirmation.
            */
           "max-h-[80vh] overflow-hidden",
-          "rounded-xl border border-border-light bg-surface text-body text-text-primary shadow-lg outline-none",
-          "data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0",
           className
         )}
         {...props}
@@ -102,6 +104,19 @@ function AlertDialogContent({
   )
 }
 
+/**
+ * SECTION 36.6 - THIS HEADER IS DELIBERATELY NOT A BRAND BAND, and the
+ * omission is the rule rather than an oversight.
+ *
+ * Section 2.4 settles it: status colours carry meaning, not brand. A
+ * brand band across the top of "Delete client?" puts the product's
+ * identity exactly where the warning belongs, and a confirmation is
+ * the one dialog in this system where the user must read before
+ * acting.
+ *
+ * So do not "make this consistent" with `dialog.tsx`. It already is
+ * consistent - with section 36.6.
+ */
 function AlertDialogHeader({
   className,
   ...props
@@ -114,7 +129,10 @@ function AlertDialogHeader({
        * body — the title and the consequences live here — so this is
        * what has to flex and scroll, while the footer stays pinned.
        */
-      className={cn("flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-4", className)}
+      className={cn(
+        "flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-4",
+        className
+      )}
       {...props}
     />
   )

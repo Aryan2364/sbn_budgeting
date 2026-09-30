@@ -5,6 +5,7 @@ import { Dialog as DialogPrimitive } from "@base-ui/react/dialog"
 import { XIcon } from "lucide-react"
 
 import { cn } from "@/lib/utils"
+import { BandScope, HeaderBand } from "@/components/ui/header-band"
 import { Button } from "@/components/ui/button"
 
 /**
@@ -41,8 +42,11 @@ function DialogOverlay({ className, ...props }: DialogPrimitive.Backdrop.Props) 
     <DialogPrimitive.Backdrop
       data-slot="dialog-overlay"
       className={cn(
-        "fixed inset-0 isolate z-50 bg-(--backdrop)",
-        "data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0",
+        "fixed inset-0 isolate z-(--z-dialog) bg-(--backdrop)",
+        // Section 5.6: the backdrop fades with its dialog, on the same
+        // durations - slow in, medium out.
+        "data-open:animate-in data-open:fade-in-0 data-open:animation-duration-(--duration-slow) data-open:ease-enter",
+        "data-closed:animate-out data-closed:fade-out-0 data-closed:animation-duration-(--duration-medium) data-closed:ease-exit",
         className
       )}
       {...props}
@@ -66,13 +70,14 @@ function DialogContent({
    * The height cap and the internal scroll only work if everything
    * between the header and the footer sits in one `min-h-0 flex-1
    * overflow-y-auto` box. That was `DialogBody`, and it was the
-   * caller's job to remember it — so three of the four dialogs in this
-   * product did not, and every one of them broke the same way on a
-   * short viewport: the popup clamped to 80vh, the unwrapped content
-   * kept its natural height, and the overflow painted OUTSIDE the
-   * rounded panel. The header scrolled away, a field was sliced in
-   * half with its helper text floating on the backdrop, and the footer
-   * sat below the fold with both buttons clipped.
+   * caller's job to remember it — so three of the four dialogs in the
+   * product this kit was taken from did not, and every one of them
+   * broke the same way on a short viewport: the popup clamped to 80vh,
+   * the unwrapped content kept its natural height, and the overflow
+   * painted OUTSIDE the rounded panel. The header scrolled away, a
+   * field was sliced in half with its helper text floating on the
+   * backdrop, and the footer sat below the fold with both buttons
+   * clipped. On a 14-inch laptop at 100%.
    *
    * **A component that silently breaks when a caller forgets one
    * wrapper is the component's bug, not the caller's.** So the body is
@@ -104,68 +109,116 @@ function DialogContent({
   const assemble = header.length > 0 || footer.length > 0
 
   return (
-    <DialogPortal>
-      <DialogOverlay />
-      <DialogPrimitive.Popup
-        data-slot="dialog-content"
-        data-size={size}
-        className={cn(
-          "fixed top-1/2 left-1/2 z-50 flex max-h-[80vh] w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 flex-col",
-          // Nothing may paint outside the panel. Without this the
-          // overflow above was not merely unscrollable, it was visible
-          // on the backdrop.
-          "overflow-hidden",
-          "rounded-xl border border-border-light bg-surface text-body text-text-primary shadow-lg outline-none",
-          "data-[size=sm]:max-w-dialog-sm data-[size=md]:max-w-dialog-md data-[size=lg]:max-w-dialog-lg",
-          "data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0",
-          className
-        )}
-        {...props}
-      >
-        {assemble ? (
-          <>
-            {header}
-            {rest.length > 0
-              ? alreadyWrapped
-                ? rest
-                : <DialogBody>{rest}</DialogBody>
-              : null}
-            {footer}
-          </>
-        ) : (
-          children
-        )}
-        {showCloseButton && (
-          <DialogPrimitive.Close
-            data-slot="dialog-close"
-            render={
-              <Button
-                variant="ghost"
-                size="icon"
-                className="absolute top-3 right-4"
-                aria-label="Close"
-              />
-            }
-          >
-            <XIcon />
-            <span className="sr-only">Close</span>
-          </DialogPrimitive.Close>
-        )}
-      </DialogPrimitive.Popup>
-    </DialogPortal>
+    // Section 36.4: the dialog is a banded region. The scope has to
+    // cover the BODY as well as the header - a card in the body is a
+    // sibling of the header, not a child of it, so a band that
+    // published only to its own children would never reach it.
+    <BandScope>
+      <DialogPortal>
+        <DialogOverlay />
+        <DialogPrimitive.Popup
+          data-slot="dialog-content"
+          data-size={size}
+          className={cn(
+            // Section 24: the widths are maximums. Below them the dialog
+            // is the screen less 16px a side, so a large dialog at 768px
+            // is 736px and never touches the edge.
+            "fixed top-1/2 left-1/2 z-(--z-dialog) flex max-h-[80vh] w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 flex-col",
+            "rounded-xl border border-border-light bg-surface text-body text-text-primary shadow-dialog outline-none",
+            "data-[size=sm]:max-w-dialog-sm data-[size=md]:max-w-dialog-md data-[size=lg]:max-w-dialog-lg",
+            // Section 5.6: fade with a slight scale from 98%, slow; out at
+            // medium. The centring is the `translate` property, which the
+            // animation's `transform` does not touch.
+            // animation-duration-*, never duration-*: that one also sets
+            // transition-duration, and with transition-property at its
+            // initial `all` every property of the popup - its width on a
+            // resize included - would start to transition.
+            "data-open:animate-in data-open:fade-in-0 data-open:zoom-in-98 data-open:animation-duration-(--duration-slow) data-open:ease-enter",
+            "data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-98 data-closed:animation-duration-(--duration-medium) data-closed:ease-exit",
+            // Nothing may paint outside the panel. Without this the
+            // overflow above was not merely unscrollable, it was visible
+            // on the backdrop.
+            "overflow-hidden",
+            className
+          )}
+          {...props}
+        >
+          {assemble ? (
+            <>
+              {header}
+              {rest.length > 0
+                ? alreadyWrapped
+                  ? rest
+                  : <DialogBody>{rest}</DialogBody>
+                : null}
+              {footer}
+            </>
+          ) : (
+            children
+          )}
+          {showCloseButton && (
+            <DialogPrimitive.Close
+              data-slot="dialog-close"
+              render={
+                // Section 6.3.2: it sits ON the header band, so no fill
+                // and no border of its own, and the focus ring reverses
+                // to on-brand - primary-ring on a primary ground is not
+                // a ring.
+                <Button
+                  variant="on-brand"
+                  size="icon"
+                  className="absolute top-3 right-4"
+                  aria-label="Close"
+                />
+              }
+            >
+              <XIcon />
+              <span className="sr-only">Close</span>
+            </DialogPrimitive.Close>
+          )}
+        </DialogPrimitive.Popup>
+      </DialogPortal>
+    </BandScope>
   )
 }
 
-function DialogHeader({ className, ...props }: React.ComponentProps<"div">) {
+/**
+ * Section 36: the dialog header is a brand band, and section 36.3
+ * keeps it to one row - the description moves below it, onto the
+ * surface. Split here rather than at the call site, exactly as the
+ * scrolling body is, and for the same recorded reason.
+ *
+ * `pr-16` on the band leaves room for the close button, which is
+ * positioned against the popup rather than living in the header.
+ */
+function DialogHeader({
+  className,
+  children,
+  ...props
+}: React.ComponentProps<"div">) {
+  const items = React.Children.toArray(children)
+  const isDescription = (child: React.ReactNode) =>
+    React.isValidElement(child) && child.type === DialogDescription
+
+  const description = items.filter(isDescription)
+  const banded = items.filter((child) => !isDescription(child))
+
   return (
     <div
       data-slot="dialog-header"
-      className={cn(
-        "flex shrink-0 flex-col gap-1 border-b border-border-light px-4 py-3 pr-16",
-        className
-      )}
+      className={cn("flex shrink-0 flex-col", className)}
       {...props}
-    />
+    >
+      <HeaderBand className="pr-16">{banded}</HeaderBand>
+      {description.length > 0 ? (
+        <div
+          data-slot="dialog-header-description"
+          className="border-b border-border-light px-4 py-3"
+        >
+          {description}
+        </div>
+      ) : null}
+    </div>
   )
 }
 
@@ -198,7 +251,8 @@ function DialogTitle({ className, ...props }: DialogPrimitive.Title.Props) {
   return (
     <DialogPrimitive.Title
       data-slot="dialog-title"
-      className={cn("text-card-heading font-medium text-text-primary", className)}
+      // Inherits `on-brand` from the band (section 36).
+      className={cn("text-card-heading font-medium", className)}
       {...props}
     />
   )

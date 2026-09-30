@@ -495,7 +495,7 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
           <div className="mr-auto">
             <PermissionTooltip
               allowed={isAdmin}
-              reason="Only an administrator can delete an expense"
+              reason="Only a budget administrator can delete an expense"
             >
               <Button
                 variant="danger"

@@ -12,7 +12,13 @@ import {
   type DashboardSummary,
   type VarianceRow,
 } from "@/lib/api"
-import { formatAmount, formatCurrency, formatDate, formatNumber } from "@/lib/format"
+import {
+  formatAmount,
+  formatDate,
+  formatNumber,
+  formatShortCurrency,
+  formatShortNumber,
+} from "@/lib/format"
 import { Badge } from "@/components/ui/badge"
 import { CategoryBarChart } from "@/components/ui/bar-chart"
 import { Button } from "@/components/ui/button"
@@ -206,7 +212,7 @@ export default function DashboardPage() {
         label:
           before === 0n
             ? "Nothing booked yet"
-            : `Nothing booked yet · ${formatCurrency(data.spendLastMonthPaise)} last month`,
+            : `Nothing booked yet · ${formatShortCurrency(data.spendLastMonthPaise)} last month`,
         direction: undefined,
       }
     }
@@ -234,14 +240,14 @@ export default function DashboardPage() {
           label="Trees planned"
           period="All time"
           value={
-            data ? formatNumber(data.plannedTrees) : <Skeleton className="h-8 w-24" />
+            data ? formatShortNumber(data.plannedTrees) : <Skeleton className="h-8 w-24" />
           }
         />
         <MetricTile
           href="/sites"
           label="Sites"
           period="All time"
-          value={data ? formatNumber(data.siteCount) : <Skeleton className="h-8 w-16" />}
+          value={data ? formatShortNumber(data.siteCount) : <Skeleton className="h-8 w-16" />}
         />
         <MetricTile
           href="/expenses"
@@ -249,7 +255,7 @@ export default function DashboardPage() {
           period="This month"
           value={
             data ? (
-              formatCurrency(data.spendThisMonthPaise)
+              formatShortCurrency(data.spendThisMonthPaise)
             ) : (
               <Skeleton className="h-8 w-28" />
             )
@@ -263,7 +269,7 @@ export default function DashboardPage() {
           period="All time"
           value={
             data ? (
-              formatNumber(data.sitesOverBudget)
+              formatShortNumber(data.sitesOverBudget)
             ) : (
               <Skeleton className="h-8 w-16" />
             )
@@ -318,27 +324,37 @@ export default function DashboardPage() {
               </Button>
             </div>
           ) : (
+            /*
+              These three are the card's tiles: one large figure each, read
+              at a glance, so they take the short form of section 18.1
+              (₹12.46 Cr). The full figures are one click away on the
+              variance report. The figure may still wrap (break-words,
+              min-w-0) but never runs into its neighbour: a number is
+              never truncated, because "₹20,00,00…" is a different number.
+            */
             <dl className="grid grid-cols-1 gap-6 sm:grid-cols-3">
               <div className="min-w-0">
                 <dt className="text-label text-text-secondary">Budget</dt>
-                <dd className="mt-1 text-section font-medium tabular-nums text-text-primary">
-                  {formatCurrency(data.budgetPaise)}
+                <dd className="mt-1 text-section font-medium tabular-nums break-words text-text-primary">
+                  {formatShortCurrency(data.budgetPaise)}
                 </dd>
               </div>
               <div className="min-w-0">
                 <dt className="text-label text-text-secondary">Actual</dt>
-                <dd className="mt-1 text-section font-medium tabular-nums text-text-primary">
-                  {formatCurrency(data.actualPaise)}
+                <dd className="mt-1 text-section font-medium tabular-nums break-words text-text-primary">
+                  {formatShortCurrency(data.actualPaise)}
                 </dd>
               </div>
               <div className="min-w-0">
                 <dt className="text-label text-text-secondary">Variance</dt>
-                <dd className="mt-1 text-section font-medium tabular-nums text-text-primary">
-                  {formatCurrency(data.variancePaise)}
+                <dd className="mt-1 flex flex-wrap items-center gap-x-2 text-section font-medium tabular-nums text-text-primary">
+                  <span className="min-w-0 break-words">
+                    {formatShortCurrency(data.variancePaise)}
+                  </span>
                   {/* Section 7.2 rule 1 and the plan's locked ruling:
                       the direction is a WORD, never colour alone. */}
                   {data.variancePaise !== null ? (
-                    <span className="ml-2 align-middle text-label font-normal">
+                    <span className="text-label font-normal">
                       {BigInt(data.variancePaise) < 0n ? (
                         <Badge variant="danger">over</Badge>
                       ) : (
@@ -377,12 +393,12 @@ export default function DashboardPage() {
                   format: (row) =>
                     row.budgetPaise === null
                       ? "Budget not set"
-                      : formatCurrency(row.budgetPaise),
+                      : formatShortCurrency(row.budgetPaise),
                 },
                 {
                   label: "Actual",
                   value: (row) => Number(BigInt(row.actualPaise) / 100n),
-                  format: (row) => formatCurrency(row.actualPaise),
+                  format: (row) => formatShortCurrency(row.actualPaise),
                 },
               ]}
             />
@@ -417,11 +433,13 @@ export default function DashboardPage() {
                 No site is over its budget.
               </p>
             ) : (
-              <Table>
+              <Table className="table-fixed">
                 <TableHeader>
                   <TableRow>
                     <TableHead>Site</TableHead>
-                    <TableHead numeric>Over by</TableHead>
+                    <TableHead numeric className="w-col-amount">
+                      Over by
+                    </TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -454,11 +472,13 @@ export default function DashboardPage() {
                         ) : null}
                       </TableCell>
                       <TableCell numeric>
-                        {row.variancePaise === null
-                          ? "—"
-                          : formatAmount(
-                              (-BigInt(row.variancePaise)).toString(),
-                            )}
+                        {row.variancePaise === null ? (
+                          "—"
+                        ) : (
+                          <Truncate>
+                            {formatAmount((-BigInt(row.variancePaise)).toString())}
+                          </Truncate>
+                        )}
                       </TableCell>
                     </TableRow>
                   ))}
@@ -496,15 +516,24 @@ export default function DashboardPage() {
                 period.
               </EmptyState>
             ) : (
-              <Table>
+              /*
+                Fixed layout with 17.1 widths: date and amount have a known
+                longest value, the site (with its cost head under it)
+                takes the rest and truncates. An amount wider than col-amount (only an absurd
+                one: col-amount holds a hundred-crore figure) truncates
+                with the full figure in a tooltip (section 8) instead of
+                pushing the table out of its card.
+              */
+              <Table className="table-fixed">
                 <TableHeader>
                   <TableRow>
-                    <TableHead numeric>Date</TableHead>
-                    <TableHead>Site</TableHead>
-                    <TableHead className="hidden lg:table-cell">
-                      Cost head
+                    <TableHead numeric className="w-col-date">
+                      Date
                     </TableHead>
-                    <TableHead numeric>Amount</TableHead>
+                    <TableHead>Site</TableHead>
+                    <TableHead numeric className="w-col-amount">
+                      Amount
+                    </TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -513,11 +542,17 @@ export default function DashboardPage() {
                       <TableCell numeric>{formatDate(row.spentOn)}</TableCell>
                       <TableCell>
                         <Truncate>{row.siteName}</Truncate>
+                        {/* The cost head as a meta line, the same shape as
+                            the project under a site on the left: a third
+                            column in half the width left "Cost head" too
+                            narrow for its own header (17.1). */}
+                        <Truncate className="mt-0.5 text-meta text-text-muted">
+                          {row.costHeadName}
+                        </Truncate>
                       </TableCell>
-                      <TableCell className="hidden lg:table-cell">
-                        <Truncate>{row.costHeadName}</Truncate>
+                      <TableCell numeric>
+                        <Truncate>{formatAmount(row.amountPaise)}</Truncate>
                       </TableCell>
-                      <TableCell numeric>{formatAmount(row.amountPaise)}</TableCell>
                     </TableRow>
                   ))}
                 </TableBody>

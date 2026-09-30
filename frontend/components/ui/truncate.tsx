@@ -35,8 +35,27 @@ function Truncate({
 
     const observer = new ResizeObserver(measure)
     observer.observe(el)
-    return () => observer.disconnect()
-  }, [children])
+    // The web font arriving widens the text without resizing the box,
+    // so the observer never fires: a value that fitted in the fallback
+    // font and is cut in Geist got no tooltip. Measure again once fonts
+    // have loaded.
+    const fonts = typeof document !== "undefined" ? document.fonts : undefined
+    let live = true
+    fonts?.ready.then(() => {
+      if (live) measure()
+    })
+    fonts?.addEventListener("loadingdone", measure)
+    return () => {
+      live = false
+      observer.disconnect()
+      fonts?.removeEventListener("loadingdone", measure)
+    }
+    // isTruncated is a dependency on purpose: flipping it swaps the plain
+    // span for the tooltip-wrapped one, which is a NEW node. Without
+    // re-running, the observer stayed on the detached old node, whose
+    // collapse to 0px measured "fits" and flipped the tooltip straight
+    // back off - so a cut value never got its tooltip.
+  }, [children, isTruncated])
 
   const text = (
     <span
@@ -123,9 +142,12 @@ function Clamp({
         <button
           type="button"
           onClick={() => setExpanded((v) => !v)}
+          // Section 6.6 rule 5: it expands in place, so it is a button,
+          // styled as a standing text link - the same classes TextLink's
+          // standing appearance uses - with the 9 rule 4 tap area.
           className={cn(
-            "mt-1 cursor-pointer rounded-lg text-label text-primary hover:text-primary-hover",
-            "outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-ring"
+            "tap-area mt-1 cursor-pointer rounded-sm text-body text-primary-text no-underline decoration-1 underline-offset-2 hover:underline",
+            "outline-none focus-visible:outline-2 focus-visible:[outline-style:solid] focus-visible:outline-offset-2 focus-visible:outline-primary-ring"
           )}
         >
           {expanded ? lessLabel : moreLabel}
