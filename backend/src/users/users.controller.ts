@@ -1,36 +1,84 @@
 import {
   BadRequestException, Body, ConflictException, Controller, Delete, Get,
   HttpCode, Inject, Param, ParseUUIDPipe, Patch, Post, Query,
+  UnprocessableEntityException,
 } from '@nestjs/common';
 import { hash } from 'bcryptjs';
+import { Transform } from 'class-transformer';
 import {
-  IsBoolean, IsEmail, IsIn, IsOptional, IsString, MinLength,
+  IsArray, IsBoolean, IsEmail, IsIn, IsObject, IsOptional, IsString, IsUUID, MinLength,
 } from 'class-validator';
-import type { Pool } from 'pg';
+import type { Pool, PoolClient } from 'pg';
 
 import {
-  findOneOrFail, isPgError, PG_FOREIGN_KEY_VIOLATION, PG_UNIQUE_VIOLATION,
+  findOneOrFail, isPgError, PG_FOREIGN_KEY_VIOLATION, PG_UNIQUE_VIOLATION, pgConstraint,
 } from '../common/crud';
-import { CurrentUser, type AuthUser } from '../common/current-user';
+import { CurrentUser, type AuthModules, type AuthUser } from '../common/current-user';
+import { ListQueryDto } from '../common/list-query.dto';
+import { runListQuery, type ListResult, type MatchInfo } from '../common/list-query';
+import { ModuleRole, type ModuleName } from '../common/module-access.decorator';
+import { assertOneEach } from '../common/one-each';
+import { normalisePhone, PHONE_SQL } from '../common/phone';
+import { PG_POOL } from '../db/db.module';
+import {
+  applyModules, assertNoCycle, MODULE_ROLES, type ModulesPatch, replaceLocations,
+} from './user-writes';
 
+const blankToNull = ({ value }: { value: unknown }): unknown =>
+  typeof value === 'string' && value.trim() === '' ? null : value;
+
+/**
+ * CONTRACT section 2. POST needs `name` and `canLogin`; on PATCH every
+ * key is optional and a key that is left out is left alone. `null`
+ * clears a field; in `modules`, `null` removes that module.
+ */
 export class UserDto {
+  @IsOptional()
   @IsString()
   @MinLength(1, { message: 'Enter the person’s name' })
-  name!: string;
+  name?: string;
 
   @IsOptional()
+  @Transform(blankToNull)
   @IsEmail({}, { message: 'Enter a complete email address, like name@company.com' })
   email?: string | null;
 
   @IsOptional()
+  @Transform(blankToNull)
   @IsString()
   phone?: string | null;
 
-  @IsIn(['admin', 'staff'], { message: 'Choose a role' })
-  role!: 'admin' | 'staff';
+  @IsOptional()
+  @Transform(blankToNull)
+  @IsUUID('all', { message: 'Choose a designation from the list' })
+  designationId?: string | null;
 
+  @IsOptional()
+  @Transform(blankToNull)
+  @IsUUID('all', { message: 'Choose who they report to from the list' })
+  reportsToId?: string | null;
+
+  @IsOptional()
+  @IsArray()
+  @IsUUID('all', { each: true, message: 'Choose locations from the list' })
+  locationIds?: string[];
+
+  @IsOptional()
+  @IsObject()
+  modules?: Record<string, unknown>;
+
+  /**
+   * The budget role under its old name. The budget people screen sent
+   * it before modules existed; accepted as `modules.budget` so a cached
+   * frontend keeps working through the deploy. `modules.budget` wins.
+   */
+  @IsOptional()
+  @IsIn(['admin', 'staff'], { message: 'Choose a role' })
+  role?: 'admin' | 'staff';
+
+  @IsOptional()
   @IsBoolean()
-  canLogin!: boolean;
+  canLogin?: boolean;
 
   /** Only sent when setting or changing one. Never returned. */
   @IsOptional()
@@ -39,98 +87,148 @@ export class UserDto {
   password?: string;
 }
 
-import { Roles } from '../common/roles.decorator';
-import { ListQueryDto } from '../common/list-query.dto';
-import { runListQuery, type ListResult, type MatchInfo } from '../common/list-query';
-import { PG_POOL } from '../db/db.module';
+interface Person {
+  id: string;
+  name: string;
+}
 
 export interface UserRow {
   id: string;
   name: string;
   email: string | null;
   phone: string | null;
-  role: 'admin' | 'staff';
   canLogin: boolean;
+  designation: Person | null;
+  reportsTo: Person | null;
+  locations: Person[];
+  modules: AuthModules;
   /**
-   * What points at this person. `remove` below refuses while either is
-   * above zero, and the SCREEN has to know that before it offers the
-   * delete — section 26 forbids a control that fails after being
-   * clicked. Counted rather than a boolean so the reason can name the
-   * number, the way the site-location master already does.
+   * What points at this person. `remove` refuses while any is above
+   * zero, and the SCREEN has to know that before it offers the delete —
+   * a control that fails after being clicked is not allowed. Counted
+   * rather than a boolean so the reason can name the number.
    */
   siteCount: number;
   expenseCount: number;
+  /** Complaints not yet closed that this person is routed on. */
+  openComplaintCount: number;
+}
+
+const FROM = `
+  users u
+  left join designations d on d.id = u.designation_id
+  left join users r on r.id = u.reports_to
+  left join lateral (
+    select
+      (select count(*)::int from sites s
+        where s.manager_id = u.id or s.supervisor_id = u.id) as site_count,
+      (select count(*)::int from expenses e where e.created_by = u.id) as expense_count,
+      (select count(*)::int from complaints c
+        where c.status <> 'closed'
+          and u.id in (c.supervisor_id, c.manager_id, c.hod_id, c.ceo_id, c.approver_id))
+        as open_complaint_count
+  ) c on true
+  left join lateral (
+    select coalesce(json_agg(json_build_object('id', l.id, 'name', l.name) order by l.name),
+                    '[]'::json) as locations,
+           string_agg(l.name, ', ' order by l.name) as location_names
+    from user_locations ul join locations l on l.id = ul.location_id
+    where ul.user_id = u.id
+  ) loc on true
+  left join lateral (
+    select coalesce(json_object_agg(m.module, m.role), '{}'::json) as modules
+    from user_module_access m where m.user_id = u.id
+  ) mods on true`;
+
+const SELECT = `
+  u.id, u.name, u.email, u.phone, u.can_login as "canLogin",
+  case when d.id is null then null else json_build_object('id', d.id, 'name', d.name) end
+    as designation,
+  case when r.id is null then null else json_build_object('id', r.id, 'name', r.name) end
+    as "reportsTo",
+  loc.locations, mods.modules,
+  c.site_count as "siteCount", c.expense_count as "expenseCount",
+  c.open_complaint_count as "openComplaintCount"`;
+
+const BUDGET_ROLE_SQL = `(select m.role from user_module_access m
+                          where m.user_id = u.id and m.module = 'budget')`;
+
+/** "9825012345" -> "98250 12345", the way people read a number back. */
+export function formatPhone(phone: string): string {
+  return phone.length === 10 ? `${phone.slice(0, 5)} ${phone.slice(5)}` : phone;
 }
 
 /**
- * One list of people. There is no manager/supervisor axis on a user
- * (question 3), so the site form's manager and supervisor pickers read
- * this list rather than a filtered subset of it.
- *
- * **Reading is open to anyone signed in; writing is admin only.**
- *
- * The class was admin-only at first and that was wrong: a staff user
- * filling in a site's manager has to be able to see the people list,
- * and a picker that 403s is section 26's "control that fails after
- * being clicked". Managing people stays in Settings, which staff do not
- * see at all.
+ * One list of people, shared by every module (plan 3.1). The budget
+ * site form, the locations screen and complaint reassignment all pick
+ * from it, so **reading is open to anyone signed in**; writing is
+ * platform admin only (CONTRACT section 1).
  */
 @Controller('users')
 export class UsersController {
   constructor(@Inject(PG_POOL) private readonly pool: Pool) {}
 
-  /**
-   * The two counts that decide whether a person can be deleted. A
-   * person is "named on a site" as either its manager or its
-   * supervisor, and both columns block the delete identically, so they
-   * are one number rather than two.
-   */
-  private static readonly USAGE = `
-    left join lateral (
-      select
-        (select count(*)::int from sites s
-          where s.manager_id = u.id or s.supervisor_id = u.id) as site_count,
-        (select count(*)::int from expenses e where e.created_by = u.id)
-          as expense_count
-    ) c on true`;
-
-  private static readonly SELECT = `
-    u.id, u.name, u.email, u.phone, u.role, u.can_login as "canLogin",
-    c.site_count as "siteCount", c.expense_count as "expenseCount"`;
-
   @Get()
   list(
     @Query() query: ListQueryDto,
-    @Query('role') role?: string,
+    @Query('designationId') designationId?: string,
+    @Query('locationId') locationId?: string,
+    @Query('module') module?: string,
     @Query('canLogin') canLogin?: string,
+    @Query('role') role?: string,
   ): Promise<ListResult<UserRow & MatchInfo>> {
     return runListQuery<UserRow>(
       this.pool,
       {
-        from: `users u${UsersController.USAGE}`,
-        select: UsersController.SELECT,
+        from: FROM,
+        select: SELECT,
         titleField: { sql: 'u.name', label: 'Name' },
-        // Section 27.1: search covers every meaningful text field by
-        // default. password_hash is excluded for the obvious reason and
-        // that is the only exclusion.
+        // Search covers every meaningful text field. password_hash is
+        // excluded for the obvious reason and that is the only exclusion.
         searchFields: [
           { sql: 'u.email', label: 'Email' },
           { sql: 'u.phone', label: 'Phone' },
-          { sql: 'u.role', label: 'Role' },
+          { sql: 'd.name', label: 'Designation' },
+          { sql: 'r.name', label: 'Reports to' },
+          { sql: 'loc.location_names', label: 'Locations' },
         ],
         sortable: {
           name: 'u.name',
           email: 'u.email',
-          role: 'u.role',
+          phone: 'u.phone',
+          designation: 'd.sort_order',
+          reportsTo: 'r.name',
           createdAt: 'u.created_at',
+          role: BUDGET_ROLE_SQL,
         },
         defaultSort: { key: 'name', direction: 'asc' },
         filters: {
-          role: (value, param) => `u.role = ${param(value)}`,
+          // `none` finds the people nobody has given a designation yet.
+          designationId: (value, param) =>
+            value === 'none'
+              ? 'u.designation_id is null'
+              : `u.designation_id = ${param(uuidOr400(value, 'designationId'))}`,
+          locationId: (value, param) =>
+            `exists (select 1 from user_locations f
+                     where f.user_id = u.id and f.location_id = ${param(uuidOr400(value, 'locationId'))})`,
+          // `budget` = any budget role; `budget:admin` = that role only.
+          module: (value, param) => {
+            const [mod, modRole] = value.split(':');
+            if (!mod || !(mod in MODULE_ROLES)) {
+              throw new BadRequestException(
+                `module must be one of ${Object.keys(MODULE_ROLES).join(', ')}, optionally :role`,
+              );
+            }
+            return `exists (select 1 from user_module_access f
+                            where f.user_id = u.id and f.module = ${param(mod)}
+                            ${modRole ? `and f.role = ${param(modRole)}` : ''})`;
+          },
           canLogin: (value, param) => `u.can_login = ${param(value === 'true')}`,
+          // The old budget-role filter, kept for a cached frontend.
+          role: (value, param) => `${BUDGET_ROLE_SQL} = ${param(value)}`,
         },
       },
-      { ...query, filters: { role, canLogin } },
+      { ...query, filters: { designationId, locationId, module, canLogin, role } },
     );
   }
 
@@ -138,116 +236,298 @@ export class UsersController {
   get(@Param('id', new ParseUUIDPipe()) id: string): Promise<UserRow> {
     return findOneOrFail<UserRow>(
       this.pool,
-      `select ${UsersController.SELECT}
-       from users u${UsersController.USAGE}
-       where u.id = $1`,
+      `select ${SELECT} from ${FROM} where u.id = $1`,
       [id],
       'person',
     );
-  }
-
-  /**
-   * The table constraint refuses a login-enabled row with no email and
-   * no password, but a constraint violation is a 500 with a message
-   * nobody can act on. This is the same rule, said in words
-   * (section 7.2 rule 2).
-   */
-  private static assertLoginCredentials(
-    canLogin: boolean,
-    email: string | null | undefined,
-    hasPassword: boolean,
-  ): void {
-    if (!canLogin) return;
-    if (!email) {
-      throw new BadRequestException(
-        'Someone who signs in needs an email address. Add one, or turn off sign-in.',
-      );
-    }
-    if (!hasPassword) {
-      throw new BadRequestException(
-        'Someone who signs in needs a password. Set one, or turn off sign-in.',
-      );
-    }
   }
 
   @Post()
-  @Roles('admin')
+  @ModuleRole('platform', 'admin')
   async create(@Body() body: UserDto): Promise<UserRow> {
-    UsersController.assertLoginCredentials(body.canLogin, body.email, Boolean(body.password));
-    const passwordHash = body.password ? await hash(body.password, 12) : null;
-    try {
-      const { rows } = await this.pool.query(
-        `insert into users (name, email, phone, role, password_hash, can_login)
-         values ($1, $2, $3, $4, $5, $6) returning id`,
-        [body.name, body.email ?? null, body.phone ?? null, body.role,
-         passwordHash, body.canLogin],
-      );
-      return this.get(rows[0].id);
-    } catch (error) {
-      if (isPgError(error, PG_UNIQUE_VIOLATION)) {
-        throw new ConflictException(`${body.email} is already in use by someone else.`);
-      }
-      throw error;
+    const name = body.name?.trim();
+    if (!name) throw new BadRequestException('Enter the person’s name');
+    if (body.canLogin === undefined) {
+      throw new BadRequestException('Say whether this person can sign in');
     }
+    const email = body.email?.trim() || null;
+    const phone = normalisePhone(body.phone);
+    const modules = parseModules(body);
+    assertLoginCredentials(body.canLogin, email, phone, Boolean(body.password));
+    await this.assertReferences(body);
+    await this.assertUnique(email, phone, null);
+
+    const passwordHash = body.password ? await hash(body.password, 12) : null;
+    const canLogin = body.canLogin;
+    const id = await this.inTransaction(async (client) => {
+      const { rows } = await client.query<{ id: string }>(
+        `insert into users (name, email, phone, designation_id, reports_to, password_hash, can_login)
+         values ($1, $2, $3, $4, $5, $6, $7) returning id`,
+        [name, email, phone, body.designationId ?? null, body.reportsToId ?? null,
+         passwordHash, canLogin],
+      );
+      const newId = rows[0]!.id;
+      await applyModules(client, newId, modules);
+      if (body.locationIds) await replaceLocations(client, newId, dedupe(body.locationIds));
+      await assertOneEach(client, [newId]);
+      return newId;
+    });
+    return this.get(id);
   }
 
   @Patch(':id')
-  @Roles('admin')
+  @ModuleRole('platform', 'admin')
   async update(
     @Param('id', new ParseUUIDPipe()) id: string,
     @Body() body: UserDto,
+    @CurrentUser() me: AuthUser,
   ): Promise<UserRow> {
-    const existing = await findOneOrFail<{ hasPassword: boolean }>(
+    const existing = await findOneOrFail<{
+      email: string | null; phone: string | null; canLogin: boolean; hasPassword: boolean;
+    }>(
       this.pool,
-      'select (password_hash is not null) as "hasPassword" from users where id = $1',
+      `select email, phone, can_login as "canLogin",
+              (password_hash is not null) as "hasPassword"
+       from users where id = $1`,
       [id],
       'person',
     );
-    UsersController.assertLoginCredentials(
-      body.canLogin, body.email, Boolean(body.password) || existing.hasPassword,
-    );
-    const passwordHash = body.password ? await hash(body.password, 12) : null;
-    try {
-      await this.pool.query(
-        `update users set name = $1, email = $2, phone = $3, role = $4,
-                can_login = $5,
-                password_hash = coalesce($6, password_hash)
-         where id = $7`,
-        [body.name, body.email ?? null, body.phone ?? null, body.role,
-         body.canLogin, passwordHash, id],
-      );
-    } catch (error) {
-      if (isPgError(error, PG_UNIQUE_VIOLATION)) {
-        throw new ConflictException(`${body.email} is already in use by someone else.`);
-      }
-      throw error;
+
+    if (body.name !== undefined && !body.name.trim()) {
+      throw new BadRequestException('Enter the person’s name');
     }
+    const email = body.email === undefined ? existing.email : body.email?.trim() || null;
+    const phone = body.phone === undefined ? existing.phone : normalisePhone(body.phone);
+    const canLogin = body.canLogin ?? existing.canLogin;
+    const modules = parseModules(body);
+
+    if (id === me.id && modules.platform === null && me.modules.platform) {
+      throw new UnprocessableEntityException(
+        'You can’t remove your own platform admin, or nobody might be left to manage people. ' +
+          'Ask another platform admin to change it.',
+      );
+    }
+    assertLoginCredentials(canLogin, email, phone, Boolean(body.password) || existing.hasPassword);
+    await this.assertReferences(body);
+    await this.assertUnique(email, phone, id);
+
+    const passwordHash = body.password ? await hash(body.password, 12) : null;
+    await this.inTransaction(async (client) => {
+      // Checked against the chain as it stands, before this edge exists.
+      if (body.reportsToId !== undefined) await assertNoCycle(client, id, body.reportsToId);
+      await client.query(
+        `update users set
+           name           = coalesce($2, name),
+           email          = $3,
+           phone          = $4,
+           designation_id = case when $5 then $6::uuid else designation_id end,
+           reports_to     = case when $7 then $8::uuid else reports_to end,
+           can_login      = $9,
+           password_hash  = coalesce($10, password_hash)
+         where id = $1`,
+        [id, body.name?.trim() ?? null, email, phone,
+         body.designationId !== undefined, body.designationId ?? null,
+         body.reportsToId !== undefined, body.reportsToId ?? null,
+         canLogin, passwordHash],
+      );
+      await applyModules(client, id, modules);
+      if (body.locationIds) await replaceLocations(client, id, dedupe(body.locationIds));
+      await assertOneEach(client, [id]);
+    });
     return this.get(id);
   }
 
   @Delete(':id')
-  @Roles('admin')
+  @ModuleRole('platform', 'admin')
   @HttpCode(204)
   async remove(
     @Param('id', new ParseUUIDPipe()) id: string,
-    @CurrentUser() user: AuthUser,
+    @CurrentUser() me: AuthUser,
   ): Promise<void> {
     // Deleting yourself logs you out of an account you can no longer
     // sign back into. Refused rather than confirmed.
-    if (id === user.id) {
-      throw new ConflictException('You cannot delete your own account.');
+    if (id === me.id) {
+      throw new ConflictException('You can’t delete your own account.');
+    }
+    const row = await this.get(id);
+    const n = row.openComplaintCount;
+    if (n > 0) {
+      const what = n === 1 ? 'open complaint' : 'open complaints';
+      throw new ConflictException(
+        `${row.name} is on ${n} ${what}. Reassign their ${n} ${what} first.`,
+      );
+    }
+    if (row.siteCount > 0 || row.expenseCount > 0) {
+      throw new ConflictException(
+        `${row.name} is named on a site or has booked expenses. Remove those links first, ` +
+          'or turn off their sign-in instead.',
+      );
+    }
+    const { rows } = await this.pool.query<{ count: number }>(
+      'select count(*)::int as count from users where reports_to = $1',
+      [id],
+    );
+    const reports = rows[0]?.count ?? 0;
+    if (reports > 0) {
+      throw new ConflictException(
+        `${reports} ${reports === 1 ? 'person reports' : 'people report'} to ${row.name}. ` +
+          'Change who they report to first.',
+      );
     }
     try {
-      await findOneOrFail(
-        this.pool, 'delete from users where id = $1 returning id', [id], 'person',
-      );
+      await this.pool.query('delete from users where id = $1', [id]);
     } catch (error) {
       if (isPgError(error, PG_FOREIGN_KEY_VIOLATION)) {
         throw new ConflictException(
-          'This person is named on a site or has booked expenses. Remove those links first.',
+          `${row.name} appears in the history of past complaints, so they can’t be deleted. ` +
+            'Turn off their sign-in instead.',
         );
       }
       throw error;
     }
   }
+
+  // ---------------------------------------------------------------
+
+  private async inTransaction<T>(work: (client: PoolClient) => Promise<T>): Promise<T> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('begin');
+      const result = await work(client);
+      await client.query('commit');
+      return result;
+    } catch (error) {
+      await client.query('rollback');
+      if (isPgError(error, PG_UNIQUE_VIOLATION)) {
+        throw new ConflictException(
+          pgConstraint(error) === 'users_phone_unique'
+            ? 'That phone number is already used by someone else. Each person needs their own.'
+            : 'That email address is already used by someone else.',
+        );
+      }
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  /** The chosen designation, manager and locations exist (422 otherwise). */
+  private async assertReferences(body: UserDto): Promise<void> {
+    if (body.designationId) {
+      const { rowCount } = await this.pool.query('select 1 from designations where id = $1', [
+        body.designationId,
+      ]);
+      if (!rowCount) {
+        throw new UnprocessableEntityException(
+          'That designation no longer exists. Refresh and choose again.',
+        );
+      }
+    }
+    if (body.reportsToId) {
+      const { rowCount } = await this.pool.query('select 1 from users where id = $1', [
+        body.reportsToId,
+      ]);
+      if (!rowCount) {
+        throw new UnprocessableEntityException(
+          'The person they report to no longer exists. Refresh and choose again.',
+        );
+      }
+    }
+    if (body.locationIds && body.locationIds.length > 0) {
+      const ids = dedupe(body.locationIds);
+      const { rows } = await this.pool.query<{ count: number }>(
+        'select count(*)::int as count from locations where id = any($1::uuid[])',
+        [ids],
+      );
+      if ((rows[0]?.count ?? 0) !== ids.length) {
+        throw new UnprocessableEntityException(
+          'One of the chosen locations no longer exists. Refresh and choose again.',
+        );
+      }
+    }
+  }
+
+  /** Names the other person, which the unique index alone cannot do. */
+  private async assertUnique(
+    email: string | null,
+    phone: string | null,
+    exceptId: string | null,
+  ): Promise<void> {
+    if (!email && !phone) return;
+    const { rows } = await this.pool.query<{ name: string; emailClash: boolean }>(
+      `select name, (email is not null and lower(email) = lower($1)) as "emailClash"
+       from users
+       where ($3::uuid is null or id <> $3::uuid)
+         and ((email is not null and lower(email) = lower($1))
+              or (phone is not null and phone <> '' and ${PHONE_SQL('phone')} = $2))
+       limit 1`,
+      [email, phone, exceptId],
+    );
+    const clash = rows[0];
+    if (!clash) return;
+    throw new ConflictException(
+      clash.emailClash
+        ? `${email} is already used by ${clash.name}. Each person needs their own email address.`
+        : `${formatPhone(phone ?? '')} is already used by ${clash.name}. ` +
+            'Each person needs their own phone number.',
+    );
+  }
+}
+
+/**
+ * The table constraint refuses a login-enabled row with nothing to log
+ * in with, but a constraint violation is a 500 nobody can act on. This
+ * is the same rule, said in words.
+ */
+function assertLoginCredentials(
+  canLogin: boolean,
+  email: string | null,
+  phone: string | null,
+  hasPassword: boolean,
+): void {
+  if (!canLogin) return;
+  if (!email && !phone) {
+    throw new BadRequestException(
+      'Someone who signs in needs an email address or a phone number. Add one, or turn off sign-in.',
+    );
+  }
+  if (!hasPassword) {
+    throw new BadRequestException(
+      'Someone who signs in needs a password. Set one, or turn off sign-in.',
+    );
+  }
+}
+
+/** Validates the modules patch against the roles 0009 allows. */
+function parseModules(body: UserDto): ModulesPatch {
+  const raw: Record<string, unknown> = { ...(body.modules ?? {}) };
+  if (body.role && raw.budget === undefined) raw.budget = body.role;
+  const patch: Record<string, string | null> = {};
+  for (const [module, role] of Object.entries(raw)) {
+    if (role === undefined) continue;
+    const allowed = MODULE_ROLES[module as ModuleName];
+    if (!allowed) {
+      throw new BadRequestException(
+        `There is no module called "${module}". Use ${Object.keys(MODULE_ROLES).join(', ')}.`,
+      );
+    }
+    if (role !== null && (typeof role !== 'string' || !allowed.includes(role))) {
+      throw new BadRequestException(
+        `${module} access is ${allowed.join(' or ')}, or null to remove it.`,
+      );
+    }
+    patch[module] = role;
+  }
+  return patch as ModulesPatch;
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function uuidOr400(value: string, key: string): string {
+  if (!UUID_RE.test(value)) throw new BadRequestException(`${key} must be an id`);
+  return value;
+}
+
+function dedupe(ids: string[]): string[] {
+  return [...new Set(ids)];
 }

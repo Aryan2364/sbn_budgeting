@@ -25,7 +25,7 @@ import {
 import { CurrentUser, type AuthUser } from '../common/current-user';
 import { ListQueryDto } from '../common/list-query.dto';
 import { runListQuery, type ListResult, type MatchInfo } from '../common/list-query';
-import { Roles } from '../common/roles.decorator';
+import { ModuleAccess, ModuleRole } from '../common/module-access.decorator';
 import { PG_POOL } from '../db/db.module';
 
 export class ProjectDto {
@@ -60,6 +60,7 @@ export interface ProjectRow {
  * rather than fetched per project, because the list shows them and N+1
  * on a 25-row page is 26 queries.
  */
+@ModuleAccess('budget')
 @Controller('projects')
 export class ProjectsController {
   constructor(@Inject(PG_POOL) private readonly pool: Pool) {}
@@ -186,7 +187,7 @@ export class ProjectsController {
    * appearance.
    */
   @Delete(':id')
-  @Roles('admin')
+  @ModuleRole('budget', 'admin')
   @HttpCode(204)
   async remove(@Param('id', new ParseUUIDPipe()) id: string): Promise<void> {
     try {

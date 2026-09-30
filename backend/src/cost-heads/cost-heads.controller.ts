@@ -9,7 +9,7 @@ import type { Pool } from 'pg';
 import {
   findOneOrFail, isPgError, PG_FOREIGN_KEY_VIOLATION, PG_UNIQUE_VIOLATION,
 } from '../common/crud';
-import { Roles } from '../common/roles.decorator';
+import { ModuleAccess, ModuleRole } from '../common/module-access.decorator';
 
 export class CostHeadDto {
   @IsString()
@@ -48,6 +48,7 @@ export interface CostHeadRow {
   expenseCount: number;
 }
 
+@ModuleAccess('budget')
 @Controller('cost-heads')
 export class CostHeadsController {
   constructor(@Inject(PG_POOL) private readonly pool: Pool) {}
@@ -127,7 +128,7 @@ export class CostHeadsController {
    * deploy.
    */
   @Patch(':id')
-  @Roles('admin')
+  @ModuleRole('budget', 'admin')
   async update(
     @Param('id', new ParseUUIDPipe()) id: string,
     @Body() body: CostHeadDto,
@@ -153,7 +154,7 @@ export class CostHeadsController {
   }
 
   @Post()
-  @Roles('admin')
+  @ModuleRole('budget', 'admin')
   async create(@Body() body: CostHeadDto): Promise<CostHeadRow> {
     try {
       const { rows } = await this.pool.query(
@@ -177,7 +178,7 @@ export class CostHeadsController {
    * Deletion only succeeds for a head nothing points at.
    */
   @Delete(':id')
-  @Roles('admin')
+  @ModuleRole('budget', 'admin')
   @HttpCode(204)
   async remove(@Param('id', new ParseUUIDPipe()) id: string): Promise<void> {
     try {

@@ -28,7 +28,7 @@ import { buildUpdate, findOneOrFail } from '../common/crud';
 import { CurrentUser, type AuthUser } from '../common/current-user';
 import { ListQueryDto } from '../common/list-query.dto';
 import { runListQuery, type ListResult, type MatchInfo } from '../common/list-query';
-import { Roles } from '../common/roles.decorator';
+import { ModuleAccess, ModuleRole } from '../common/module-access.decorator';
 import { PG_POOL } from '../db/db.module';
 
 export class ExpenseDto {
@@ -121,6 +121,7 @@ const FROM = `
   join sites s on s.id = e.site_id
   join cost_heads ch on ch.id = e.cost_head_id`;
 
+@ModuleAccess('budget')
 @Controller('expenses')
 export class ExpensesController {
   constructor(@Inject(PG_POOL) private readonly pool: Pool) {}
@@ -242,7 +243,7 @@ export class ExpensesController {
   }
 
   @Delete(':id')
-  @Roles('admin')
+  @ModuleRole('budget', 'admin')
   @HttpCode(204)
   async remove(@Param('id', new ParseUUIDPipe()) id: string): Promise<void> {
     await findOneOrFail(

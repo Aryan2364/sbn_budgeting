@@ -1,5 +1,6 @@
 import { Controller, Get, Param, ParseUUIDPipe, Query } from '@nestjs/common';
 
+import { ModuleAccess } from '../common/module-access.decorator';
 import { ListQueryDto } from '../common/list-query.dto';
 import {
   PERIODS,
@@ -8,6 +9,7 @@ import {
   type VarianceRow,
 } from './variance.service';
 
+@ModuleAccess('budget')
 @Controller('reports/variance')
 export class ReportsController {
   constructor(private readonly variance: VarianceService) {}

@@ -75,13 +75,30 @@ async function seedFirstAdmin(): Promise<void> {
   }
 
   const passwordHash = await hash(password, 12);
-  await pool.query(
-    `insert into users (name, email, role, password_hash, can_login)
-     values ($1, $2, 'admin', $3, true)`,
-    [name, email, passwordHash],
-  );
+  const client = await pool.connect();
+  try {
+    await client.query('begin');
+    const { rows } = await client.query<{ id: string }>(
+      `insert into users (name, email, password_hash, can_login)
+       values ($1, $2, $3, true) returning id`,
+      [name, email, passwordHash],
+    );
+    // Access is per module since 0009 (users.role is gone). The first
+    // admin runs everything: people and places, budget, and complaints.
+    await client.query(
+      `insert into user_module_access (user_id, module, role)
+       values ($1, 'platform', 'admin'), ($1, 'budget', 'admin'), ($1, 'complaints', 'admin')`,
+      [rows[0]?.id],
+    );
+    await client.query('commit');
+  } catch (error) {
+    await client.query('rollback');
+    throw error;
+  } finally {
+    client.release();
+  }
   // eslint-disable-next-line no-console
-  console.log(`first admin: created ${email}`);
+  console.log(`first admin: created ${email} (platform, budget and complaints admin)`);
 }
 
 export async function seed(): Promise<void> {

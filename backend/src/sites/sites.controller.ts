@@ -35,7 +35,7 @@ import {
 } from '../common/crud';
 import { ListQueryDto } from '../common/list-query.dto';
 import { runListQuery, type ListResult, type MatchInfo } from '../common/list-query';
-import { Roles } from '../common/roles.decorator';
+import { ModuleAccess, ModuleRole } from '../common/module-access.decorator';
 import { PG_POOL } from '../db/db.module';
 
 export class SiteDto {
@@ -58,6 +58,16 @@ export class SiteDto {
   @IsOptional()
   @IsUUID()
   siteLocationId?: string | null;
+
+  /**
+   * OPTIONAL. This site's own donor -- defaulted client-side from the
+   * chosen project's donor when one is picked, but always editable and
+   * never required. A site with no project still gets to name one.
+   */
+  @IsOptional()
+  @Transform(({ value }) => (value === '' || value === null ? null : value))
+  @IsString()
+  donorName?: string | null;
 
   @Transform(({ value }) => (value === undefined ? undefined : Number(value)))
   @IsInt({ message: 'Enter the number of trees as a whole number' })
@@ -104,6 +114,8 @@ export interface SiteRow {
   name: string;
   siteLocationId: string | null;
   locationName: string | null;
+  /** Null where no donor has been recorded for this site. */
+  donorName: string | null;
   plannedTrees: number;
   plantationStartDate: string;
   plantationCompleteDate: string | null;
@@ -146,7 +158,8 @@ export interface AllocationWarning {
 
 const SITE_SELECT = `
   s.id, s.project_id as "projectId", p.name as "projectName", s.name,
-  s.site_location_id as "siteLocationId", l.name as "locationName",
+  s.location_id as "siteLocationId", l.name as "locationName",
+  s.donor_name as "donorName",
   s.planned_trees as "plannedTrees",
   s.plantation_start_date as "plantationStartDate",
   s.plantation_complete_date as "plantationCompleteDate",
@@ -157,10 +170,11 @@ const SITE_SELECT = `
 const SITE_FROM = `
   sites s
   left join projects p on p.id = s.project_id
-  left join site_locations l on l.id = s.site_location_id
+  left join locations l on l.id = s.location_id
   left join users m on m.id = s.manager_id
   left join users v on v.id = s.supervisor_id`;
 
+@ModuleAccess('budget')
 @Controller('sites')
 export class SitesController {
   constructor(@Inject(PG_POOL) private readonly pool: Pool) {}
@@ -187,6 +201,7 @@ export class SitesController {
           { sql: 'l.name', label: 'Location' },
           { sql: 'm.name', label: 'Manager' },
           { sql: 'v.name', label: 'Supervisor' },
+          { sql: 's.donor_name', label: 'Donor' },
         ],
         sortable: {
           name: 's.name',
@@ -265,14 +280,15 @@ export class SitesController {
     const { rows } = await this.pool
       .query(
         `insert into sites
-           (project_id, name, site_location_id, planned_trees,
+           (project_id, name, location_id, donor_name, planned_trees,
             plantation_start_date, plantation_complete_date,
             manager_id, supervisor_id)
-         values ($1, $2, $3, $4, $5, $6, $7, $8) returning id`,
+         values ($1, $2, $3, $4, $5, $6, $7, $8, $9) returning id`,
         [
           body.projectId ?? null,
           body.name,
           body.siteLocationId ?? null,
+          body.donorName ?? null,
           body.plannedTrees,
           body.plantationStartDate,
           body.plantationCompleteDate ?? null,
@@ -298,7 +314,8 @@ export class SitesController {
       // leave the old one in place and say it had saved.
       project_id: body.projectId ?? null,
       name: body.name,
-      site_location_id: body.siteLocationId ?? null,
+      location_id: body.siteLocationId ?? null,
+      donor_name: body.donorName ?? null,
       planned_trees: body.plannedTrees,
       plantation_start_date: body.plantationStartDate,
       plantation_complete_date: body.plantationCompleteDate ?? null,
@@ -350,7 +367,7 @@ export class SitesController {
   }
 
   @Delete(':id')
-  @Roles('admin')
+  @ModuleRole('budget', 'admin')
   @HttpCode(204)
   async remove(@Param('id', new ParseUUIDPipe()) id: string): Promise<void> {
     try {

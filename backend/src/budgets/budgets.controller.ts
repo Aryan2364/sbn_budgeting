@@ -21,7 +21,7 @@ import {
 import type { Pool } from 'pg';
 
 import { findOneOrFail } from '../common/crud';
-import { Roles } from '../common/roles.decorator';
+import { ModuleAccess, ModuleRole } from '../common/module-access.decorator';
 import { PG_POOL } from '../db/db.module';
 
 export class BudgetCellDto {
@@ -67,6 +67,7 @@ export interface BudgetCell {
  * makes "Budget not set" and "0.00" different facts downstream
  * (question 7).
  */
+@ModuleAccess('budget')
 @Controller('sites/:siteId/budget')
 export class BudgetsController {
   constructor(@Inject(PG_POOL) private readonly pool: Pool) {}
@@ -103,7 +104,7 @@ export class BudgetsController {
    * partial save cannot silently wipe the rest of the grid.
    */
   @Put()
-  @Roles('admin', 'staff')
+  @ModuleRole('budget', 'admin', 'staff')
   async replace(
     @Param('siteId', new ParseUUIDPipe()) siteId: string,
     @Body() body: BudgetGridDto,

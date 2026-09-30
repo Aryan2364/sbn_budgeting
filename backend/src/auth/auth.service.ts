@@ -1,20 +1,14 @@
-import { Inject, Injectable, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { compare } from 'bcryptjs';
 import type { Pool } from 'pg';
 
 import type { AuthUser } from '../common/current-user';
-import type { Role } from '../common/roles.decorator';
+import { PHONE_SQL, phoneDigits } from '../common/phone';
 import { PG_POOL } from '../db/db.module';
+import { AUTH_USER_SELECT, type AuthUserDbRow, toAuthUser } from './auth-user.sql';
 
-interface UserRow {
-  id: string;
-  name: string;
-  email: string | null;
-  role: Role;
-  password_hash: string | null;
-  can_login: boolean;
-}
+const LOGIN_FAILED = 'Email/phone or password is incorrect';
 
 @Injectable()
 export class AuthService {
@@ -23,20 +17,40 @@ export class AuthService {
     private readonly jwt: JwtService,
   ) {}
 
-  async login(email: string, password: string): Promise<{ token: string; user: AuthUser }> {
-    const { rows } = await this.pool.query<UserRow>(
-      `select id, name, email, role, password_hash, can_login
-       from users
-       where lower(email) = lower($1)`,
-      [email],
-    );
+  /**
+   * `login` is an email or a phone (plan Q7). Anything with an @ is an
+   * email; anything else is compared by its last ten digits, the same
+   * way phones are stored.
+   */
+  async login(login: string | undefined, password: string): Promise<{ token: string; user: AuthUser }> {
+    const identifier = login?.trim() ?? '';
+    if (!identifier) {
+      throw new BadRequestException('Enter your email or phone number');
+    }
+
+    let rows: AuthUserDbRow[] = [];
+    if (identifier.includes('@')) {
+      ({ rows } = await this.pool.query<AuthUserDbRow>(
+        `${AUTH_USER_SELECT} where lower(u.email) = lower($1)`,
+        [identifier],
+      ));
+    } else {
+      const digits = phoneDigits(identifier);
+      if (digits && digits.length === 10) {
+        ({ rows } = await this.pool.query<AuthUserDbRow>(
+          `${AUTH_USER_SELECT}
+           where u.phone is not null and u.phone <> '' and ${PHONE_SQL('u.phone')} = $1`,
+          [digits],
+        ));
+      }
+    }
 
     const user = rows[0];
 
     /**
-     * One message for every failure — unknown email, wrong password,
-     * a person record that cannot log in. Telling the difference tells
-     * an attacker which addresses exist.
+     * One message for every failure — unknown email or phone, wrong
+     * password, a person record that cannot log in. Telling the
+     * difference tells an attacker which accounts exist.
      *
      * The comparison still runs against a dummy hash when there is no
      * user, so the response takes the same time either way.
@@ -45,40 +59,27 @@ export class AuthService {
     const passwordMatches = await compare(password, hash);
 
     if (!user || !user.can_login || !user.password_hash || !passwordMatches) {
-      throw new UnauthorizedException('Email or password is incorrect');
+      throw new UnauthorizedException(LOGIN_FAILED);
     }
 
-    const authUser: AuthUser = {
-      id: user.id,
-      name: user.name,
-      email: user.email ?? '',
-      role: user.role,
-    };
-
-    const token = await this.jwt.signAsync({
-      sub: authUser.id,
-      name: authUser.name,
-      email: authUser.email,
-      role: authUser.role,
-    });
-
+    const authUser = toAuthUser(user);
+    const token = await this.jwt.signAsync({ sub: authUser.id, name: authUser.name });
     return { token, user: authUser };
   }
 
   /**
    * Re-read on every request rather than trusting the token's copy.
-   * A role change or a revoked login has to take effect before the
-   * token expires, not after.
+   * A module-access change or a revoked login has to take effect before
+   * the token expires, not after.
    */
   async findActive(id: string): Promise<AuthUser | null> {
-    const { rows } = await this.pool.query<UserRow>(
-      `select id, name, email, role, password_hash, can_login
-       from users where id = $1`,
+    const { rows } = await this.pool.query<AuthUserDbRow>(
+      `${AUTH_USER_SELECT} where u.id = $1`,
       [id],
     );
     const user = rows[0];
     if (!user || !user.can_login) return null;
-    return { id: user.id, name: user.name, email: user.email ?? '', role: user.role };
+    return toAuthUser(user);
   }
 }
 

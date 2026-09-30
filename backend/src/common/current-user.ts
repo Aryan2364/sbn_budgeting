@@ -1,11 +1,23 @@
 import { createParamDecorator, type ExecutionContext } from '@nestjs/common';
 
-/** What the JWT carries, and what every guarded handler can rely on. */
+export interface AuthModules {
+  platform?: 'admin';
+  budget?: 'admin' | 'staff';
+  complaints?: 'admin' | 'member';
+}
+
+/**
+ * CONTRACT section 1. What /auth/login and /auth/me return, and what
+ * every guarded handler can rely on. Re-read from the database on every
+ * request (AuthService.findActive), never trusted from the token.
+ */
 export interface AuthUser {
   id: string;
   name: string;
-  email: string;
-  role: 'admin' | 'staff';
+  email: string | null;
+  phone: string | null;
+  designation: { id: string; name: string; seedKey: string | null } | null;
+  modules: AuthModules;
 }
 
 export const CurrentUser = createParamDecorator(
