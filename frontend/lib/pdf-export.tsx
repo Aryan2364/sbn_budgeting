@@ -196,7 +196,7 @@ export function resolveBrandColors(): BrandColors {
  * resolved Font objects, and `@react-pdf/textkit`'s `fontSubstitution`
  * (`pickFontFromFontStack`) then walks that array PER CODE POINT and
  * uses the first font that has a glyph for it. So Gujarati stays on
- * NotoSansGujarati and Hindi falls through to NotoSansDevanagari
+ * HindVadodara and Hindi falls through to NotoSansDevanagari
  * automatically, per character, with no manual script splitting.
  *
  * Both families register normal and bold weights so the fallback still
@@ -204,16 +204,43 @@ export function resolveBrandColors(): BrandColors {
  *
  * Registered lazily, once, the first time a PDF is built.
  */
-const FONT_STACK = ["NotoSansGujarati", "NotoSansDevanagari"]
+const FONT_STACK = ["HindVadodara", "NotoSansDevanagari"]
 
 let fontsRegistered = false
 function registerFonts(Font: typeof import("@react-pdf/renderer").Font): void {
   if (fontsRegistered) return
+  /**
+   * GUJARATI IS HIND VADODARA, NOT NOTO SANS GUJARATI, AND THAT IS
+   * DELIBERATE. Noto Sans Gujarati carries NULL anchors in its GPOS
+   * table. A null anchor is legal OpenType — it means "no attachment
+   * point for this mark" — but fontkit dereferences it instead of
+   * skipping, and throws `Cannot read properties of null (reading
+   * 'xCoordinate')` out of getAnchor. Measured: 55 of the 740 Gujarati
+   * pairs crash, among them `ળ્` and `અઁ`. Both weights, and the
+   * variable build too, so it is not a bad download.
+   *
+   * It only ever showed up on real Gujarati data in the PDF: Devanagari
+   * has 0 failing pairs, and neither Excel nor the screen does
+   * OpenType mark positioning. A client hit it in production while
+   * every test here passed.
+   *
+   * fontkit 2.0.4 is both what @react-pdf/font resolves and the latest
+   * published, so there was no upgrade to take. Hind Vadodara (Indian
+   * Type Foundry, OFL) has 0 failing pairs in Regular and Bold, covers
+   * Gujarati, Latin, digits and the rupee sign, and is drawn as a
+   * Gujarati/Latin pair so mixed rows stay even. Mukta Vaani is also
+   * clean if this one ever has to be replaced.
+   *
+   * If the font is ever changed again, re-run the pair sweep before
+   * shipping it: lay out every pair in U+0A81..U+0AFF through fontkit
+   * and require zero throws. Coverage alone is not enough — Noto had
+   * every glyph and still could not position them.
+   */
   Font.register({
-    family: "NotoSansGujarati",
+    family: "HindVadodara",
     fonts: [
-      { src: "/fonts/NotoSansGujarati-Regular.ttf", fontWeight: "normal" },
-      { src: "/fonts/NotoSansGujarati-Bold.ttf", fontWeight: "bold" },
+      { src: "/fonts/HindVadodara-Regular.ttf", fontWeight: "normal" },
+      { src: "/fonts/HindVadodara-Bold.ttf", fontWeight: "bold" },
     ],
   })
   Font.register({
