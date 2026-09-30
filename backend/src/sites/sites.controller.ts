@@ -59,6 +59,16 @@ export class SiteDto {
   @IsUUID()
   siteLocationId?: string | null;
 
+  /**
+   * OPTIONAL. This site's own donor -- defaulted client-side from the
+   * chosen project's donor when one is picked, but always editable and
+   * never required. A site with no project still gets to name one.
+   */
+  @IsOptional()
+  @Transform(({ value }) => (value === '' || value === null ? null : value))
+  @IsString()
+  donorName?: string | null;
+
   @Transform(({ value }) => (value === undefined ? undefined : Number(value)))
   @IsInt({ message: 'Enter the number of trees as a whole number' })
   @Min(1, { message: 'A site needs at least one tree' })
@@ -104,6 +114,8 @@ export interface SiteRow {
   name: string;
   siteLocationId: string | null;
   locationName: string | null;
+  /** Null where no donor has been recorded for this site. */
+  donorName: string | null;
   plannedTrees: number;
   plantationStartDate: string;
   plantationCompleteDate: string | null;
@@ -147,6 +159,7 @@ export interface AllocationWarning {
 const SITE_SELECT = `
   s.id, s.project_id as "projectId", p.name as "projectName", s.name,
   s.site_location_id as "siteLocationId", l.name as "locationName",
+  s.donor_name as "donorName",
   s.planned_trees as "plannedTrees",
   s.plantation_start_date as "plantationStartDate",
   s.plantation_complete_date as "plantationCompleteDate",
@@ -187,6 +200,7 @@ export class SitesController {
           { sql: 'l.name', label: 'Location' },
           { sql: 'm.name', label: 'Manager' },
           { sql: 'v.name', label: 'Supervisor' },
+          { sql: 's.donor_name', label: 'Donor' },
         ],
         sortable: {
           name: 's.name',
@@ -265,14 +279,15 @@ export class SitesController {
     const { rows } = await this.pool
       .query(
         `insert into sites
-           (project_id, name, site_location_id, planned_trees,
+           (project_id, name, site_location_id, donor_name, planned_trees,
             plantation_start_date, plantation_complete_date,
             manager_id, supervisor_id)
-         values ($1, $2, $3, $4, $5, $6, $7, $8) returning id`,
+         values ($1, $2, $3, $4, $5, $6, $7, $8, $9) returning id`,
         [
           body.projectId ?? null,
           body.name,
           body.siteLocationId ?? null,
+          body.donorName ?? null,
           body.plannedTrees,
           body.plantationStartDate,
           body.plantationCompleteDate ?? null,
@@ -299,6 +314,7 @@ export class SitesController {
       project_id: body.projectId ?? null,
       name: body.name,
       site_location_id: body.siteLocationId ?? null,
+      donor_name: body.donorName ?? null,
       planned_trees: body.plannedTrees,
       plantation_start_date: body.plantationStartDate,
       plantation_complete_date: body.plantationCompleteDate ?? null,

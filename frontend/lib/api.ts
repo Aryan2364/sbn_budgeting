@@ -216,6 +216,8 @@ export interface Site {
   name: string
   siteLocationId: string | null
   locationName: string | null
+  /** Null where no donor has been recorded for this site. */
+  donorName: string | null
   plannedTrees: number
   plantationStartDate: string
   /**

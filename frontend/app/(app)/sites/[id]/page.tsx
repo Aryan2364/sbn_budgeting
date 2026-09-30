@@ -582,6 +582,9 @@ function SiteDetail({ params }: { params: Promise<{ id: string }> }) {
                 <DetailField label="Location">
                   {site ? (site.locationName ?? "—") : <Skeleton className="h-4 w-1/2" />}
                 </DetailField>
+                <DetailField label="Donor">
+                  {site ? (site.donorName ?? "—") : <Skeleton className="h-4 w-1/2" />}
+                </DetailField>
                 <DetailField label="Trees">
                   {site ? formatNumber(site.plannedTrees) : <Skeleton className="h-4 w-1/2" />}
                 </DetailField>
