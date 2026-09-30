@@ -156,8 +156,20 @@ export function ExportButton<T>({
             rows,
           })
         }
-      } catch {
-        // Section 7.2 rule 3: never a raw technical error.
+      } catch (error) {
+        /**
+         * Section 7.2 rule 3 says never show the USER a raw technical
+         * error. It does not say throw it away. This block used to be a
+         * bare `catch {}`, which discarded the only evidence of what
+         * failed: a client reported "The PDF could not be generated"
+         * from production and there was nothing to go on — not in the
+         * toast, not in the console, not in the server logs, because
+         * the export runs in the browser. Two days went into guessing.
+         *
+         * The user still gets the plain sentence. The console gets the
+         * real error, which is where someone debugging it will look.
+         */
+        console.error(`[export] ${format} generation failed`, error)
         toast.error(
           format === "pdf"
             ? "The PDF could not be generated. Try again."
