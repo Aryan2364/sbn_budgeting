@@ -7,11 +7,10 @@ import { ArrayMaxSize, IsArray } from 'class-validator';
 import type { Pool, PoolClient } from 'pg';
 
 import { ModuleRole } from '../common/module-access.decorator';
-import { assertOneEach, oneEachMessage, ONE_EACH_KEYS } from '../common/one-each';
 import { phoneDigits } from '../common/phone';
 import { PG_POOL } from '../db/db.module';
 import { formatPhone } from './users.controller';
-import { assertNoCycle, replaceLocations } from './user-writes';
+import { assertNoCycle } from './user-writes';
 
 type Db = Pool | PoolClient;
 
@@ -39,7 +38,6 @@ export interface PreviewRow {
 
 export interface PreviewResult {
   rows: PreviewRow[];
-  newLocations: string[];
   summary: Record<Status, number>;
 }
 
@@ -52,7 +50,6 @@ interface DbUser {
   reportsTo: string | null;
   canLogin: boolean;
   passwordHash: string | null;
-  locationIds: string[];
 }
 
 /** What one row will write, once it has passed. */
@@ -65,9 +62,6 @@ interface Plan {
   phone: string;
   email: string | null;
   designationId: string | null;
-  /** Lower-cased location names; new ones do not have an id yet. */
-  locationKeys: string[];
-  locationsChanged: boolean;
   reportsToPhone: string | null;
   reportsToKey: string | null;
   canLogin: boolean;
@@ -85,8 +79,11 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
  * never by name: two people called Ramesh Patel are two people.
  *
  * A blank cell means "leave as it is" for someone who already exists,
- * so re-importing a partial sheet cannot wipe designations or
- * locations. Re-committing the same file reports every row unchanged.
+ * so re-importing a partial sheet cannot wipe designations. Re-committing
+ * the same file reports every row unchanged.
+ *
+ * People have no locations any more (removed 1 Oct 2026): a `locations`
+ * value in a row, from an old template, is ignored without comment.
  */
 @Controller('users/import')
 export class UsersImportController {
@@ -109,7 +106,7 @@ export class UsersImportController {
     const client = await this.pool.connect();
     try {
       await client.query('begin');
-      // One import at a time, so two admins cannot both create "Vesu".
+      // One import at a time, so two admins cannot both create one person.
       await client.query(`select pg_advisory_xact_lock(hashtext('users-import'))`);
 
       const { result, plans } = await analyse(client, body.rows);
@@ -121,24 +118,13 @@ export class UsersImportController {
         );
       }
 
-      // Missing locations first, so every row can point at one.
-      for (const name of result.newLocations) {
-        await client.query('insert into locations (name) values ($1) on conflict (name) do nothing', [
-          name,
-        ]);
-      }
-      const { rows: locRows } = await client.query<{ id: string; name: string }>(
-        'select id, name from locations',
-      );
-      const locationId = new Map(locRows.map((l) => [l.name.trim().toLowerCase(), l.id]));
-
       const idByKey = new Map<string, string>();
       const touched: Plan[] = [];
       let created = 0;
       let updated = 0;
       let unchanged = 0;
 
-      // Pass 1: the people and their locations.
+      // Pass 1: the people.
       for (const plan of plans) {
         if (plan.status === 'unchanged') {
           unchanged += 1;
@@ -172,10 +158,6 @@ export class UsersImportController {
           updated += 1;
         }
         idByKey.set(plan.key, id);
-        if (plan.status === 'new' || plan.locationsChanged) {
-          const ids = plan.locationKeys.map((k) => locationId.get(k)!);
-          await replaceLocations(client, id, ids);
-        }
         touched.push(plan);
       }
 
@@ -188,7 +170,7 @@ export class UsersImportController {
         await client.query('update users set reports_to = $2 where id = $1', [id, managerId]);
       }
 
-      // Backstops: the analysis already refused both, but the database
+      // Backstop: the analysis already refused loops, but the database
       // state is what counts.
       for (const plan of touched) {
         const id = idByKey.get(plan.key)!;
@@ -198,10 +180,6 @@ export class UsersImportController {
         );
         await assertNoCycle(client, id, rows[0]?.reports_to ?? null);
       }
-      await assertOneEach(
-        client,
-        touched.map((p) => idByKey.get(p.key)!),
-      );
 
       await client.query('commit');
       return { created, updated, unchanged };
@@ -223,16 +201,11 @@ async function analyse(
   const { rows: users } = await db.query<DbUser>(
     `select u.id, u.name, u.email, u.phone, u.designation_id as "designationId",
             u.reports_to as "reportsTo", u.can_login as "canLogin",
-            u.password_hash as "passwordHash",
-            array(select ul.location_id::text from user_locations ul
-                  where ul.user_id = u.id) as "locationIds"
+            u.password_hash as "passwordHash"
      from users u`,
   );
-  const { rows: designations } = await db.query<{
-    id: string; name: string; seedKey: string | null;
-  }>('select id, name, seed_key as "seedKey" from designations');
-  const { rows: locations } = await db.query<{ id: string; name: string }>(
-    'select id, name from locations',
+  const { rows: designations } = await db.query<{ id: string; name: string }>(
+    'select id, name from designations',
   );
 
   const userByPhone = new Map<string, DbUser>();
@@ -244,12 +217,6 @@ async function analyse(
   }
   const designationByName = new Map(designations.map((d) => [d.name.trim().toLowerCase(), d]));
   const designationById = new Map(designations.map((d) => [d.id, d]));
-  const locationByKey = new Map(locations.map((l) => [l.name.trim().toLowerCase(), l]));
-  const locationKeyById = new Map(locations.map((l) => [l.id, l.name.trim().toLowerCase()]));
-
-  const newLocations = new Map<string, string>(); // key -> spelling from the file
-  const locationLabel = (key: string): string =>
-    locationByKey.get(key)?.name ?? newLocations.get(key) ?? key;
 
   const plans: Plan[] = [];
   const messages: string[][] = [];
@@ -320,23 +287,6 @@ async function analyse(
       }
     }
 
-    // Locations: blank keeps an existing person's; unknown names are created.
-    const listed = list(row.locations);
-    const currentKeys = (matched?.locationIds ?? [])
-      .map((id) => locationKeyById.get(id))
-      .filter((k): k is string => Boolean(k));
-    let locationKeys = currentKeys;
-    if (listed.length > 0) {
-      locationKeys = [];
-      for (const label of listed) {
-        const k = label.toLowerCase();
-        if (locationKeys.includes(k)) continue;
-        locationKeys.push(k);
-        if (!locationByKey.has(k) && !newLocations.has(k)) newLocations.set(k, label);
-      }
-    }
-    const locationsChanged = !sameSet(locationKeys, currentKeys);
-
     const reportsRaw = text(row.reportsToPhone);
     const reportsToPhone = reportsRaw ? phoneDigits(reportsRaw) : null;
     if (reportsRaw && (!reportsToPhone || reportsToPhone.length < 10)) {
@@ -374,8 +324,6 @@ async function analyse(
       phone: phone ?? '',
       email: email ?? matched?.email ?? null,
       designationId,
-      locationKeys,
-      locationsChanged,
       reportsToPhone,
       reportsToKey: null,
       canLogin,
@@ -416,26 +364,9 @@ async function analyse(
 
   // The state after the import: everyone in the database, with the
   // file's rows laid over them.
-  interface State {
-    designationId: string | null;
-    locationKeys: string[];
-    reportsTo: string | null;
-  }
-  const state = new Map<string, State>();
-  for (const u of users) {
-    state.set(u.id, {
-      designationId: u.designationId,
-      locationKeys: u.locationIds.map((id) => locationKeyById.get(id)!).filter(Boolean),
-      reportsTo: u.reportsTo,
-    });
-  }
-  for (const plan of plans) {
-    state.set(plan.key, {
-      designationId: plan.designationId,
-      locationKeys: plan.locationKeys,
-      reportsTo: plan.reportsToKey,
-    });
-  }
+  const state = new Map<string, { reportsTo: string | null }>();
+  for (const u of users) state.set(u.id, { reportsTo: u.reportsTo });
+  for (const plan of plans) state.set(plan.key, { reportsTo: plan.reportsToKey });
 
   // Reporting loops.
   for (const [i, plan] of plans.entries()) {
@@ -454,39 +385,11 @@ async function analyse(
     }
   }
 
-  // One supervisor and one manager per location.
-  const planIndexByKey = new Map(plans.map((p, i) => [p.key, i]));
-  for (const seedKey of ONE_EACH_KEYS) {
-    const designation = designations.find((d) => d.seedKey === seedKey);
-    if (!designation) continue;
-    const holders = new Map<string, string[]>();
-    for (const [k, s] of state) {
-      if (s.designationId !== designation.id) continue;
-      for (const loc of s.locationKeys) holders.set(loc, [...(holders.get(loc) ?? []), k]);
-    }
-    for (const [loc, keys] of holders) {
-      if (keys.length < 2) continue;
-      for (const k of keys) {
-        const i = planIndexByKey.get(k);
-        if (i === undefined) continue;
-        // Name someone already in the database first: that is who the
-        // admin has to move.
-        const other =
-          keys.find((o) => o !== k && !planIndexByKey.has(o)) ?? keys.find((o) => o !== k)!;
-        messages[i]!.push(
-          oneEachMessage(locationLabel(loc), designation.name, nameByKey.get(other) ?? '?'),
-        );
-      }
-    }
-  }
-
   // ---- pass 3: status and the changes to show ---------------------
   const summary: Record<Status, number> = { new: 0, update: 0, unchanged: 0, error: 0 };
   const rows: PreviewRow[] = [];
   const designationName = (id: string | null): string | null =>
     id ? (designationById.get(id)?.name ?? null) : null;
-  const locationsLabel = (keys: string[]): string | null =>
-    keys.length ? keys.map(locationLabel).sort((a, b) => a.localeCompare(b)).join(', ') : null;
   const personName = (k: string | null): string | null => (k ? (nameByKey.get(k) ?? null) : null);
 
   for (const [i, plan] of plans.entries()) {
@@ -504,11 +407,6 @@ async function analyse(
       changes.push({ field: 'email', from: m?.email ?? null, to: plan.email });
     }
     diff('designation', designationName(m?.designationId ?? null), designationName(plan.designationId));
-    diff(
-      'locations',
-      locationsLabel(m ? m.locationIds.map((id) => locationKeyById.get(id)!).filter(Boolean) : []),
-      locationsLabel(plan.locationKeys),
-    );
     diff('reportsTo', personName(m?.reportsTo ?? null), personName(plan.reportsToKey));
     if (!m || m.canLogin !== plan.canLogin) {
       diff('canLogin', m ? String(m.canLogin) : null, String(plan.canLogin));
@@ -534,11 +432,7 @@ async function analyse(
   }
 
   return {
-    result: {
-      rows,
-      newLocations: [...newLocations.values()].sort((a, b) => a.localeCompare(b)),
-      summary,
-    },
+    result: { rows, summary },
     plans,
   };
 }
@@ -550,12 +444,6 @@ function text(value: unknown): string {
   throw new BadRequestException('Each cell must be text, a number or yes/no.');
 }
 
-/** A list cell: an array, or "Vesu, Adajan" in one cell. */
-function list(value: unknown): string[] {
-  const parts = Array.isArray(value) ? value.map(text) : text(value).split(/[,;\n]/);
-  return parts.map((p) => p.trim()).filter(Boolean);
-}
-
 function bool(value: unknown): boolean | undefined | 'invalid' {
   if (value === null || value === undefined || value === '') return undefined;
   if (typeof value === 'boolean') return value;
@@ -563,8 +451,4 @@ function bool(value: unknown): boolean | undefined | 'invalid' {
   if (['yes', 'y', 'true', '1'].includes(v)) return true;
   if (['no', 'n', 'false', '0'].includes(v)) return false;
   return 'invalid';
-}
-
-function sameSet(a: string[], b: string[]): boolean {
-  return a.length === b.length && a.every((x) => b.includes(x));
 }

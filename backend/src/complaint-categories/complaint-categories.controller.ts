@@ -2,9 +2,8 @@ import {
   Body, ConflictException, Controller, Delete, Get, HttpCode, Inject, Param, ParseUUIDPipe,
   Patch, Post, Query, UnprocessableEntityException,
 } from '@nestjs/common';
-import { Transform } from 'class-transformer';
 import {
-  IsBoolean, IsInt, IsOptional, IsString, IsUUID, Min, MinLength, ValidateIf,
+  IsBoolean, IsOptional, IsString, IsUUID, MinLength, ValidateIf,
 } from 'class-validator';
 import type { Pool, PoolClient } from 'pg';
 
@@ -21,11 +20,9 @@ export class ComplaintCategoryDto {
   @MinLength(1, { message: 'Enter the category name' })
   name!: string;
 
-  @IsOptional()
-  @Transform(({ value }) => (value === undefined || value === null ? value : Number(value)))
-  @IsInt()
-  @Min(0)
-  sortOrder?: number;
+  // No sortOrder: the list is in name order and nobody sets a position
+  // (kit section 40 was withdrawn on 1 Oct 2026: there is no ordering
+  // concept). One sent anyway is stripped by the whitelist and ignored.
 
   @IsOptional()
   @IsBoolean()
@@ -44,6 +41,7 @@ export class ComplaintCategoryDto {
 export interface ComplaintCategoryRow {
   id: string;
   name: string;
+  /** Internal and never shown or set by anyone; kept so the row shape is unchanged. */
   sortOrder: number;
   isActive: boolean;
   requiresApproval: boolean;
@@ -92,13 +90,12 @@ export class ComplaintCategoriesController {
         // "which categories go to the CEO?".
         searchFields: [{ sql: 'ad.name', label: 'Approver' }],
         sortable: {
-          sortOrder: 'cc.sort_order',
           name: 'cc.name',
           isActive: 'cc.is_active',
           requiresApproval: 'cc.requires_approval',
           complaintCount: 'u.complaint_count',
         },
-        defaultSort: { key: 'sortOrder', direction: 'asc' },
+        defaultSort: { key: 'name', direction: 'asc' },
         filters: {
           isActive: (value, param) => `cc.is_active = ${param(value === 'true')}`,
         },
@@ -126,11 +123,10 @@ export class ComplaintCategoriesController {
       const { rows } = await this.pool.query<{ id: string }>(
         `insert into complaint_categories
            (name, sort_order, is_active, requires_approval, approver_designation_id)
-         values ($1,
-                 coalesce($2, (select coalesce(max(sort_order), 0) + 10 from complaint_categories)),
-                 coalesce($3, true), $4, $5)
+         values ($1, (select coalesce(max(sort_order), 0) + 1 from complaint_categories),
+                 coalesce($2, true), $3, $4)
          returning id`,
-        [body.name.trim(), body.sortOrder ?? null, body.isActive ?? null, body.requiresApproval, approverId],
+        [body.name.trim(), body.isActive ?? null, body.requiresApproval, approverId],
       );
       return rows[0]!.id;
     });
@@ -156,13 +152,12 @@ export class ComplaintCategoriesController {
         this.pool,
         `update complaint_categories
          set name = $1,
-             sort_order = coalesce($2, sort_order),
-             is_active = coalesce($3, is_active),
-             requires_approval = $4,
-             approver_designation_id = case when $5::boolean then $6::uuid else approver_designation_id end
-         where id = $7 returning id`,
+             is_active = coalesce($2, is_active),
+             requires_approval = $3,
+             approver_designation_id = case when $4::boolean then $5::uuid else approver_designation_id end
+         where id = $6 returning id`,
         [
-          body.name.trim(), body.sortOrder ?? null, body.isActive ?? null, body.requiresApproval,
+          body.name.trim(), body.isActive ?? null, body.requiresApproval,
           approverId !== undefined, approverId ?? null, id,
         ],
         'complaint category',

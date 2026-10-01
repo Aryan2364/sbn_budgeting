@@ -1,8 +1,8 @@
 import {
   Body, ConflictException, Controller, Delete, Get, HttpCode, Inject,
-  Param, ParseUUIDPipe, Patch, Post, Put, Query, UnprocessableEntityException,
+  Param, ParseUUIDPipe, Patch, Post, Query,
 } from '@nestjs/common';
-import { IsBoolean, IsOptional, IsString, IsUUID, MinLength, ValidateIf } from 'class-validator';
+import { IsBoolean, IsOptional, IsString, MinLength } from 'class-validator';
 import type { Pool } from 'pg';
 
 import {
@@ -11,7 +11,6 @@ import {
 import { ListQueryDto } from '../common/list-query.dto';
 import { runListQuery, type ListResult, type MatchInfo } from '../common/list-query';
 import { ModuleRole } from '../common/module-access.decorator';
-import { assertOneEach, lockLocations } from '../common/one-each';
 import { PG_POOL } from '../db/db.module';
 
 export class LocationDto {
@@ -24,52 +23,28 @@ export class LocationDto {
   isActive?: boolean;
 }
 
-export class AssignmentsDto {
-  /** null removes the supervisor; leaving the key out leaves it alone. */
-  @IsOptional()
-  @ValidateIf((_o, v) => v !== null)
-  @IsUUID('all', { message: 'Choose a supervisor from the list' })
-  supervisorId?: string | null;
-
-  @IsOptional()
-  @ValidateIf((_o, v) => v !== null)
-  @IsUUID('all', { message: 'Choose a manager from the list' })
-  managerId?: string | null;
-}
-
-interface Person {
-  id: string;
-  name: string;
-}
-
 export interface LocationRow {
   id: string;
   name: string;
   isActive: boolean;
   siteCount: number;
-  userCount: number;
   complaintCount: number;
-  supervisor: Person | null;
-  manager: Person | null;
 }
-
-/** The person at a location who holds the designation with this seed key. */
-const holder = (seedKey: 'supervisor' | 'manager'): string => `
-  (select json_build_object('id', u.id, 'name', u.name)
-   from user_locations ul
-   join users u on u.id = ul.user_id
-   join designations d on d.id = u.designation_id
-   where ul.location_id = l.id and d.seed_key = '${seedKey}'
-   order by u.name limit 1)`;
 
 /**
  * The Locations master (plan 3.1a), shared by every module: budget
- * links a site to one, complaints files every complaint against one.
+ * links a site to one. Complaints raised before 1 Oct 2026 were filed
+ * against a location; newer ones name a site (CONTRACT section 10).
  * Served at /locations and at /site-locations, the old path, so the
  * budget screens keep working through the rename.
  *
  * Readable by anyone signed in (pickers need it); writes are platform
  * admin only.
+ *
+ * A location has no people (removed 1 Oct 2026, user decision): routing
+ * is per site (sites.supervisor_id / manager_id), so the old supervisor,
+ * manager and userCount fields and PUT :id/assignments are gone. The
+ * user_locations table is left in place but nothing reads or writes it.
  */
 @Controller(['locations', 'site-locations'])
 export class LocationsController {
@@ -80,16 +55,17 @@ export class LocationsController {
     left join lateral (
       select
         (select count(*)::int from sites s where s.location_id = l.id) as site_count,
-        (select count(*)::int from user_locations ul where ul.location_id = l.id) as user_count,
-        (select count(*)::int from complaints c where c.location_id = l.id) as complaint_count
+        -- Older complaints name the location; since 1 Oct 2026 they name
+        -- a site, which counts here through the site's location (0011).
+        (select count(*)::int from complaints c
+          where c.location_id = l.id
+             or c.site_id in (select s2.id from sites s2 where s2.location_id = l.id))
+          as complaint_count
     ) a on true`;
 
   private static readonly SELECT = `
     l.id, l.name, l.is_active as "isActive",
-    a.site_count as "siteCount", a.user_count as "userCount",
-    a.complaint_count as "complaintCount",
-    ${holder('supervisor')} as supervisor,
-    ${holder('manager')} as manager`;
+    a.site_count as "siteCount", a.complaint_count as "complaintCount"`;
 
   @Get()
   list(
@@ -102,16 +78,9 @@ export class LocationsController {
         from: LocationsController.FROM,
         select: LocationsController.SELECT,
         titleField: { sql: 'l.name', label: 'Location' },
-        // The supervisor and manager are searched too: "who covers Vesu"
-        // and "where is Ramesh" are the same question asked both ways.
-        searchFields: [
-          { sql: `(${holder('supervisor')} ->> 'name')`, label: 'Supervisor' },
-          { sql: `(${holder('manager')} ->> 'name')`, label: 'Manager' },
-        ],
         sortable: {
           name: 'l.name',
           siteCount: 'a.site_count',
-          userCount: 'a.user_count',
           complaintCount: 'a.complaint_count',
         },
         defaultSort: { key: 'name', direction: 'asc' },
@@ -170,82 +139,6 @@ export class LocationsController {
     return this.get(id);
   }
 
-  /**
-   * Sets who supervises and manages this location (plan 3.3: the same
-   * table is the access scope and the routing map). The previous
-   * holder loses THIS location only; their other locations are theirs.
-   */
-  @Put(':id/assignments')
-  @ModuleRole('platform', 'admin')
-  async assign(
-    @Param('id', new ParseUUIDPipe()) id: string,
-    @Body() body: AssignmentsDto,
-  ): Promise<LocationRow> {
-    await this.get(id);
-    const client = await this.pool.connect();
-    try {
-      await client.query('begin');
-      await lockLocations(client, [id]);
-
-      const touched: string[] = [];
-      for (const [seedKey, personId] of [
-        ['supervisor', body.supervisorId],
-        ['manager', body.managerId],
-      ] as const) {
-        if (personId === undefined) continue;
-
-        if (personId !== null) {
-          const { rows } = await client.query<{ name: string; seedKey: string | null }>(
-            `select u.name, d.seed_key as "seedKey"
-             from users u left join designations d on d.id = u.designation_id
-             where u.id = $1`,
-            [personId],
-          );
-          const person = rows[0];
-          if (!person) {
-            throw new UnprocessableEntityException(
-              `The chosen ${seedKey} no longer exists. Refresh and choose again.`,
-            );
-          }
-          if (person.seedKey !== seedKey) {
-            const label = seedKey === 'supervisor' ? 'Supervisor' : 'Manager';
-            throw new UnprocessableEntityException(
-              `${person.name} is not a ${label}. Set their designation to ${label} in ` +
-                `Settings → People first, or choose someone who is.`,
-            );
-          }
-        }
-
-        // Remove whoever held this role here, unless it is the same person.
-        await client.query(
-          `delete from user_locations ul
-           using users u, designations d
-           where ul.location_id = $1 and u.id = ul.user_id
-             and d.id = u.designation_id and d.seed_key = $2
-             and ($3::uuid is null or ul.user_id <> $3::uuid)`,
-          [id, seedKey, personId],
-        );
-        if (personId !== null) {
-          await client.query(
-            `insert into user_locations (user_id, location_id) values ($1, $2)
-             on conflict do nothing`,
-            [personId, id],
-          );
-          touched.push(personId);
-        }
-      }
-
-      await assertOneEach(client, touched);
-      await client.query('commit');
-    } catch (error) {
-      await client.query('rollback');
-      throw error;
-    } finally {
-      client.release();
-    }
-    return this.get(id);
-  }
-
   @Delete(':id')
   @ModuleRole('platform', 'admin')
   @HttpCode(204)
@@ -253,7 +146,6 @@ export class LocationsController {
     const row = await this.get(id);
     const uses: string[] = [];
     if (row.siteCount > 0) uses.push(plural(row.siteCount, 'site', 'sites'));
-    if (row.userCount > 0) uses.push(plural(row.userCount, 'person', 'people'));
     if (row.complaintCount > 0) uses.push(plural(row.complaintCount, 'complaint', 'complaints'));
     if (uses.length > 0) {
       throw new ConflictException(

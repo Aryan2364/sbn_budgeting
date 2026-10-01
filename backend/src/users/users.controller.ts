@@ -6,7 +6,7 @@ import {
 import { hash } from 'bcryptjs';
 import { Transform } from 'class-transformer';
 import {
-  IsArray, IsBoolean, IsEmail, IsIn, IsObject, IsOptional, IsString, IsUUID, MinLength,
+  IsBoolean, IsEmail, IsIn, IsObject, IsOptional, IsString, IsUUID, MinLength,
 } from 'class-validator';
 import type { Pool, PoolClient } from 'pg';
 
@@ -17,12 +17,9 @@ import { CurrentUser, type AuthModules, type AuthUser } from '../common/current-
 import { ListQueryDto } from '../common/list-query.dto';
 import { runListQuery, type ListResult, type MatchInfo } from '../common/list-query';
 import { ModuleRole, type ModuleName } from '../common/module-access.decorator';
-import { assertOneEach } from '../common/one-each';
 import { normalisePhone, PHONE_SQL } from '../common/phone';
 import { PG_POOL } from '../db/db.module';
-import {
-  applyModules, assertNoCycle, MODULE_ROLES, type ModulesPatch, replaceLocations,
-} from './user-writes';
+import { applyModules, assertNoCycle, MODULE_ROLES, type ModulesPatch } from './user-writes';
 
 const blankToNull = ({ value }: { value: unknown }): unknown =>
   typeof value === 'string' && value.trim() === '' ? null : value;
@@ -31,6 +28,10 @@ const blankToNull = ({ value }: { value: unknown }): unknown =>
  * CONTRACT section 2. POST needs `name` and `canLogin`; on PATCH every
  * key is optional and a key that is left out is left alone. `null`
  * clears a field; in `modules`, `null` removes that module.
+ *
+ * People have no locations any more (removed 1 Oct 2026, user decision):
+ * a `locationIds` key from a cached frontend is stripped by the global
+ * whitelist pipe and has no effect.
  */
 export class UserDto {
   @IsOptional()
@@ -57,11 +58,6 @@ export class UserDto {
   @Transform(blankToNull)
   @IsUUID('all', { message: 'Choose who they report to from the list' })
   reportsToId?: string | null;
-
-  @IsOptional()
-  @IsArray()
-  @IsUUID('all', { each: true, message: 'Choose locations from the list' })
-  locationIds?: string[];
 
   @IsOptional()
   @IsObject()
@@ -100,7 +96,6 @@ export interface UserRow {
   canLogin: boolean;
   designation: Person | null;
   reportsTo: Person | null;
-  locations: Person[];
   modules: AuthModules;
   /**
    * What points at this person. `remove` refuses while any is above
@@ -129,13 +124,6 @@ const FROM = `
         as open_complaint_count
   ) c on true
   left join lateral (
-    select coalesce(json_agg(json_build_object('id', l.id, 'name', l.name) order by l.name),
-                    '[]'::json) as locations,
-           string_agg(l.name, ', ' order by l.name) as location_names
-    from user_locations ul join locations l on l.id = ul.location_id
-    where ul.user_id = u.id
-  ) loc on true
-  left join lateral (
     select coalesce(json_object_agg(m.module, m.role), '{}'::json) as modules
     from user_module_access m where m.user_id = u.id
   ) mods on true`;
@@ -146,7 +134,7 @@ const SELECT = `
     as designation,
   case when r.id is null then null else json_build_object('id', r.id, 'name', r.name) end
     as "reportsTo",
-  loc.locations, mods.modules,
+  mods.modules,
   c.site_count as "siteCount", c.expense_count as "expenseCount",
   c.open_complaint_count as "openComplaintCount"`;
 
@@ -172,7 +160,6 @@ export class UsersController {
   list(
     @Query() query: ListQueryDto,
     @Query('designationId') designationId?: string,
-    @Query('locationId') locationId?: string,
     @Query('module') module?: string,
     @Query('canLogin') canLogin?: string,
     @Query('role') role?: string,
@@ -190,13 +177,14 @@ export class UsersController {
           { sql: 'u.phone', label: 'Phone' },
           { sql: 'd.name', label: 'Designation' },
           { sql: 'r.name', label: 'Reports to' },
-          { sql: 'loc.location_names', label: 'Locations' },
         ],
         sortable: {
           name: 'u.name',
           email: 'u.email',
           phone: 'u.phone',
-          designation: 'd.sort_order',
+          // By the designation's name: designations have no order of
+          // their own that anyone sets or sees.
+          designation: 'd.name',
           reportsTo: 'r.name',
           createdAt: 'u.created_at',
           role: BUDGET_ROLE_SQL,
@@ -208,9 +196,6 @@ export class UsersController {
             value === 'none'
               ? 'u.designation_id is null'
               : `u.designation_id = ${param(uuidOr400(value, 'designationId'))}`,
-          locationId: (value, param) =>
-            `exists (select 1 from user_locations f
-                     where f.user_id = u.id and f.location_id = ${param(uuidOr400(value, 'locationId'))})`,
           // `budget` = any budget role; `budget:admin` = that role only.
           module: (value, param) => {
             const [mod, modRole] = value.split(':');
@@ -228,7 +213,7 @@ export class UsersController {
           role: (value, param) => `${BUDGET_ROLE_SQL} = ${param(value)}`,
         },
       },
-      { ...query, filters: { designationId, locationId, module, canLogin, role } },
+      { ...query, filters: { designationId, module, canLogin, role } },
     );
   }
 
@@ -268,8 +253,6 @@ export class UsersController {
       );
       const newId = rows[0]!.id;
       await applyModules(client, newId, modules);
-      if (body.locationIds) await replaceLocations(client, newId, dedupe(body.locationIds));
-      await assertOneEach(client, [newId]);
       return newId;
     });
     return this.get(id);
@@ -331,8 +314,6 @@ export class UsersController {
          canLogin, passwordHash],
       );
       await applyModules(client, id, modules);
-      if (body.locationIds) await replaceLocations(client, id, dedupe(body.locationIds));
-      await assertOneEach(client, [id]);
     });
     return this.get(id);
   }
@@ -411,7 +392,7 @@ export class UsersController {
     }
   }
 
-  /** The chosen designation, manager and locations exist (422 otherwise). */
+  /** The chosen designation and manager exist (422 otherwise). */
   private async assertReferences(body: UserDto): Promise<void> {
     if (body.designationId) {
       const { rowCount } = await this.pool.query('select 1 from designations where id = $1', [
@@ -430,18 +411,6 @@ export class UsersController {
       if (!rowCount) {
         throw new UnprocessableEntityException(
           'The person they report to no longer exists. Refresh and choose again.',
-        );
-      }
-    }
-    if (body.locationIds && body.locationIds.length > 0) {
-      const ids = dedupe(body.locationIds);
-      const { rows } = await this.pool.query<{ count: number }>(
-        'select count(*)::int as count from locations where id = any($1::uuid[])',
-        [ids],
-      );
-      if ((rows[0]?.count ?? 0) !== ids.length) {
-        throw new UnprocessableEntityException(
-          'One of the chosen locations no longer exists. Refresh and choose again.',
         );
       }
     }
@@ -526,8 +495,4 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 function uuidOr400(value: string, key: string): string {
   if (!UUID_RE.test(value)) throw new BadRequestException(`${key} must be an id`);
   return value;
-}
-
-function dedupe(ids: string[]): string[] {
-  return [...new Set(ids)];
 }

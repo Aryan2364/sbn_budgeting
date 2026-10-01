@@ -3,7 +3,6 @@ import type { Pool, PoolClient } from 'pg';
 
 import type { AuthModules } from '../common/current-user';
 import type { ModuleName } from '../common/module-access.decorator';
-import { lockLocations } from '../common/one-each';
 
 type Db = Pool | PoolClient;
 
@@ -41,35 +40,6 @@ export async function applyModules(
         [userId, module, role],
       );
     }
-  }
-}
-
-/**
- * Replaces the person's locations with exactly `locationIds`. Locks
- * the old and the new locations first so two admins assigning the same
- * place cannot both pass the one-each check.
- */
-export async function replaceLocations(
-  db: PoolClient,
-  userId: string,
-  locationIds: string[],
-): Promise<void> {
-  const { rows } = await db.query<{ location_id: string }>(
-    'select location_id from user_locations where user_id = $1',
-    [userId],
-  );
-  const before = rows.map((r) => r.location_id);
-  await lockLocations(db, [...new Set([...before, ...locationIds])]);
-  await db.query(
-    'delete from user_locations where user_id = $1 and not (location_id = any($2::uuid[]))',
-    [userId, locationIds],
-  );
-  if (locationIds.length > 0) {
-    await db.query(
-      `insert into user_locations (user_id, location_id)
-       select $1, unnest($2::uuid[]) on conflict do nothing`,
-      [userId, locationIds],
-    );
   }
 }
 

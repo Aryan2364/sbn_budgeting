@@ -2,7 +2,7 @@ import {
   Body, ConflictException, Controller, Delete, Get, HttpCode, Inject,
   Param, ParseUUIDPipe, Patch, Post, Query,
 } from '@nestjs/common';
-import { IsBoolean, IsInt, IsOptional, IsString, MinLength } from 'class-validator';
+import { IsBoolean, IsOptional, IsString, MinLength } from 'class-validator';
 import type { Pool } from 'pg';
 
 import {
@@ -18,9 +18,9 @@ export class DesignationDto {
   @MinLength(1, { message: 'Enter the designation name' })
   name!: string;
 
-  @IsOptional()
-  @IsInt({ message: 'Sort order is a whole number' })
-  sortOrder?: number;
+  // No sortOrder: the list is in name order and nobody sets a position
+  // (kit section 40 was withdrawn on 1 Oct 2026: there is no ordering
+  // concept). One sent anyway is stripped by the whitelist and ignored.
 
   @IsOptional()
   @IsBoolean()
@@ -31,6 +31,7 @@ export interface DesignationRow {
   id: string;
   name: string;
   seedKey: string | null;
+  /** Internal and never shown or set by anyone; kept so the row shape is unchanged. */
   sortOrder: number;
   isActive: boolean;
   userCount: number;
@@ -73,11 +74,10 @@ export class DesignationsController {
         // types; name is the only meaningful text on the row.
         searchFields: [],
         sortable: {
-          sortOrder: 'd.sort_order',
           name: 'd.name',
           userCount: 'c.user_count',
         },
-        defaultSort: { key: 'sortOrder', direction: 'asc' },
+        defaultSort: { key: 'name', direction: 'asc' },
         filters: {
           isActive: (value, param) => `d.is_active = ${param(value === 'true')}`,
         },
@@ -104,11 +104,10 @@ export class DesignationsController {
     try {
       const { rows } = await this.pool.query(
         `insert into designations (name, sort_order, is_active)
-         values ($1,
-                 coalesce($2, (select coalesce(max(sort_order), 0) + 10 from designations)),
-                 coalesce($3, true))
+         values ($1, (select coalesce(max(sort_order), 0) + 1 from designations),
+                 coalesce($2, true))
          returning id`,
-        [body.name.trim(), body.sortOrder ?? null, body.isActive ?? null],
+        [body.name.trim(), body.isActive ?? null],
       );
       return this.get(rows[0].id);
     } catch (error) {
@@ -125,7 +124,6 @@ export class DesignationsController {
     await this.assertNameFree(body.name, id);
     const { clause, values } = buildUpdate({
       name: body.name.trim(),
-      sort_order: body.sortOrder,
       is_active: body.isActive,
     });
     try {

@@ -2,8 +2,7 @@ import {
   Body, ConflictException, Controller, Delete, Get, HttpCode, Inject,
   Param, ParseUUIDPipe, Patch, Post, Query,
 } from '@nestjs/common';
-import { Transform } from 'class-transformer';
-import { IsBoolean, IsInt, IsOptional, IsString, Min, MinLength } from 'class-validator';
+import { IsBoolean, IsOptional, IsString, MinLength } from 'class-validator';
 import type { Pool } from 'pg';
 
 import {
@@ -16,11 +15,10 @@ export class CostHeadDto {
   @MinLength(1, { message: 'Enter the cost head name' })
   name!: string;
 
-  @IsOptional()
-  @Transform(({ value }) => (value === undefined ? undefined : Number(value)))
-  @IsInt()
-  @Min(1)
-  sortOrder?: number;
+  // No sortOrder. The heads keep the spreadsheet's fixed order (the
+  // seed sets it; the budget grid, expense form and variance report list
+  // by it), a new head goes after the last, and nobody sets a position.
+  // One sent anyway is stripped by the whitelist and ignored.
 
   @IsOptional()
   @IsBoolean()
@@ -138,10 +136,9 @@ export class CostHeadsController {
         this.pool,
         `update cost_heads
          set name = $1,
-             sort_order = coalesce($2, sort_order),
-             is_active = coalesce($3, is_active)
-         where id = $4 returning id`,
-        [body.name, body.sortOrder ?? null, body.isActive ?? null, id],
+             is_active = coalesce($2, is_active)
+         where id = $3 returning id`,
+        [body.name, body.isActive ?? null, id],
         'cost head',
       );
     } catch (error) {
@@ -159,9 +156,9 @@ export class CostHeadsController {
     try {
       const { rows } = await this.pool.query(
         `insert into cost_heads (name, sort_order)
-         values ($1, coalesce($2, (select coalesce(max(sort_order), 0) + 1 from cost_heads)))
+         values ($1, (select coalesce(max(sort_order), 0) + 1 from cost_heads))
          returning id`,
-        [body.name, body.sortOrder ?? null],
+        [body.name],
       );
       return this.get(rows[0].id);
     } catch (error) {
