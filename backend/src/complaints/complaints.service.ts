@@ -1,4 +1,4 @@
-import type { ReadStream } from 'node:fs';
+import type { Readable } from 'node:stream';
 
 import {
   BadRequestException, ConflictException, ForbiddenException, Inject, Injectable,
@@ -17,10 +17,10 @@ import {
   type PermissionSubject, type PersonRef, type Viewer,
 } from './permissions';
 import {
-  checkPhotos, MAX_PHOTOS, openStored, removeStored, storedSize, storePhotos, type StoredPhoto,
-  type UploadedPhoto,
+  checkPhotos, MAX_PHOTOS, openStored, type PhotoPlace, type PhotoStage, removeStored,
+  storePhotos, type StoredPhoto, type UploadedPhoto,
 } from './photo-storage';
-import { resolveRouting } from './routing';
+import { noSupervisorReason, resolveRouting } from './routing';
 
 // ---------------------------------------------------------------------
 // Shapes (CONTRACT section 3)
@@ -32,7 +32,14 @@ export interface ComplaintRow {
   reference: string;
   status: ComplaintStatus;
   category: PersonRef;
-  location: PersonRef;
+  /**
+   * The budget site it was filed against (CONTRACT section 10). Null
+   * only on complaints raised before 1 Oct 2026, which were filed
+   * against a location.
+   */
+  site: PersonRef | null;
+  /** The complaint's own location (older rows), else the site's, else null. */
+  location: PersonRef | null;
   description: string;
   complainantName: string;
   raisedAt: string;
@@ -71,9 +78,15 @@ export type Tab = 'assigned' | 'approval' | 'raised' | 'all';
 export const TABS: Tab[] = ['assigned', 'approval', 'raised', 'all'];
 const STATUSES: ComplaintStatus[] = ['open', 'in_progress', 'awaiting_approval', 'closed'];
 
+/** `id` is null only for the bucket of older, location-only complaints. */
+export interface SiteBucket {
+  id: string | null;
+  name: string;
+}
+
 export interface ComplaintSummary {
   byStatus: Record<ComplaintStatus, number>;
-  byLocation: Array<{ location: PersonRef; open: number; closed: number }>;
+  bySite: Array<{ site: SiteBucket; open: number; closed: number }>;
   byCategory: Array<{ category: PersonRef; open: number; closed: number }>;
   openAgeing: { d0_2: number; d3_7: number; d8_14: number; d15plus: number };
   closedLast7Days: number;
@@ -81,6 +94,25 @@ export interface ComplaintSummary {
 
 /** The row's core plus the ids the permission function reads. */
 type DetailCore = Omit<ComplaintDetail, 'photos' | 'events' | 'actions'>;
+
+/** One entry of the raise form's site picker (GET /complaints/sites). */
+export interface ComplaintSite {
+  id: string;
+  name: string;
+  location: PersonRef | null;
+  /** Who routing would pick: the site's supervisor, only if they can sign in. */
+  supervisor: PersonRef | null;
+  /** Who routing would copy: the site's manager if they can sign in, else the supervisor's reports_to. */
+  manager: PersonRef | null;
+  canReceive: boolean;
+  reason: string | null;
+}
+
+/** The picker is unpaginated, so it is capped; far above today's site count. */
+export const SITE_PICKER_LIMIT = 1000;
+
+/** The bySite bucket for complaints raised before sites (1 Oct 2026). */
+const NO_SITE_NAME = 'No site (older complaint)';
 
 // ---------------------------------------------------------------------
 // SQL fragments
@@ -91,22 +123,32 @@ const person = (alias: string): string =>
 const personOrNull = (alias: string): string =>
   `case when ${alias}.id is null then null else ${person(alias)} end`;
 
-const REFERENCE_SQL = `('C-' || lpad(c.number::text, 6, '0'))`;
+/**
+ * `C-000123`: at least six digits. lpad truncates a longer string, so
+ * the width grows with the number and C-1234567 stays whole.
+ */
+const REFERENCE_SQL = `('C-' || lpad(c.number::text, greatest(6, length(c.number::text)), '0'))`;
+/** The photo folder's year: when the complaint was raised, in India. */
+const RAISED_YEAR_SQL = `extract(year from c.raised_at at time zone 'Asia/Kolkata')::int`;
 /** Whole days since raised, or raised -> closed once closed. */
 const AGE_DAYS_SQL =
   `floor(extract(epoch from (coalesce(c.closed_at, now()) - c.raised_at)) / 86400)::int`;
 
+// The location is the complaint's own (rows raised before 1 Oct 2026)
+// or else its site's; either may be missing, hence the left joins.
 const ROW_FROM = `
   complaints c
   join complaint_categories cc on cc.id = c.category_id
-  join locations l on l.id = c.location_id
+  left join sites st on st.id = c.site_id
+  left join locations l on l.id = coalesce(c.location_id, st.location_id)
   join users rb on rb.id = c.raised_by
   join users sv on sv.id = c.supervisor_id`;
 
 const ROW_SELECT = `
   c.id, c.number::int as number, ${REFERENCE_SQL} as reference, c.status,
   json_build_object('id', cc.id, 'name', cc.name) as category,
-  json_build_object('id', l.id, 'name', l.name) as location,
+  ${personOrNull('st')} as site,
+  ${personOrNull('l')} as location,
   c.description, c.complainant_name as "complainantName",
   c.raised_at as "raisedAt", ${person('rb')} as "raisedBy", ${person('sv')} as supervisor,
   ${AGE_DAYS_SQL} as "ageDays",
@@ -198,7 +240,7 @@ export class ComplaintsService {
     user: AuthUser,
     query: ListQueryDto,
     tabRaw: string | undefined,
-    filters: { status?: string; locationId?: string; categoryId?: string },
+    filters: { status?: string; siteId?: string; locationId?: string; categoryId?: string },
   ): Promise<ListResult<ComplaintRow & MatchInfo>> {
     const tab = (tabRaw ?? 'all') as Tab;
     if (!TABS.includes(tab)) {
@@ -218,6 +260,7 @@ export class ComplaintsService {
           { sql: 'c.description', label: 'Description' },
           { sql: 'c.complainant_name', label: 'Complainant' },
           { sql: 'c.complainant_phone', label: 'Complainant phone' },
+          { sql: 'st.name', label: 'Site' },
           { sql: 'l.name', label: 'Location' },
           { sql: 'c.location_note', label: 'Location note' },
           { sql: 'cc.name', label: 'Category' },
@@ -230,6 +273,7 @@ export class ComplaintsService {
           reference: 'c.number',
           status: `array_position(array['open','in_progress','awaiting_approval','closed'], c.status)`,
           ageDays: AGE_DAYS_SQL,
+          site: 'st.name',
           location: 'l.name',
           category: 'cc.name',
           supervisor: 'sv.name',
@@ -245,7 +289,9 @@ export class ComplaintsService {
             }
             return `c.status = any(${param(list)}::text[])`;
           },
-          locationId: (value, param) => `c.location_id = ${param(uuidOr400(value, 'locationId'))}::uuid`,
+          siteId: (value, param) => `c.site_id = ${param(uuidOr400(value, 'siteId'))}::uuid`,
+          // The complaint's own location, or its site's: everything at that place.
+          locationId: (value, param) => `l.id = ${param(uuidOr400(value, 'locationId'))}::uuid`,
           categoryId: (value, param) => `c.category_id = ${param(uuidOr400(value, 'categoryId'))}::uuid`,
         },
         baseWhere: `${visibleSql(viewer)} and ${tabSql(tab, viewer)}`,
@@ -270,18 +316,21 @@ export class ComplaintsService {
 
   async summary(user: AuthUser): Promise<ComplaintSummary> {
     const visible = visibleSql(toViewer(user));
-    const [status, byLocation, byCategory, ageing] = await Promise.all([
+    const [status, bySite, byCategory, ageing] = await Promise.all([
       this.pool.query<{ status: ComplaintStatus; n: number }>(
         `select c.status, count(*)::int as n from complaints c where ${visible} group by c.status`,
       ),
-      this.pool.query<{ location: PersonRef; open: number; closed: number }>(
-        `select json_build_object('id', l.id, 'name', l.name) as location,
+      // Older, location-only complaints fall into one "No site" bucket
+      // (id null), listed last, so the buckets still add up to byStatus.
+      this.pool.query<{ site: SiteBucket; open: number; closed: number }>(
+        `select json_build_object('id', st.id, 'name', coalesce(st.name, $1::text)) as site,
                 count(*) filter (where c.status <> 'closed')::int as open,
                 count(*) filter (where c.status = 'closed')::int as closed
-         from complaints c join locations l on l.id = c.location_id
+         from complaints c left join sites st on st.id = c.site_id
          where ${visible}
-         group by l.id, l.name
-         order by open desc, l.name`,
+         group by st.id, st.name
+         order by (st.id is null), open desc, st.name`,
+        [NO_SITE_NAME],
       ),
       this.pool.query<{ category: PersonRef; open: number; closed: number }>(
         `select json_build_object('id', cc.id, 'name', cc.name) as category,
@@ -289,8 +338,8 @@ export class ComplaintsService {
                 count(*) filter (where c.status = 'closed')::int as closed
          from complaints c join complaint_categories cc on cc.id = c.category_id
          where ${visible}
-         group by cc.id, cc.name, cc.sort_order
-         order by open desc, cc.sort_order, cc.name`,
+         group by cc.id, cc.name
+         order by open desc, cc.name`,
       ),
       this.pool.query<ComplaintSummary['openAgeing'] & { closedLast7Days: number }>(
         `select
@@ -310,10 +359,38 @@ export class ComplaintsService {
     const { closedLast7Days, ...openAgeing } = ageing.rows[0]!;
     return {
       byStatus,
-      byLocation: byLocation.rows,
+      bySite: bySite.rows,
       byCategory: byCategory.rows,
       openAgeing,
       closedLast7Days,
+    };
+  }
+
+  /**
+   * The raise form's site picker. Needs complaints access only: most
+   * people who raise complaints have no budget access, and /sites does.
+   * `supervisor`/`manager` are who routing would pick today, and
+   * `reason` is the same sentence the raise 422 gives.
+   */
+  async sites(): Promise<{ data: ComplaintSite[] }> {
+    const { rows } = await this.pool.query<Omit<ComplaintSite, 'reason'>>(
+      `select s.id, s.name,
+              ${personOrNull('l')} as location,
+              case when sv.can_login then ${person('sv')} else null end as supervisor,
+              case when mg.can_login then ${person('mg')}
+                   when up.can_login then ${person('up')}
+                   else null end as manager,
+              coalesce(sv.can_login, false) as "canReceive"
+       from sites s
+       left join locations l on l.id = s.location_id
+       left join users sv on sv.id = s.supervisor_id
+       left join users mg on mg.id = s.manager_id
+       left join users up on up.id = sv.reports_to
+       order by s.name, s.id
+       limit ${SITE_PICKER_LIMIT}`,
+    );
+    return {
+      data: rows.map((r) => ({ ...r, reason: r.canReceive ? null : noSupervisorReason(r.name) })),
     };
   }
 
@@ -349,7 +426,7 @@ export class ComplaintsService {
     user: AuthUser,
     id: string,
     photoId: string,
-  ): Promise<{ stream: ReadStream; contentType: string; bytes: number }> {
+  ): Promise<{ stream: Readable; contentType: string; bytes: number | undefined }> {
     const core = await this.loadCore(this.pool, id);
     if (!core || !canSee(toViewer(user), core)) throw new NotFoundException(NOT_FOUND);
 
@@ -360,13 +437,9 @@ export class ComplaintsService {
     const row = rows[0];
     if (!row) throw new NotFoundException('That photo no longer exists. Refresh the complaint.');
 
-    const bytes = await storedSize(row.storage_key);
-    if (bytes === null) {
-      throw new NotFoundException(
-        "That photo's file is missing on the server. Ask an admin to check the uploads folder.",
-      );
-    }
-    return { stream: openStored(row.storage_key), contentType: row.content_type, bytes };
+    // 404 when the bytes are gone, 503 when the store is unreachable.
+    const { stream, bytes } = await openStored(row.storage_key);
+    return { stream, contentType: row.content_type, bytes };
   }
 
   // -------------------------------------------------------------------
@@ -389,9 +462,14 @@ export class ComplaintsService {
     let id: string;
     try {
       id = await this.inTransaction(async (client) => {
-        const location = await this.activeMaster(
-          client, 'locations', body.locationId, 'location',
+        const { rows: siteRows } = await client.query<{ id: string; name: string }>(
+          `select id, name from sites where id = $1`,
+          [body.siteId],
         );
+        const site = siteRows[0];
+        if (!site) {
+          throw new UnprocessableEntityException('That site no longer exists. Choose another one.');
+        }
         const { rows: catRows } = await client.query<{
           id: string; name: string; is_active: boolean; requires_approval: boolean;
           approver_designation_id: string | null;
@@ -411,7 +489,7 @@ export class ComplaintsService {
         }
 
         const routing = await resolveRouting(client, {
-          location,
+          site,
           category: {
             id: category.id,
             name: category.name,
@@ -420,15 +498,18 @@ export class ComplaintsService {
           },
         });
 
-        const { rows } = await client.query<{ id: string; reference: string }>(
-          `insert into complaints
-             (location_id, category_id, complainant_name, complainant_phone, location_note,
+        // The reference and year name the photo folder, so the row goes in
+        // first. If anything after this fails the transaction rolls back
+        // and the number is burned, as the sequence always allowed.
+        const { rows } = await client.query<{ id: string; reference: string; year: number }>(
+          `insert into complaints as c
+             (site_id, category_id, complainant_name, complainant_phone, location_note,
               description, requires_approval, raised_by,
               supervisor_id, manager_id, hod_id, ceo_id, approver_id)
            values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-           returning id, 'C-' || lpad(number::text, 6, '0') as reference`,
+           returning c.id, ${REFERENCE_SQL} as reference, ${RAISED_YEAR_SQL} as year`,
           [
-            location.id, category.id, body.complainantName, body.complainantPhone,
+            site.id, category.id, body.complainantName, body.complainantPhone,
             body.locationNote || null, body.description, category.requires_approval, user.id,
             routing.supervisor.id, routing.manager?.id ?? null, routing.hod?.id ?? null,
             routing.ceo?.id ?? null, routing.approver?.id ?? null,
@@ -436,15 +517,23 @@ export class ComplaintsService {
         );
         const created = rows[0]!;
 
-        stored = await storePhotos(photos);
+        // A new complaint has no photos yet, and its number is never
+        // reused, so nobody else can pick these names.
+        stored = await storePhotos(photos, {
+          year: created.year,
+          reference: created.reference,
+          stage: 'raise',
+          existingKeys: [],
+        });
         await this.insertPhotos(client, created.id, 'raise', stored, user.id);
 
         await this.event(client, created.id, 'raised', user.id, null, null, 'open', {
+          site,
           routing,
           photoCount: stored.length,
         });
 
-        const what = `${category.name} at ${location.name}`;
+        const what = `${category.name} at ${site.name}`;
         await notify(client, created.id, user.id, short(body.description), [
           { userId: routing.supervisor.id, kind: 'assigned', title: `New complaint ${created.reference} for you: ${what}` },
           { userId: routing.manager?.id, kind: 'copied', title: `${created.reference} raised: ${what}` },
@@ -503,7 +592,9 @@ export class ComplaintsService {
            where id = $1`,
           [id, to, note, user.id],
         );
-        stored = await storePhotos(photos);
+        // Numbered after any earlier resolution's photos; act() holds the
+        // row lock, so no other resolve can choose the same names.
+        stored = await storePhotos(photos, await this.photoPlace(client, id, 'resolve'));
         await this.insertPhotos(client, id, 'resolve', stored, user.id);
         await this.event(client, id, 'resolved', user.id, note, c.status, to, {
           photoCount: stored.length,
@@ -514,7 +605,9 @@ export class ComplaintsService {
           ? [{ userId: c.raisedBy.id, kind: 'closed', title: `${c.reference} was resolved and closed by ${user.name}` }]
           : [{ userId: c.approver?.id, kind: 'approval_needed', title: `${c.reference} is resolved and waiting for your approval` }]);
       },
-      // A refused or failed resolve leaves no orphan files behind.
+      // A refused or failed resolve leaves no orphan files behind. Run
+      // before the rollback releases the lock: the next resolve reuses
+      // these names, and a late delete would remove its photos instead.
       () => removeStored(stored),
     );
   }
@@ -616,13 +709,24 @@ export class ComplaintsService {
   // Plumbing
   // -------------------------------------------------------------------
 
+  /**
+   * @param onFailure undoes work outside the database (stored photos).
+   *   Runs while the row is still locked, before the rollback, when
+   *   `run` fails; or after the fact if the commit itself fails. Once.
+   */
   private async act(
     user: AuthUser,
     id: string,
     action: ActionName,
     run: (client: PoolClient, c: DetailCore) => Promise<void>,
-    onRollback?: () => Promise<void>,
+    onFailure?: () => Promise<void>,
   ): Promise<ComplaintDetail> {
+    let undone = false;
+    const undo = async (): Promise<void> => {
+      if (undone) return;
+      undone = true;
+      await onFailure?.();
+    };
     try {
       await this.inTransaction(async (client) => {
         const viewer = toViewer(user);
@@ -630,13 +734,40 @@ export class ComplaintsService {
         if (!c || !canSee(viewer, c)) throw new NotFoundException(NOT_FOUND);
         const check = checkAction(action, viewer, c);
         if (!check.allowed) throw await this.refusal(client, id, viewer, check);
-        await run(client, c);
+        try {
+          await run(client, c);
+        } catch (error) {
+          await undo();
+          throw error;
+        }
       });
     } catch (error) {
-      await onRollback?.();
+      await undo();
       throw error;
     }
     return this.detail(user, id);
+  }
+
+  /**
+   * The folder (raised year + reference) and the keys already stored for
+   * one stage of a complaint, for photo-storage's `<stage>-<n>` numbering.
+   * Call with the complaint's row locked.
+   */
+  private async photoPlace(
+    client: PoolClient,
+    complaintId: string,
+    stage: PhotoStage,
+  ): Promise<PhotoPlace> {
+    const { rows } = await client.query<{ year: number; reference: string; keys: string[] }>(
+      `select ${RAISED_YEAR_SQL} as year, ${REFERENCE_SQL} as reference,
+              array(select p.storage_key from complaint_photos p
+                    where p.complaint_id = c.id and p.stage = $2) as keys
+       from complaints c where c.id = $1`,
+      [complaintId, stage],
+    );
+    const row = rows[0];
+    if (!row) throw new NotFoundException(NOT_FOUND);
+    return { year: row.year, reference: row.reference, stage, existingKeys: row.keys };
   }
 
   /**
@@ -687,26 +818,6 @@ export class ComplaintsService {
       [id],
     );
     return rows[0] ?? null;
-  }
-
-  private async activeMaster(
-    client: PoolClient,
-    table: 'locations',
-    id: string,
-    what: string,
-  ): Promise<{ id: string; name: string }> {
-    const { rows } = await client.query<{ id: string; name: string; is_active: boolean }>(
-      `select id, name, is_active from ${table} where id = $1`,
-      [id],
-    );
-    const row = rows[0];
-    if (!row) {
-      throw new UnprocessableEntityException(`That ${what} no longer exists. Choose another one.`);
-    }
-    if (!row.is_active) {
-      throw new UnprocessableEntityException(`${row.name} is no longer in use. Choose another ${what}.`);
-    }
-    return { id: row.id, name: row.name };
   }
 
   private async insertPhotos(

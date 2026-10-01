@@ -15,8 +15,12 @@ const trim = ({ value }: { value: unknown }): unknown =>
   typeof value === 'string' ? value.trim() : value;
 
 export class RaiseComplaintDto {
-  @IsUUID('all', { message: 'Choose the location from the list' })
-  locationId!: string;
+  /**
+   * The budget site the complaint is about (client decision, 1 Oct 2026,
+   * CONTRACT section 10). It replaced `locationId`.
+   */
+  @IsUUID('all', { message: 'Choose the site from the list' })
+  siteId!: string;
 
   @IsUUID('all', { message: 'Choose the category from the list' })
   categoryId!: string;

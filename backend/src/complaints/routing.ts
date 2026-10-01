@@ -5,8 +5,14 @@ import type { PoolClient } from 'pg';
  * Routing, run ONCE at raise time (CONTRACT section 3, plan 3.4).
  *
  * The result is written onto the complaint row and never recomputed on
- * read: a later change to a location's supervisor must not silently move
+ * read: a later change to a site's supervisor must not silently move
  * an open complaint, and a closed one must still say who handled it.
+ *
+ * A complaint is filed against a budget SITE (client decision, 1 Oct
+ * 2026, CONTRACT section 10; it replaced plan 3.1a's "by location").
+ * The site names its own supervisor and manager (sites.supervisor_id,
+ * sites.manager_id), so those two come from the site row; the HOD, CEO
+ * and approver are found up the reports_to chain exactly as before.
  *
  * Written as one function over a `query` callback so it can be unit
  * tested against a fake, and so it runs inside the raise transaction
@@ -26,7 +32,7 @@ export interface Person {
 }
 
 export interface RoutingInput {
-  location: { id: string; name: string };
+  site: { id: string; name: string };
   category: {
     id: string;
     name: string;
@@ -79,46 +85,62 @@ async function chainFrom(db: Queryable, startId: string): Promise<ChainRow[]> {
   return rows;
 }
 
-async function atLocation(
-  db: Queryable,
-  locationId: string,
-  seedKey: 'supervisor' | 'manager',
-): Promise<Array<Person & { canLogin: boolean; reportsTo: string | null }>> {
-  const { rows } = await db.query<Person & { canLogin: boolean; reportsTo: string | null }>(
-    `select u.id, u.name, u.can_login as "canLogin", u.reports_to as "reportsTo"
-     from user_locations ul
-     join users u on u.id = ul.user_id
-     join designations d on d.id = u.designation_id
-     where ul.location_id = $1 and d.seed_key = $2
-     order by u.can_login desc, u.name`,
-    [locationId, seedKey],
+/**
+ * The sentence for a site nobody could receive a complaint at. One
+ * function, so the raise 422 and the site picker's `reason` (GET
+ * /complaints/sites) can never drift apart.
+ */
+export function noSupervisorReason(siteName: string): string {
+  return `${siteName} has no supervisor who can sign in yet, so this complaint would reach nobody. Ask a budget administrator to set one on the site.`;
+}
+
+interface SitePeopleRow {
+  supervisor_id: string | null;
+  supervisor_name: string | null;
+  supervisor_can_login: boolean | null;
+  supervisor_reports_to: string | null;
+  manager_id: string | null;
+  manager_name: string | null;
+  manager_can_login: boolean | null;
+}
+
+/** The supervisor and manager the site itself names. */
+async function sitePeople(db: Queryable, siteId: string): Promise<SitePeopleRow> {
+  const { rows } = await db.query<SitePeopleRow>(
+    `select sv.id as supervisor_id, sv.name as supervisor_name,
+            sv.can_login as supervisor_can_login, sv.reports_to as supervisor_reports_to,
+            mg.id as manager_id, mg.name as manager_name, mg.can_login as manager_can_login
+     from sites s
+     left join users sv on sv.id = s.supervisor_id
+     left join users mg on mg.id = s.manager_id
+     where s.id = $1`,
+    [siteId],
   );
-  return rows;
+  return rows[0] ?? {
+    supervisor_id: null, supervisor_name: null, supervisor_can_login: null,
+    supervisor_reports_to: null, manager_id: null, manager_name: null, manager_can_login: null,
+  };
 }
 
 export async function resolveRouting(
   db: Queryable,
-  { location, category }: RoutingInput,
+  { site, category }: RoutingInput,
 ): Promise<RoutingSnapshot> {
-  // 1. supervisor ---------------------------------------------------
-  // "Active" is can_login (see the header). A supervisor who can't sign
-  // in counts as no supervisor, and gets the contract's exact message.
-  const supervisors = await atLocation(db, location.id, 'supervisor');
-  const supervisorRow = supervisors.find((s) => s.canLogin);
-  if (!supervisorRow) {
-    throw new UnprocessableEntityException(
-      `${location.name} has no supervisor yet, so this complaint would reach nobody. Ask an admin to assign one in Settings → Locations.`,
-    );
-  }
-  const supervisor: Person = { id: supervisorRow.id, name: supervisorRow.name };
+  const people = await sitePeople(db, site.id);
 
-  // 2. manager: the manager at L, else the supervisor's reports_to --
-  const managers = await atLocation(db, location.id, 'manager');
+  // 1. supervisor: the site's own -----------------------------------
+  // "Active" is can_login (see the header). A supervisor who can't sign
+  // in counts as no supervisor.
+  if (!people.supervisor_id || !people.supervisor_can_login) {
+    throw new UnprocessableEntityException(noSupervisorReason(site.name));
+  }
+  const supervisor: Person = { id: people.supervisor_id, name: people.supervisor_name! };
+
+  // 2. manager: the site's own, else the supervisor's reports_to ------
   let manager: Person | null = null;
-  const managerRow = managers.find((m) => m.canLogin);
-  if (managerRow) {
-    manager = { id: managerRow.id, name: managerRow.name };
-  } else if (supervisorRow.reportsTo) {
+  if (people.manager_id && people.manager_can_login) {
+    manager = { id: people.manager_id, name: people.manager_name! };
+  } else if (people.supervisor_reports_to) {
     const up = (await chainFrom(db, supervisor.id)).find((r) => r.depth === 1);
     manager = up ? { id: up.id, name: up.name } : null;
   }
@@ -166,7 +188,7 @@ export async function resolveRouting(
     if (!approver) {
       const needs = designation ? `it needs ${article(designation.name)} ${designation.name}` : 'it has no approver designation';
       throw new UnprocessableEntityException(
-        `Nobody at ${location.name} can approve ${category.name} complaints (${needs}). Ask an admin to set one up.`,
+        `Nobody at ${site.name} can approve ${category.name} complaints (${needs}). Ask an admin to set one up.`,
       );
     }
   }

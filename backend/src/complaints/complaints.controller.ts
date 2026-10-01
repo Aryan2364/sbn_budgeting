@@ -10,7 +10,7 @@ import type { ListResult, MatchInfo } from '../common/list-query';
 import { ModuleAccess } from '../common/module-access.decorator';
 import { NoteDto, RaiseComplaintDto, ReassignDto, ResolveDto } from './complaints.dto';
 import {
-  ComplaintsService, type ComplaintDetail, type ComplaintRow, type ComplaintSummary, type Tab,
+  ComplaintsService, type ComplaintDetail, type ComplaintRow, type ComplaintSite, type ComplaintSummary, type Tab,
 } from './complaints.service';
 import {
   MAX_PHOTOS, PHOTO_MULTER_OPTIONS, PhotoUploadErrorFilter, type UploadedPhoto,
@@ -33,10 +33,21 @@ export class ComplaintsController {
     @Query() query: ListQueryDto,
     @Query('tab') tab?: string,
     @Query('status') status?: string,
+    @Query('siteId') siteId?: string,
     @Query('locationId') locationId?: string,
     @Query('categoryId') categoryId?: string,
   ): Promise<ListResult<ComplaintRow & MatchInfo>> {
-    return this.complaints.list(user, query, tab, { status, locationId, categoryId });
+    return this.complaints.list(user, query, tab, { status, siteId, locationId, categoryId });
+  }
+
+  /**
+   * The raise form's site picker (CONTRACT section 10). Complaints access
+   * is enough: most raisers have no budget access, which /sites needs.
+   * Declared before `:id` so "sites" is never read as an id.
+   */
+  @Get('sites')
+  sites(): Promise<{ data: ComplaintSite[] }> {
+    return this.complaints.sites();
   }
 
   @Get('counts')

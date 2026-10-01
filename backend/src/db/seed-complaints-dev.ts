@@ -10,20 +10,23 @@ loadEnv();
  * DEV-ONLY FIXTURE for the complaints module. Never run against
  * production; it refuses when NODE_ENV=production.
  *
- * Creates the three locations and a complete routing chain (plan 3.4),
- * so every complaints screen can be exercised as every role:
+ * Creates three locations, one test site in each, and a complete
+ * routing chain (plan 3.4), so every complaints screen can be exercised
+ * as every role:
  *
- *   CEO  <-  HOD  <-  Manager 1 (Vesu, Adajan)  <-  Supervisor Vesu, Supervisor Adajan
- *                 <-  Manager 2 (Pal)           <-  Supervisor Pal
+ *   CEO  <-  HOD  <-  Manager 1 (sites at Vesu, Adajan)  <-  Supervisor Vesu, Supervisor Adajan
+ *                 <-  Manager 2 (site at Pal)            <-  Supervisor Pal
  *
  * plus a Complaints Admin, a plain raiser, and a Test Admin who holds
  * every admin role (the seed admin's shape, with a known password).
  *
+ * Complaints route by the budget SITE (CONTRACT section 10): each test
+ * site names its supervisor and manager (sites.supervisor_id /
+ * manager_id). People have no locations (removed 1 Oct 2026).
+ *
  * Everyone: password Test@1234, complaints access. Idempotent: people
- * are matched by phone and brought back to exactly this state, and the
- * three locations' supervisor/manager slots are owned by this fixture
- * (anyone else holding one is taken off it, or the one-each rule would
- * break).
+ * are matched by phone, sites by name, and both are brought back to
+ * exactly this state.
  *
  *   DATABASE_URL=... node dist/db/seed-complaints-dev.js
  */
@@ -32,6 +35,13 @@ const PASSWORD = 'Test@1234';
 const LOCATIONS = ['Vesu', 'Adajan', 'Pal'] as const;
 type Loc = (typeof LOCATIONS)[number];
 
+/** One test site per location, with who it routes to (Person.key). */
+const SITES: { name: string; location: Loc; supervisor: string; manager: string }[] = [
+  { name: 'Complaints Test Site Vesu', location: 'Vesu', supervisor: 'supVesu', manager: 'manager1' },
+  { name: 'Complaints Test Site Adajan', location: 'Adajan', supervisor: 'supAdajan', manager: 'manager1' },
+  { name: 'Complaints Test Site Pal', location: 'Pal', supervisor: 'supPal', manager: 'manager2' },
+];
+
 interface Person {
   key: string;
   name: string;
@@ -39,41 +49,40 @@ interface Person {
   email: string;
   designation: 'ceo' | 'hod' | 'manager' | 'supervisor' | null;
   reportsTo: string | null;
-  locations: Loc[];
   modules: Record<string, string>;
 }
 
 const PEOPLE: Person[] = [
   { key: 'ceo', name: 'Kavita Desai', phone: '9000000001', email: 'ceo@sadbhavna.test',
-    designation: 'ceo', reportsTo: null, locations: [],
+    designation: 'ceo', reportsTo: null,
     modules: { complaints: 'admin' } },
   { key: 'hod', name: 'Harish Joshi', phone: '9000000002', email: 'hod@sadbhavna.test',
-    designation: 'hod', reportsTo: 'ceo', locations: [],
+    designation: 'hod', reportsTo: 'ceo',
     modules: { complaints: 'member' } },
   { key: 'manager1', name: 'Meena Shah', phone: '9000000003', email: 'manager1@sadbhavna.test',
-    designation: 'manager', reportsTo: 'hod', locations: ['Vesu', 'Adajan'],
+    designation: 'manager', reportsTo: 'hod',
     modules: { complaints: 'member' } },
   { key: 'manager2', name: 'Rakesh Trivedi', phone: '9000000004', email: 'manager2@sadbhavna.test',
-    designation: 'manager', reportsTo: 'hod', locations: ['Pal'],
+    designation: 'manager', reportsTo: 'hod',
     modules: { complaints: 'member' } },
   { key: 'supVesu', name: 'Suresh Parmar', phone: '9000000005', email: 'sup.vesu@sadbhavna.test',
-    designation: 'supervisor', reportsTo: 'manager1', locations: ['Vesu'],
+    designation: 'supervisor', reportsTo: 'manager1',
     modules: { complaints: 'member' } },
   { key: 'supAdajan', name: 'Anil Solanki', phone: '9000000006', email: 'sup.adajan@sadbhavna.test',
-    designation: 'supervisor', reportsTo: 'manager1', locations: ['Adajan'],
+    designation: 'supervisor', reportsTo: 'manager1',
     modules: { complaints: 'member' } },
   { key: 'supPal', name: 'Dinesh Rathod', phone: '9000000007', email: 'sup.pal@sadbhavna.test',
-    designation: 'supervisor', reportsTo: 'manager2', locations: ['Pal'],
+    designation: 'supervisor', reportsTo: 'manager2',
     modules: { complaints: 'member' } },
   { key: 'cadmin', name: 'Complaints Admin', phone: '9000000008',
     email: 'complaints.admin@sadbhavna.test',
-    designation: null, reportsTo: null, locations: [],
+    designation: null, reportsTo: null,
     modules: { complaints: 'admin' } },
   { key: 'raiser', name: 'Farhan Raiser', phone: '9000000009', email: 'raiser@sadbhavna.test',
-    designation: null, reportsTo: null, locations: [],
+    designation: null, reportsTo: null,
     modules: { complaints: 'member' } },
   { key: 'admin', name: 'Test Admin', phone: '9000000010', email: 'admin@sadbhavna.test',
-    designation: null, reportsTo: null, locations: [],
+    designation: null, reportsTo: null,
     modules: { platform: 'admin', budget: 'admin', complaints: 'admin' } },
 ];
 
@@ -160,26 +169,22 @@ async function seedComplaintsDev(): Promise<void> {
       ]);
     }
 
-    // Pass 3: locations. The fixture owns the three places' supervisor
-    // and manager slots, so anyone else holding one is taken off it.
-    const fixtureIds = [...ids.values()];
-    const allLocationIds = [...locationIds.values()];
-    await client.query(
-      `delete from user_locations ul
-       using users u, designations d
-       where ul.location_id = any($1::uuid[]) and u.id = ul.user_id
-         and d.id = u.designation_id and d.seed_key in ('supervisor', 'manager')
-         and not (ul.user_id = any($2::uuid[]))`,
-      [allLocationIds, fixtureIds],
-    );
-    await client.query('delete from user_locations where user_id = any($1::uuid[])', [
-      fixtureIds,
-    ]);
-    for (const p of PEOPLE) {
-      for (const loc of p.locations) {
+    // Pass 3: the test sites, which carry the routing.
+    for (const site of SITES) {
+      const values = [
+        site.name, locationIds.get(site.location), ids.get(site.supervisor), ids.get(site.manager),
+      ];
+      const updated = await client.query(
+        `update sites set location_id = $2, supervisor_id = $3, manager_id = $4
+         where name = $1`,
+        values,
+      );
+      if (!updated.rowCount) {
         await client.query(
-          'insert into user_locations (user_id, location_id) values ($1, $2)',
-          [ids.get(p.key), locationIds.get(loc)],
+          `insert into sites (name, location_id, supervisor_id, manager_id,
+                              planned_trees, plantation_start_date)
+           values ($1, $2, $3, $4, 1, current_date)`,
+          values,
         );
       }
     }
@@ -199,12 +204,14 @@ async function seedComplaintsDev(): Promise<void> {
       phone: p.phone,
       email: p.email,
       designation: p.designation ?? '-',
-      locations: p.locations.join(', ') || '-',
       modules: Object.entries(p.modules).map(([m, r]) => `${m}:${r}`).join(' '),
     })),
   );
   // eslint-disable-next-line no-console
-  console.log(`seed-complaints-dev: ${PEOPLE.length} people, password ${PASSWORD}`);
+  console.log(
+    `seed-complaints-dev: ${PEOPLE.length} people, ${SITES.length} test sites ` +
+      `(${SITES.map((s) => s.name).join(', ')}), password ${PASSWORD}`,
+  );
 }
 
 if (require.main === module) {

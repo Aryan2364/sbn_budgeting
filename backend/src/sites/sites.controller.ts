@@ -381,6 +381,14 @@ export class SitesController {
       // site_budgets cascades; expenses deliberately do not, because
       // deleting a site must not silently delete money that was spent.
       if (isPgError(error, PG_FOREIGN_KEY_VIOLATION)) {
+        // Complaints are filed against a site since 1 Oct 2026 (0011).
+        // They are the record of what went wrong there, so they block
+        // the delete too, and are never deleted with it.
+        if (pgConstraint(error) === 'complaints_site_id_fkey') {
+          throw new ConflictException(
+            'This site has complaints filed against it, so it can’t be deleted. Keep the site as it is.',
+          );
+        }
         throw new ConflictException(
           'This site has expenses booked against it. Delete those first.',
         );

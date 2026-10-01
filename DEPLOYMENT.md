@@ -203,13 +203,73 @@ to find `shared.users` from its very first request.
 
 ### Complaint photos
 
-Photos are files, not rows. The backend writes them under `UPLOAD_DIR`
-(`/app/uploads` in the container), which `docker-compose.deploy.yml`
-mounts as the named volume `sbn_uploads`, so they survive a redeploy.
-They are **not** in RDS, so RDS backups do not cover them. Back up the
-volume (`docker run --rm -v sbn_uploads:/d -v "$PWD":/b alpine tar czf
-/b/uploads-$(date +%F).tgz -C /d .`) on the same schedule you trust for
-the database.
+Photos are objects, not rows. When the R2 credentials are set in
+`.env.production` (`R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`,
+`R2_SECRET_ACCESS_KEY`; see `.env.production.example`), the backend
+stores them in the Cloudflare R2 bucket **`sadbhavna`**, one folder per
+complaint:
+
+```
+sadbhavna/                  the bucket
+└── complaints/             the module (R2_PREFIX, default "complaints/")
+    └── 2026/               year the complaint was raised (India time)
+        └── C-000123/       the complaint's reference, as the app shows it
+            ├── raised-1.jpg      photos added when it was raised
+            ├── raised-2.jpg
+            ├── resolved-1.jpg    photos added when it was resolved
+            └── resolved-2.png    numbering continues after a send-back
+```
+
+The extension is the photo's real type (`jpg`, `png` or `webp`), read
+from its bytes, not from the name the phone sent. The database row
+carries the same key (`complaint_photos.storage_key`, e.g.
+`complaints/2026/C-000123/raised-1.jpg`). The bucket stays private: the
+API streams each photo to a signed-in user who may see the complaint
+(`Cache-Control: private`). It never hands out a public or presigned URL.
+
+Photos stored before this layout (dev and test data only) keep their old
+keys, `complaints/<yyyy>/<mm>/<uuid>.<ext>`, and still open: every photo
+is read by the key its row carries. Nothing needs moving.
+
+- **One bucket prefix per database.** References repeat between
+  databases (every database has a `C-000001`), so two databases pointed
+  at the same bucket and `R2_PREFIX` would overwrite each other's
+  photos. A staging or dev copy must use its own bucket or its own
+  `R2_PREFIX` (e.g. `staging/complaints/`), never production's.
+- **Which store is live**: the backend's startup log prints one line,
+  `Complaint photos: Cloudflare R2, bucket "sadbhavna", prefix
+  "complaints/"…` or `Complaint photos: local disk at /app/uploads`
+  (`docker compose logs backend | grep "Complaint photos"`). Setting some
+  but not all three credentials stops the API at startup with a message
+  naming the missing one.
+- **Confirming R2 works**: raise a complaint with a photo, then look in
+  the bucket (Cloudflare dashboard → R2 → `sadbhavna` →
+  `complaints/<year>/<reference>/`, e.g. `complaints/2026/C-000123/`)
+  for `raised-1.jpg`.
+- **Backups**: R2 photos are **not** in RDS, so RDS backups do not cover
+  them. R2 stores each object redundantly, which protects against disk
+  loss but not against deletion. If you need deletion protection, copy
+  the bucket on a schedule (e.g. `rclone sync` to a second bucket or
+  provider). Do not add an R2 lifecycle rule that expires objects under
+  `complaints/`: the rows would outlive their photos.
+- **The `sbn_uploads` volume** (`UPLOAD_DIR`, `/app/uploads`) is now the
+  fallback and legacy store. Without R2 credentials, photos are written
+  there in the same folder layout (`/app/uploads/complaints/2026/C-000123/raised-1.jpg`).
+  With R2 on, it is only read: a photo not found in the
+  bucket is served from the volume if the file is there, which covers
+  photos raised before R2 was switched on. Otherwise the user sees "That
+  photo is no longer available." To move legacy photos into R2, copy the
+  volume's `complaints/` tree into the bucket with the same keys (e.g.
+  `rclone copy /path/to/volume/complaints r2:sadbhavna/complaints`). The
+  database needs no change. Until then, keep backing up the volume
+  (`docker run --rm -v sbn_uploads:/d -v "$PWD":/b alpine tar czf
+  /b/uploads-$(date +%F).tgz -C /d .`).
+- **When R2 is unreachable**: raising or resolving with photos fails
+  with "The photos could not be saved. Try again." and writes nothing.
+  Viewing a photo fails with "The photo could not be loaded. Try again
+  in a moment." Every R2 call has a deadline (5 s to connect, 20 s for a
+  response, 30 s overall for an upload or delete), so a hung R2 cannot
+  hold a request open.
 
 For a psql shell from the app server:
 
@@ -315,9 +375,12 @@ leave every person in `shared.users` and every complaint behind, and the
 re-run of 0001 would then create a second `users` table that 0009 cannot
 move into `shared`. `shared` is recreated empty because it existed before
 this app used it. `complaints` is not recreated, because 0010 creates it.
-Complaint photos live in the `sbn_uploads` volume, not in the database:
-empty it too (`docker volume rm sbn_uploads` with the app stopped), or the
-files outlive their rows.
+Complaint photos are not in the database: empty the R2 bucket's
+`complaints/` prefix (Cloudflare dashboard → R2 → `sadbhavna`), and the
+`sbn_uploads` volume (`docker volume rm sbn_uploads` with the app
+stopped), or the photos outlive their rows. This is not optional: the
+reference numbers restart at `C-000001`, so the first new complaint's
+photos would land in the old `C-000001` folder beside the test photos.
 
 
 ```bash

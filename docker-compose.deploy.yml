@@ -15,8 +15,10 @@ services:
       TZ: Asia/Kolkata
     ports:
       - "4400:4000"
-    # Complaint photos are files, not rows. A named volume keeps them
-    # across redeploys; without it every deploy would delete them.
+    # Complaint photos live in Cloudflare R2 when the R2_* variables in
+    # .env.production are set. This volume is then only the read-only
+    # fallback for photos raised before R2 (and the store itself when R2 is
+    # not configured). Keep it: without it a deploy would delete those files.
     volumes:
       - sbn_uploads:/app/uploads
     restart: unless-stopped
