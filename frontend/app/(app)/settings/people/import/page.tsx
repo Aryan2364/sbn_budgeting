@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import Link from "next/link"
-import { CircleCheckIcon, DownloadIcon, MapPinIcon, OctagonXIcon } from "lucide-react"
+import { CircleCheckIcon, DownloadIcon, OctagonXIcon } from "lucide-react"
 
 import {
   api,
@@ -52,9 +52,9 @@ import { downloadPeopleTemplate, parsePeopleSheet, SheetError, type ParsedSheet 
  *   1. Upload: section 29's file-upload (one .xlsx) and the template.
  *   2. Check: a section 34 report table, one row per spreadsheet row
  *      with its status badge, the field changes and the messages, and
- *      a pinned total row that is the summary. New locations are a
- *      banner above it. Not paginated (34.2): the rows are the file's,
- *      and a summary that covers one page is not a summary.
+ *      a pinned total row that is the summary. Not paginated (34.2):
+ *      the rows are the file's, and a summary that covers one page is
+ *      not a summary.
  *      The one primary action, Import, sits in this card's footer and is
  *      disabled with its reason while any row has an error.
  *   3. Result: what the commit did, and the ways forward.
@@ -82,7 +82,6 @@ const FIELD_LABEL: Record<string, string> = {
   phone: "Phone",
   email: "Email",
   designation: "Designation",
-  locations: "Locations",
   reportsTo: "Reports to",
   canLogin: "Can sign in",
   password: "Password",
@@ -370,19 +369,6 @@ function PreviewCard({
       </CardHeader>
 
       <CardContent className="flex flex-col gap-4 p-4">
-        {preview.newLocations.length > 0 ? (
-          <Banner variant="neutral">
-            <MapPinIcon />
-            <BannerTitle>
-              {plural(preview.newLocations.length, "new location", "new locations")} will be created
-            </BannerTitle>
-            <BannerDescription>
-              {preview.newLocations.join(", ")}. Check the spelling: a name that
-              differs from an existing location creates a second one.
-            </BannerDescription>
-          </Banner>
-        ) : null}
-
         {/* Fixed layout: Details takes what is left and wraps, instead
             of pushing the table past the card. Changes and messages
             share one column so neither is squeezed to a word a line. */}

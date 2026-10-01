@@ -103,8 +103,16 @@ export function SectionTabs({
           sideways rather than wrapping, which keeps the 2px accent on one
           line; a horizontal scroller inside the vertical page is allowed
           (section 1 rule 8). On wider screens nothing overflows and this
-          wrapper is inert. */}
-      <div className="-mx-1 overflow-x-auto px-1 [scrollbar-width:thin]">
+          wrapper is inert.
+
+          overflow-x:auto makes overflow-y compute to auto as well, so
+          anything poking out vertically draws a vertical scrollbar - on a
+          touch screen the trigger's 44px tap area (::before, 4px past a
+          36px tab top and bottom) did exactly that, even on a wide screen.
+          p-1 gives that tap area and the 4px focus ring room inside the
+          box (-m-1 cancels it, so the layout does not move), and
+          overflow-y-hidden rules out a vertical scrollbar for good. */}
+      <div className="-m-1 overflow-x-auto overflow-y-hidden p-1 [scrollbar-width:thin]">
         <TabsList className="min-w-max">
           {tabs.map((tab) => (
             <TabsTrigger key={tab.value} value={tab.value}>

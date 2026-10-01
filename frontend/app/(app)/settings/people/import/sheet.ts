@@ -7,6 +7,10 @@ import type { ImportRow } from "@/lib/api"
  *
  * exceljs is heavy, so both functions load it on demand, the same way
  * the list export does.
+ *
+ * People have no locations any more (removed 1 Oct 2026). An older file
+ * with a "Locations" column still imports: a header that is not one of
+ * the columns below is simply not read.
  */
 
 /** The columns, in template order. `aliases` are also accepted as headers. */
@@ -22,7 +26,6 @@ const COLUMNS: Array<{
   { key: "phone", header: "Phone", aliases: ["phone number", "mobile"], required: true, example: "98765 43210", note: "Required. People are matched by phone, then email, never by name." },
   { key: "email", header: "Email", aliases: ["email address"], example: "ramesh@example.com", note: "Optional." },
   { key: "designation", header: "Designation", aliases: [], example: "Supervisor", note: "One of the designations in Settings, Designations." },
-  { key: "locations", header: "Locations", aliases: ["location"], example: "Vesu, Adajan", note: "Separate several with commas. New names are created as locations." },
   { key: "reportsToPhone", header: "Reports to phone", aliases: ["reports to", "manager phone"], example: "98765 00000", note: "The phone of the person they report to, in the database or in this file." },
   { key: "canLogin", header: "Can sign in", aliases: ["can login", "signs in"], example: "Yes", note: "Yes or No. Without a password, No." },
   { key: "password", header: "Password", aliases: [], example: "", note: "At least 8 characters, for someone who signs in." },
@@ -114,11 +117,6 @@ export async function parsePeopleSheet(file: File): Promise<ParsedSheet> {
     if (email) item.email = email
     const designation = get("designation")
     if (designation) item.designation = designation
-    const locations = get("locations")
-      .split(/[,;\n]/)
-      .map((s) => s.trim())
-      .filter(Boolean)
-    if (locations.length) item.locations = locations
     const reportsTo = get("reportsToPhone")
     if (reportsTo) item.reportsToPhone = reportsTo
     const canLogin = yesNo(get("canLogin"))

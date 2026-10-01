@@ -469,13 +469,7 @@ export function ReassignDialog({ complaint, onClose, onDone, onRefresh }: Action
 
   const options = (people ?? [])
     .filter((p) => p.id !== complaint.supervisor.id && p.canLogin)
-    .map((p) => ({
-      value: p.id,
-      label:
-        p.locations.length > 0
-          ? `${p.name} (${p.locations.map((l) => l.name).join(", ")})`
-          : p.name,
-    }))
+    .map((p) => ({ value: p.id, label: p.name }))
 
   const checkSupervisor = (id = supervisorId) => (id ? null : "Choose who takes this complaint over")
   const checkNote = (text = note) =>

@@ -6,17 +6,31 @@ import { useRouter } from "next/navigation"
 import { CircleAlertIcon, TriangleAlertIcon, UserIcon } from "lucide-react"
 
 import { cn } from "@/lib/utils"
-import { api, ApiError, type Location, type Person } from "@/lib/api"
-import { complaintsApi, type ComplaintCategory } from "@/lib/complaints-api"
+import { ApiError } from "@/lib/api"
+import {
+  complaintsApi,
+  type ComplaintCategory,
+  type ComplaintSiteOption,
+} from "@/lib/complaints-api"
 import { errorMessage, useSession } from "@/components/shell/session"
 import { Banner, BannerAction, BannerDescription, BannerTitle } from "@/components/ui/banner"
 import { Button } from "@/components/ui/button"
-import { FileUpload, filesToSend, isBusy, type FileUploadItem } from "@/components/ui/file-upload"
+import {
+  FileUpload,
+  filesToSend,
+  isBusy,
+  type FileUploadItem,
+  type FileUploadText,
+} from "@/components/ui/file-upload"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Textarea } from "@/components/ui/textarea"
 import { ctrlEnterSaves } from "@/components/ui/keyboard-shortcuts"
-import { isChanged, useUnsavedChanges } from "@/components/ui/unsaved-changes"
+import {
+  isChanged,
+  useUnsavedChanges,
+  type UnsavedChangesText,
+} from "@/components/ui/unsaved-changes"
 import { EmptyState } from "@/components/ui/empty-state"
 import { PermissionTooltip } from "@/components/ui/permission-tooltip"
 import { RecordBreadcrumb } from "@/components/forms/record-breadcrumb"
@@ -25,7 +39,6 @@ import {
   FormFooter,
   FormFrame,
   FormScrollArea,
-  FormSection,
 } from "@/components/templates/form-page"
 import { PageHeader } from "@/components/templates/page"
 import { Choice } from "@/components/complaints/choice"
@@ -36,16 +49,18 @@ import { useComplaintMasters } from "@/components/complaints/use-masters"
  * phone exception: single column below 640px, full-width controls,
  * 16px inputs, the camera one tap away).
  *
- * The contract's fields in the partner's own order: location, category,
+ * The contract's fields in the partner's own order: site, category,
  * complainant name and phone (prefilled from the signed-in person and
  * editable), a note on where exactly, the description, and up to three
  * photos.
  *
- * Routing is decided by the server at raise time. The form previews it
- * from the location row (its supervisor), so a location with nobody to
- * send to is flagged BEFORE the person types a paragraph, and the
- * server's 422 is still shown as a banner with a way forward if the
- * picture changed in between.
+ * A complaint is filed against a budget site (CONTRACT §10). Routing is
+ * decided by the server at raise time. The form previews it from the
+ * `/complaints/sites` row (who its supervisor is now), so a site with
+ * nobody to send to is flagged BEFORE the person types a paragraph, and
+ * the server's 422 is still shown as a banner with a way forward if the
+ * picture changed in between. The supervisor is set on the site itself,
+ * so only a budget administrator is offered the way to the site form.
  */
 
 const MAX_PHOTOS = 3
@@ -53,8 +68,136 @@ const MAX_PHOTO_BYTES = 5 * 1024 * 1024
 /** Phones: 16px text so iOS does not zoom into the field (agreed exception). */
 const PHONE_TEXT = "max-sm:text-base"
 
+/**
+ * Every word this screen shows, in Gujarati. The field labels are in the
+ * JSX below. Names of people and places are passed in and kept as they
+ * are. Text that comes from the server (a 422 routing message, say) is
+ * shown as the server sent it.
+ */
+const GU = {
+  // Page
+  title: "ફરિયાદ નોંધાવો",
+  meta: "આ ફરિયાદ સીધી સાઇટના સુપરવાઇઝરને જશે. તેની નકલ તેમના મેનેજર, HOD અને CEO ને પણ જશે.",
+  breadcrumbLabel: "પેજનો માર્ગ",
+
+  // Masters failed to load
+  loadFailedHeading: "ફોર્મ ખૂલી શક્યું નથી",
+  loadFailedNothingSaved: "કંઈ સાચવાયું નથી.",
+  tryAgain: "ફરી પ્રયાસ કરો",
+
+  // Validation
+  needSite: "ફરિયાદ કઈ સાઇટની છે તે પસંદ કરો",
+  needCategory: "ફરિયાદનો પ્રકાર પસંદ કરો",
+  needName: "ફરિયાદીનું નામ લખો",
+  needPhone: "મોબાઇલ નંબર લખો, જેથી સુપરવાઇઝર ફોન કરી શકે",
+  shortPhone: "પૂરો 10 આંકડાનો મોબાઇલ નંબર લખો, જેમ કે 98765 43210",
+  needDescription: "સમસ્યાની વિગત લખો, જેથી સુપરવાઇઝરને ખબર પડે કે શું સુધારવાનું છે",
+  tooManyPhotos: (max: number) => `વધુમાં વધુ ${max} ફોટા ઉમેરો`,
+
+  // Submit failure banner
+  routingFailedTitle: "આ ફરિયાદ હજી મોકલી શકાતી નથી",
+  raiseFailedTitle: "ફરિયાદ નોંધાઈ નથી",
+  raiseFailedNext: "તમે ભરેલી માહિતી અહીં જ છે. ફરી પ્રયાસ કરો.",
+  chooseAnotherSite: "બીજી સાઇટ પસંદ કરો",
+  openSite: "સાઇટ ખોલો",
+
+  // Site field
+  routingHint: (supervisor: string, site: string) =>
+    `આ ફરિયાદ ${site} ના સુપરવાઇઝર ${supervisor} ને જશે.`,
+  sitePlaceholder: "સાઇટ પસંદ કરો",
+  siteSearch: "સાઇટ શોધો",
+  siteNoMatch: "આ નામની કોઈ સાઇટ મળી નથી. બીજું નામ લખીને શોધો.",
+  noSupervisorTitle: (site: string) => `${site} માટે હજી કોઈ સુપરવાઇઝર નથી`,
+  /** Follows the title; the next step is added after it. */
+  noSupervisorCause: "તેથી આ ફરિયાદ કોઈને પહોંચશે નહીં.",
+  noSupervisorAdmin: "સાઇટના ફોર્મમાં સુપરવાઇઝર નક્કી કરો, પછી ફરિયાદ નોંધાવો.",
+  noSupervisorOthers: "એડમિનને સુપરવાઇઝર નક્કી કરવા કહો, અથવા બીજી સાઇટ પસંદ કરો.",
+
+  // Category field
+  needsApproval: (approver: string) => `આ ફરિયાદ બંધ કરવા માટે ${approver} ની મંજૂરી જોઈશે.`,
+  closesDirectly: "સુપરવાઇઝર કામ પૂરું કરે એટલે ફરિયાદ સીધી બંધ થઈ જશે.",
+  categoryPlaceholder: "ફરિયાદનો પ્રકાર પસંદ કરો",
+  categorySearch: "ફરિયાદનો પ્રકાર શોધો",
+  categoryNoMatch: "આ નામનો કોઈ ફરિયાદનો પ્રકાર મળ્યો નથી. બીજું નામ લખીને શોધો.",
+
+  // Exact place field
+  locationNoteHint:
+    "જરૂરી નથી. મકાન, રૂમ કે કોઈ નિશાની લખો, જેથી સુપરવાઇઝરને જગ્યા તરત મળી જાય.",
+  locationNotePlaceholder: "જેમ કે: મુખ્ય દરવાજાની પાછળ, પાણીની ટાંકી પાસે",
+
+  // Raised on someone else's behalf
+  onBehalfOf: (name: string) => `તમે આ ફરિયાદ ${name} વતી નોંધાવી રહ્યા છો.`,
+  theComplainant: "ફરિયાદી",
+
+  // Footer
+  cancel: "રદ કરો",
+  submit: "ફરિયાદ નોંધાવો",
+  submitting: "ફરિયાદ નોંધાઈ રહી છે…",
+  noSupervisorReason: (site: string | undefined) =>
+    `${site ?? "આ સાઇટ"} માટે હજી કોઈ સુપરવાઇઝર નથી, તેથી આ ફરિયાદ કોઈને પહોંચશે નહીં. બીજી સાઇટ પસંદ કરો.`,
+}
+
+/** The leave-without-saving dialog. */
+const GU_UNSAVED: UnsavedChangesText = {
+  title: "સાચવ્યા વગર બહાર જવું છે?",
+  description: () => "આ ફરિયાદમાં તમે ભરેલી માહિતી જતી રહેશે.",
+  stay: "અહીં જ રહો",
+  leave: "સાચવ્યા વગર બહાર જાઓ",
+}
+
+/** The photo upload's own words (it stays English on other screens). */
+const GU_UPLOAD: FileUploadText = {
+  typeList: (names) =>
+    names.length === 1
+      ? names[0]
+      : `${names.slice(0, -1).join(", ")} અથવા ${names[names.length - 1]}`,
+  limits: ({ types, maxSize, maxFiles }) =>
+    [
+      types ? `${types}.` : null,
+      maxFiles === 1 ? `${maxSize} સુધી.` : `દરેક ફોટો ${maxSize} સુધી.`,
+      maxFiles > 1 ? `વધુમાં વધુ ${maxFiles} ફોટા.` : null,
+    ]
+      .filter(Boolean)
+      .join(" "),
+  full: ({ count, maxFiles }) =>
+    `${maxFiles} માંથી ${count} ફોટા ઉમેર્યા છે. બીજો ફોટો ઉમેરવા માટે એક ફોટો દૂર કરો.`,
+  drag: ({ maxFiles }) =>
+    maxFiles === 1
+      ? "ફોટો અહીં ખેંચીને મૂકો, અથવા પસંદ કરો."
+      : "ફોટા અહીં ખેંચીને મૂકો, અથવા પસંદ કરો.",
+  touch: ({ maxFiles, camera }) =>
+    camera
+      ? `ફોટો પાડો અથવા ${maxFiles === 1 ? "ફોટો" : "ફોટા"} પસંદ કરો.`
+      : `${maxFiles === 1 ? "ફોટો" : "ફોટા"} પસંદ કરો.`,
+  takeButton: () => "ફોટો પાડો",
+  chooseButton: ({ maxFiles }) => (maxFiles === 1 ? "ફોટો પસંદ કરો" : "ફોટા પસંદ કરો"),
+  unreadable: ({ name }) =>
+    `${name} ફોટો તરીકે ખૂલી શક્યો નથી. JPG કે PNG ફોટો પસંદ કરો, અથવા ફોટો ફરીથી પાડો.`,
+  tooLarge: ({ name, size, maxSize }) =>
+    `${name} ${size} નો છે, જે ${maxSize} ની મર્યાદા કરતાં મોટો છે. નાનો ફોટો પસંદ કરો.`,
+  wrongType: ({ name, types }) =>
+    types
+      ? `${name} ${types} ફોટો નથી. ${types} ફોટો પસંદ કરો.`
+      : `${name} આ પ્રકારની ફાઇલ ચાલતી નથી. બીજો ફોટો પસંદ કરો.`,
+  tooMany: ({ name, maxFiles }) =>
+    `${name} ઉમેરાયો નથી, કારણ કે વધુમાં વધુ ${maxFiles} ફોટા ઉમેરી શકાય. બીજો ફોટો ઉમેરવા માટે એક ફોટો દૂર કરો.`,
+  preparing: () => "ફોટો તૈયાર થઈ રહ્યો છે",
+  uploading: ({ percent }) => `અપલોડ થઈ રહ્યો છે, ${percent}%`,
+  uploadFailed: ({ name }) => `${name} અપલોડ થયો નથી. ફરી પ્રયાસ કરો, અથવા તેને દૂર કરો.`,
+  retry: "ફરી પ્રયાસ કરો",
+  download: "ડાઉનલોડ કરો",
+  downloadLabel: ({ name }) => `${name} ડાઉનલોડ કરો`,
+  remove: "દૂર કરો",
+  removeLabel: ({ name }) => `${name} દૂર કરો`,
+  confirmTitle: () => "ફોટો દૂર કરવો છે?",
+  confirmBody: ({ name, context }) =>
+    `${name} ${context ? `${context} માંથી ` : ""}દૂર થઈ જશે. પછી પાછો લાવી શકાશે નહીં.`,
+  confirmCancel: "રદ કરો",
+  confirmAction: () => "ફોટો દૂર કરો",
+}
+
 interface Values {
-  locationId: string
+  siteId: string
   categoryId: string
   complainantName: string
   complainantPhone: string
@@ -70,30 +213,28 @@ function digits(text: string) {
 
 function validate(key: FieldKey, values: Values, photos: FileUploadItem[]): string | null {
   switch (key) {
-    case "locationId":
-      return values.locationId ? null : "Choose the location the complaint is about"
+    case "siteId":
+      return values.siteId ? null : GU.needSite
     case "categoryId":
-      return values.categoryId ? null : "Choose the kind of complaint"
+      return values.categoryId ? null : GU.needCategory
     case "complainantName":
-      return values.complainantName.trim() ? null : "Enter the name of the person complaining"
+      return values.complainantName.trim() ? null : GU.needName
     case "complainantPhone": {
       const d = digits(values.complainantPhone)
-      if (!d) return "Enter a phone number the supervisor can call"
-      return d.length >= 10 ? null : "Enter the full 10-digit phone number, like 98765 43210"
+      if (!d) return GU.needPhone
+      return d.length >= 10 ? null : GU.shortPhone
     }
     case "description":
-      return values.description.trim()
-        ? null
-        : "Describe the problem, so the supervisor knows what to fix"
+      return values.description.trim() ? null : GU.needDescription
     case "photos":
-      return photos.length > MAX_PHOTOS ? `Add at most ${MAX_PHOTOS} photos` : null
+      return photos.length > MAX_PHOTOS ? GU.tooManyPhotos(MAX_PHOTOS) : null
     default:
       return null
   }
 }
 
 const ORDER: FieldKey[] = [
-  "locationId",
+  "siteId",
   "categoryId",
   "complainantName",
   "complainantPhone",
@@ -105,28 +246,12 @@ export function RaiseComplaintForm() {
   const router = useRouter()
   const { user, can } = useSession()
   const masters = useComplaintMasters({ activeOnly: true })
-
-  // The signed-in person's own locations come first in the picker.
-  const [mine, setMine] = React.useState<string[]>([])
-  React.useEffect(() => {
-    if (!user) return
-    let cancelled = false
-    api
-      .get<Person>(`/users/${user.id}`)
-      .then((person) => {
-        if (!cancelled) setMine(person.locations.map((l) => l.id))
-      })
-      .catch(() => {
-        // Ordering only. The picker still lists every location.
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [user])
+  /** A site's supervisor is set on the site form, which only a budget administrator opens. */
+  const canEditSites = can.budget === "admin"
 
   const initial = React.useMemo<Values>(
     () => ({
-      locationId: "",
+      siteId: "",
       categoryId: "",
       complainantName: user?.name ?? "",
       complainantPhone: user?.phone ?? "",
@@ -146,29 +271,28 @@ export function RaiseComplaintForm() {
   const unsaved = useUnsavedChanges({
     changed: !done && (isChanged(values, initial) || photos.length > 0),
     noun: "complaint",
+    text: GU_UNSAVED,
   })
 
   const set = <K extends keyof Values>(key: K, value: Values[K]) => {
     setValues((v) => ({ ...v, [key]: value }))
-    setFailure((f) => (f?.routing && key === "locationId" ? null : f))
+    setFailure((f) => (f?.routing && key === "siteId" ? null : f))
   }
   const blur = (key: FieldKey) => () =>
     setErrors((e) => ({ ...e, [key]: validate(key, values, photos) ?? undefined }))
 
   // ---- options ------------------------------------------------------
-  const locations = React.useMemo(() => masters.locations ?? [], [masters.locations])
-  const locationOptions = React.useMemo(() => {
-    const own = locations.filter((l) => mine.includes(l.id))
-    const rest = locations.filter((l) => !mine.includes(l.id))
-    return [...own, ...rest].map((l) => ({
-      value: l.id,
-      label: mine.includes(l.id) ? `${l.name} (your location)` : l.name,
-    }))
-  }, [locations, mine])
+  // Sites arrive ordered by name. The picker has one line per option, so
+  // the site's location is not shown beside its name.
+  const sites = React.useMemo(() => masters.sites ?? [], [masters.sites])
+  const siteOptions = React.useMemo(
+    () => sites.map((s) => ({ value: s.id, label: s.name })),
+    [sites],
+  )
   const categories = masters.categories ?? []
   const categoryOptions = categories.map((c) => ({ value: c.id, label: c.name }))
 
-  const location: Location | undefined = locations.find((l) => l.id === values.locationId)
+  const site: ComplaintSiteOption | undefined = sites.find((s) => s.id === values.siteId)
   const category: ComplaintCategory | undefined = categories.find(
     (c) => c.id === values.categoryId,
   )
@@ -196,7 +320,7 @@ export function RaiseComplaintForm() {
     try {
       const detail = await complaintsApi.raise(
         {
-          locationId: values.locationId,
+          siteId: values.siteId,
           categoryId: values.categoryId,
           complainantName: values.complainantName.trim(),
           complainantPhone: values.complainantPhone.trim(),
@@ -229,8 +353,13 @@ export function RaiseComplaintForm() {
       <FormFrame>
         <FormScrollArea>
           <div className="mx-auto w-full max-w-content-max p-6 max-sm:px-4">
-            <EmptyState variant="failed" heading="The form could not be loaded" onAction={masters.retry}>
-              {masters.error} Nothing has been saved.
+            <EmptyState
+              variant="failed"
+              heading={GU.loadFailedHeading}
+              actionLabel={GU.tryAgain}
+              onAction={masters.retry}
+            >
+              {masters.error} {GU.loadFailedNothingSaved}
             </EmptyState>
           </div>
         </FormScrollArea>
@@ -238,7 +367,7 @@ export function RaiseComplaintForm() {
     )
   }
 
-  const noSupervisor = location !== undefined && location.supervisor === null
+  const noSupervisor = site !== undefined && !site.canReceive
   const busy = saving || isBusy(photos)
 
   return (
@@ -247,23 +376,23 @@ export function RaiseComplaintForm() {
       <FormFrame>
         <FormScrollArea>
           <div className="mx-auto w-full max-w-content-max p-6 max-sm:px-4">
-            <RecordBreadcrumb trail={[{ label: "Complaints", href: "/complaints" }]} current="Raise complaint" />
-            <PageHeader
-              className="mt-4"
-              title="Raise complaint"
-              meta="It goes straight to the supervisor of the location, with a copy to their manager, the HOD and the CEO."
+            <RecordBreadcrumb
+              trail={[{ label: "Complaints", href: "/complaints" }]}
+              current={GU.title}
+              label={GU.breadcrumbLabel}
             />
+            <PageHeader className="mt-4" title={GU.title} meta={GU.meta} />
 
             <div ref={bannerRef}>
               {failure ? (
                 <Banner variant="danger" className="mt-6">
                   <CircleAlertIcon />
                   <BannerTitle>
-                    {failure.routing ? "This complaint cannot be sent yet" : "The complaint was not raised"}
+                    {failure.routing ? GU.routingFailedTitle : GU.raiseFailedTitle}
                   </BannerTitle>
                   <BannerDescription>
                     {failure.message}
-                    {failure.routing ? null : " Your entries are still here. Try again."}
+                    {failure.routing ? null : ` ${GU.raiseFailedNext}`}
                   </BannerDescription>
                   {failure.routing ? (
                     <BannerAction className="flex flex-wrap gap-2">
@@ -271,18 +400,18 @@ export function RaiseComplaintForm() {
                         type="button"
                         variant="secondary"
                         size="sm"
-                        onClick={() => document.getElementById("raise-locationId")?.focus()}
+                        onClick={() => document.getElementById("raise-siteId")?.focus()}
                       >
-                        Choose another location
+                        {GU.chooseAnotherSite}
                       </Button>
-                      {can.platformAdmin ? (
+                      {canEditSites && values.siteId ? (
                         <Button
                           variant="secondary"
                           size="sm"
                           nativeButton={false}
-                          render={<Link href="/settings/locations" />}
+                          render={<Link href={`/sites/${values.siteId}/edit`} />}
                         >
-                          Open location settings
+                          {GU.openSite}
                         </Button>
                       ) : null}
                     </BannerAction>
@@ -301,191 +430,194 @@ export function RaiseComplaintForm() {
                 ))}
               </div>
             ) : (
-              <>
-                <FormSection label="Where and what" className="mt-8">
-                  <FormField
-                    span={6}
-                    label="Location"
-                    required
-                    htmlFor="raise-locationId"
-                    error={errors.locationId}
-                    hint={
-                      location?.supervisor
-                        ? `Goes to ${location.supervisor.name}, the supervisor at ${location.name}.`
-                        : mine.length > 0
-                          ? "Your own locations are listed first."
-                          : undefined
-                    }
-                  >
-                    <Choice
-                      id="raise-locationId"
-                      options={locationOptions}
-                      value={values.locationId}
-                      onValueChange={(v) => {
-                        set("locationId", v)
-                        setErrors((e) => ({ ...e, locationId: undefined }))
-                      }}
-                      onBlur={blur("locationId")}
-                      invalid={Boolean(errors.locationId)}
-                      placeholder="Choose a location"
-                      searchPlaceholder="Search locations"
-                      className="max-w-none sm:max-w-field-max"
-                    />
-                    {noSupervisor ? (
-                      <Banner variant="warning" className="mt-2">
-                        <TriangleAlertIcon />
-                        <BannerTitle>{location.name} has no supervisor yet</BannerTitle>
-                        <BannerDescription>
-                          A complaint here would reach nobody.{" "}
-                          {can.platformAdmin
-                            ? "Assign a supervisor in Settings, Locations, then raise it."
-                            : "Ask an administrator to assign one, or choose another location."}
-                        </BannerDescription>
-                      </Banner>
-                    ) : null}
-                  </FormField>
-
-                  <FormField
-                    span={6}
-                    label="Category"
-                    required
-                    htmlFor="raise-categoryId"
-                    error={errors.categoryId}
-                    hint={
-                      category
-                        ? category.requiresApproval
-                          ? `Closing it needs approval from ${article(category.approverDesignation?.name ?? "HOD")}.`
-                          : "The supervisor's fix closes it directly."
-                        : undefined
-                    }
-                  >
-                    <Choice
-                      id="raise-categoryId"
-                      options={categoryOptions}
-                      value={values.categoryId}
-                      onValueChange={(v) => {
-                        set("categoryId", v)
-                        setErrors((e) => ({ ...e, categoryId: undefined }))
-                      }}
-                      onBlur={blur("categoryId")}
-                      invalid={Boolean(errors.categoryId)}
-                      placeholder="Choose a category"
-                      searchPlaceholder="Search categories"
-                      className="max-w-none sm:max-w-field-max"
-                    />
-                  </FormField>
-
-                  <FormField
-                    span={12}
-                    label="Where exactly"
-                    htmlFor="raise-locationNote"
-                    hint="Optional. The building, room or landmark, so the supervisor finds it first time."
-                  >
-                    <Textarea
-                      id="raise-locationNote"
-                      rows={2}
-                      value={values.locationNote}
-                      onChange={(e) => set("locationNote", e.target.value)}
-                      onKeyDown={ctrlEnterSaves}
-                      placeholder="For example: behind the main gate, near the water tank"
-                      className={PHONE_TEXT}
-                    />
-                  </FormField>
-
-                  <FormField
-                    span={12}
-                    label="Description"
-                    required
-                    htmlFor="raise-description"
-                    error={errors.description}
-                  >
-                    <Textarea
-                      id="raise-description"
-                      rows={4}
-                      value={values.description}
-                      aria-invalid={Boolean(errors.description) || undefined}
-                      onChange={(e) => set("description", e.target.value)}
-                      onBlur={blur("description")}
-                      onKeyDown={ctrlEnterSaves}
-                      className={PHONE_TEXT}
-                    />
-                  </FormField>
-                </FormSection>
-
-                <FormSection
-                  label="Complainant"
-                  description="Filled in with your details. Change them if you are raising this for someone else."
+              <div className="mt-8 grid grid-cols-12 gap-6">
+                <FormField
+                  span={6}
+                  label="સાઇટ"
+                  required
+                  htmlFor="raise-siteId"
+                  error={errors.siteId}
+                  hint={
+                    site?.canReceive && site.supervisor
+                      ? GU.routingHint(site.supervisor.name, site.name)
+                      : undefined
+                  }
                 >
-                  <FormField
-                    span={6}
-                    label="Name"
-                    required
-                    htmlFor="raise-complainantName"
-                    error={errors.complainantName}
-                  >
-                    <Input
-                      id="raise-complainantName"
-                      autoComplete="name"
-                      value={values.complainantName}
-                      aria-invalid={Boolean(errors.complainantName) || undefined}
-                      onChange={(e) => set("complainantName", e.target.value)}
-                      onBlur={blur("complainantName")}
-                      className={cn(PHONE_TEXT, "max-sm:max-w-none")}
-                    />
-                  </FormField>
-                  <FormField
-                    span={4}
-                    label="Phone number"
-                    required
-                    htmlFor="raise-complainantPhone"
-                    error={errors.complainantPhone}
-                  >
-                    <Input
-                      id="raise-complainantPhone"
-                      type="tel"
-                      inputMode="tel"
-                      autoComplete="tel"
-                      placeholder="98765 43210"
-                      value={values.complainantPhone}
-                      aria-invalid={Boolean(errors.complainantPhone) || undefined}
-                      onChange={(e) => set("complainantPhone", e.target.value)}
-                      onBlur={blur("complainantPhone")}
-                      className={cn(PHONE_TEXT, "max-sm:max-w-none")}
-                    />
-                  </FormField>
-                  {user && values.complainantName.trim() !== user.name ? (
-                    <p className="col-span-12 -mt-4 flex items-center gap-1 text-label text-text-secondary">
-                      <UserIcon className="size-4" aria-hidden="true" />
-                      Raised by you, on behalf of {values.complainantName.trim() || "the complainant"}.
-                    </p>
+                  <Choice
+                    id="raise-siteId"
+                    options={siteOptions}
+                    value={values.siteId}
+                    onValueChange={(v) => {
+                      set("siteId", v)
+                      setErrors((e) => ({ ...e, siteId: undefined }))
+                    }}
+                    onBlur={blur("siteId")}
+                    invalid={Boolean(errors.siteId)}
+                    placeholder={GU.sitePlaceholder}
+                    searchPlaceholder={GU.siteSearch}
+                    emptyMessage={GU.siteNoMatch}
+                    className="max-w-none sm:max-w-field-max"
+                  />
+                  {noSupervisor ? (
+                    <Banner variant="warning" className="mt-2">
+                      <TriangleAlertIcon />
+                      <BannerTitle>{GU.noSupervisorTitle(site.name)}</BannerTitle>
+                      <BannerDescription>
+                        {/* All Gujarati, built here; the server's English sentence is not shown. */}
+                        {GU.noSupervisorCause}{" "}
+                        {canEditSites ? GU.noSupervisorAdmin : GU.noSupervisorOthers}
+                      </BannerDescription>
+                      {canEditSites ? (
+                        <BannerAction>
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            nativeButton={false}
+                            render={<Link href={`/sites/${site.id}/edit`} />}
+                          >
+                            {GU.openSite}
+                          </Button>
+                        </BannerAction>
+                      ) : null}
+                    </Banner>
                   ) : null}
-                </FormSection>
+                </FormField>
 
-                <FormSection label="Photos" description="Optional. A photo helps the supervisor see the problem before they arrive.">
-                  <FormField
-                    span={12}
-                    label="Photos of the problem"
-                    htmlFor="raise-photos"
-                    error={errors.photos}
-                  >
-                    <FileUpload
-                      id="raise-photos"
-                      value={photos}
-                      onChange={(next) => {
-                        setPhotos(next)
-                        setErrors((e) => ({ ...e, photos: undefined }))
-                      }}
-                      accept="image/jpeg,image/png,image/webp"
-                      maxFiles={MAX_PHOTOS}
-                      maxBytes={MAX_PHOTO_BYTES}
-                      capture="environment"
-                      noun={{ one: "photo", many: "photos" }}
-                      disabled={saving}
-                      invalid={Boolean(errors.photos)}
-                    />
-                  </FormField>
-                </FormSection>
-              </>
+                <FormField
+                  span={6}
+                  label="ફરિયાદનો પ્રકાર"
+                  required
+                  htmlFor="raise-categoryId"
+                  error={errors.categoryId}
+                  hint={
+                    category
+                      ? category.requiresApproval
+                        ? GU.needsApproval(category.approverDesignation?.name ?? "HOD")
+                        : GU.closesDirectly
+                      : undefined
+                  }
+                >
+                  <Choice
+                    id="raise-categoryId"
+                    options={categoryOptions}
+                    value={values.categoryId}
+                    onValueChange={(v) => {
+                      set("categoryId", v)
+                      setErrors((e) => ({ ...e, categoryId: undefined }))
+                    }}
+                    onBlur={blur("categoryId")}
+                    invalid={Boolean(errors.categoryId)}
+                    placeholder={GU.categoryPlaceholder}
+                    searchPlaceholder={GU.categorySearch}
+                    emptyMessage={GU.categoryNoMatch}
+                    className="max-w-none sm:max-w-field-max"
+                  />
+                </FormField>
+
+                <FormField
+                  span={12}
+                  label="ચોક્કસ જગ્યા"
+                  htmlFor="raise-locationNote"
+                  hint={GU.locationNoteHint}
+                >
+                  <Textarea
+                    id="raise-locationNote"
+                    rows={2}
+                    value={values.locationNote}
+                    onChange={(e) => set("locationNote", e.target.value)}
+                    onKeyDown={ctrlEnterSaves}
+                    placeholder={GU.locationNotePlaceholder}
+                    className={PHONE_TEXT}
+                  />
+                </FormField>
+
+                <FormField
+                  span={12}
+                  label="ફરિયાદની વિગત"
+                  required
+                  htmlFor="raise-description"
+                  error={errors.description}
+                >
+                  <Textarea
+                    id="raise-description"
+                    rows={4}
+                    value={values.description}
+                    aria-invalid={Boolean(errors.description) || undefined}
+                    onChange={(e) => set("description", e.target.value)}
+                    onBlur={blur("description")}
+                    onKeyDown={ctrlEnterSaves}
+                    className={PHONE_TEXT}
+                  />
+                </FormField>
+
+                <FormField
+                  span={6}
+                  label="ફરિયાદીનું નામ"
+                  required
+                  htmlFor="raise-complainantName"
+                  error={errors.complainantName}
+                >
+                  <Input
+                    id="raise-complainantName"
+                    autoComplete="name"
+                    value={values.complainantName}
+                    aria-invalid={Boolean(errors.complainantName) || undefined}
+                    onChange={(e) => set("complainantName", e.target.value)}
+                    onBlur={blur("complainantName")}
+                    className={cn(PHONE_TEXT, "max-sm:max-w-none")}
+                  />
+                </FormField>
+                <FormField
+                  span={4}
+                  label="ફરિયાદીનો મોબાઇલ નંબર"
+                  required
+                  htmlFor="raise-complainantPhone"
+                  error={errors.complainantPhone}
+                >
+                  <Input
+                    id="raise-complainantPhone"
+                    type="tel"
+                    inputMode="tel"
+                    autoComplete="tel"
+                    placeholder="98765 43210"
+                    value={values.complainantPhone}
+                    aria-invalid={Boolean(errors.complainantPhone) || undefined}
+                    onChange={(e) => set("complainantPhone", e.target.value)}
+                    onBlur={blur("complainantPhone")}
+                    className={cn(PHONE_TEXT, "max-sm:max-w-none")}
+                  />
+                </FormField>
+                {user && values.complainantName.trim() !== user.name ? (
+                  <p className="col-span-12 -mt-4 flex items-center gap-1 text-label text-text-secondary">
+                    <UserIcon className="size-4" aria-hidden="true" />
+                    {GU.onBehalfOf(values.complainantName.trim() || GU.theComplainant)}
+                  </p>
+                ) : null}
+
+                <FormField
+                  span={12}
+                  label="સમસ્યાના ફોટા"
+                  htmlFor="raise-photos"
+                  error={errors.photos}
+                >
+                  <FileUpload
+                    id="raise-photos"
+                    value={photos}
+                    onChange={(next) => {
+                      setPhotos(next)
+                      setErrors((e) => ({ ...e, photos: undefined }))
+                    }}
+                    accept="image/jpeg,image/png,image/webp"
+                    maxFiles={MAX_PHOTOS}
+                    maxBytes={MAX_PHOTO_BYTES}
+                    capture="environment"
+                    noun={{ one: "photo", many: "photos" }}
+                    text={GU_UPLOAD}
+                    disabled={saving}
+                    invalid={Boolean(errors.photos)}
+                  />
+                </FormField>
+              </div>
             )}
           </div>
         </FormScrollArea>
@@ -499,11 +631,11 @@ export function RaiseComplaintForm() {
             render={<Link href="/complaints" />}
             className="max-sm:w-full"
           >
-            Cancel
+            {GU.cancel}
           </Button>
           <PermissionTooltip
             allowed={!noSupervisor}
-            reason={`${location?.name ?? "This location"} has no supervisor yet, so this complaint would reach nobody. Choose another location.`}
+            reason={GU.noSupervisorReason(site?.name)}
           >
             <Button
               type="submit"
@@ -511,17 +643,11 @@ export function RaiseComplaintForm() {
               disabled={busy || masters.loading || noSupervisor}
               className="max-sm:w-full"
             >
-              {saving ? "Raising…" : "Raise complaint"}
+              {saving ? GU.submitting : GU.submit}
             </Button>
           </PermissionTooltip>
         </FormFooter>
       </FormFrame>
     </form>
   )
-}
-
-/** "an HOD", "a Manager", "the CEO". */
-function article(designation: string): string {
-  if (/^ceo$/i.test(designation)) return "the CEO"
-  return /^[aeiou]|^h(od)/i.test(designation) ? `an ${designation}` : `a ${designation}`
 }

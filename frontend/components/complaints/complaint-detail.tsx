@@ -13,6 +13,7 @@ import {
 import { ApiError } from "@/lib/api"
 import { formatDateTime } from "@/lib/format"
 import {
+  complaintPlace,
   complaintsApi,
   type ActionName,
   type ComplaintDetail,
@@ -45,7 +46,8 @@ import { Timeline } from "@/components/complaints/timeline"
  *
  *   breadcrumb   Complaints › C-000123
  *   header       reference as the title, status beside it, category and
- *                location in the meta line, and the state actions on
+ *                site (or, raised before sites, the location) in the
+ *                meta line, and the state actions on
  *                the right (below the title on a phone, full width)
  *   main         the complaint, its photos, the resolution, activity
  *   aside        who it was routed to, and the dates
@@ -268,7 +270,7 @@ export function ComplaintDetailPage({ id }: { id: string }) {
         className="mt-4"
         title={<span className="tabular-nums">{detail.reference}</span>}
         badges={<ComplaintStatusBadge status={detail.status} />}
-        meta={`${detail.category.name} · ${detail.location.name} · Raised ${formatDateTime(detail.raisedAt)} by ${detail.raisedBy.name}`}
+        meta={`${detail.category.name} · ${complaintPlace(detail)} · Raised ${formatDateTime(detail.raisedAt)} by ${detail.raisedBy.name}`}
         actions={
           steps.length > 0 ? (
             <div className="hidden flex-wrap items-center gap-2 sm:flex">{actionButtons(false)}</div>
@@ -289,7 +291,7 @@ export function ComplaintDetailPage({ id }: { id: string }) {
             <CircleCheckIcon />
             <BannerTitle>{detail.reference} raised</BannerTitle>
             <BannerDescription>
-              It went to {detail.supervisor.name}, the supervisor at {detail.location.name}
+              It went to {detail.supervisor.name}, the supervisor at {complaintPlace(detail)}
               {copies(detail)}.
             </BannerDescription>
             <BannerAction>

@@ -49,6 +49,9 @@ import { Choice } from "@/components/complaints/choice"
  * never deleted (15.2): its delete is disabled with the reason, or,
  * while it is still active, opens the explanation with Deactivate as
  * its action.
+ *
+ * Section 27.2: the list's sort is by name, A to Z. Categories have no
+ * position of their own, and nobody sets one.
  */
 export default function ComplaintCategoriesSettingsPage() {
   const { can } = useSession()
@@ -56,7 +59,7 @@ export default function ComplaintCategoriesSettingsPage() {
 
   const load = React.useCallback(
     (page: number) =>
-      categoriesApi.list({ page, pageSize: MASTER_PAGE_SIZE, sort: "sortOrder", direction: "asc" }),
+      categoriesApi.list({ page, pageSize: MASTER_PAGE_SIZE, sort: "name", direction: "asc" }),
     [],
   )
   const { rows, loading, error, refresh, page, setPage, total, totalPages } = useMasterRows(load)
@@ -66,16 +69,10 @@ export default function ComplaintCategoriesSettingsPage() {
 
   const exportFetchPage = React.useCallback(
     (exportPage: number, pageSize: number) =>
-      categoriesApi.list({ page: exportPage, pageSize, sort: "sortOrder", direction: "asc" }),
+      categoriesApi.list({ page: exportPage, pageSize, sort: "name", direction: "asc" }),
     [],
   )
   const exportColumns: ExportColumn<ComplaintCategory>[] = [
-    {
-      header: "#",
-      cell: (row) => formatNumber(row.sortOrder),
-      numeric: true,
-      excelValue: (row) => row.sortOrder,
-    },
     { header: "Name", cell: (row) => row.name },
     { header: "Approval", cell: (row) => approvalText(row) },
     {
@@ -105,13 +102,6 @@ export default function ComplaintCategoriesSettingsPage() {
         onPageChange={setPage}
         exportList={{ title: "Complaint categories", columns: exportColumns, fetchPage: exportFetchPage }}
         columns={[
-          {
-            key: "sortOrder",
-            label: "#",
-            numeric: true,
-            className: "w-col-count",
-            render: (row) => formatNumber(row.sortOrder),
-          },
           { key: "name", label: "Name", render: (row) => <Truncate>{row.name}</Truncate> },
           {
             key: "approval",
@@ -214,7 +204,6 @@ function CategoryDialog({
   const saved = React.useMemo(
     () => ({
       name: category?.name ?? "",
-      sortOrder: category ? String(category.sortOrder) : "",
       isActive: category?.isActive ?? true,
       requiresApproval: category?.requiresApproval ?? true,
       approverDesignationId: category?.approverDesignation?.id ?? "",
@@ -226,7 +215,6 @@ function CategoryDialog({
   const [saving, setSaving] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
   const [nameError, setNameError] = React.useState<string | null>(null)
-  const [orderError, setOrderError] = React.useState<string | null>(null)
 
   const unsaved = useUnsavedChanges({ changed: isChanged(values, saved) && !saving, noun: "category" })
 
@@ -234,7 +222,7 @@ function CategoryDialog({
     let cancelled = false
     fetchAllPages((page) =>
       api.get<ListResponse<Designation>>(
-        `/designations${query({ page, pageSize: 100, sort: "sortOrder", direction: "asc" })}`,
+        `/designations${query({ page, pageSize: 100, sort: "name", direction: "asc" })}`,
       ),
     )
       .then((rows) => {
@@ -257,24 +245,16 @@ function CategoryDialog({
     .map((d) => ({ value: d.id, label: d.name }))
 
   const checkName = (name = values.name) => (name.trim() ? null : "Enter the category name")
-  const checkOrder = (text = values.sortOrder) =>
-    text.trim() === "" || /^\d+$/.test(text.trim())
-      ? null
-      : "Enter a whole number, like 10, or leave it blank"
 
   async function save() {
     const n = checkName()
-    const o = checkOrder()
     setNameError(n)
-    setOrderError(o)
     if (n) return document.getElementById("category-name")?.focus()
-    if (o) return document.getElementById("category-order")?.focus()
 
     const body: ComplaintCategoryBody = {
       name: values.name.trim(),
       requiresApproval: values.requiresApproval,
       approverDesignationId: values.requiresApproval ? approverId || null : null,
-      ...(values.sortOrder.trim() ? { sortOrder: Number(values.sortOrder.trim()) } : {}),
       ...(isEdit ? { isActive: values.isActive } : {}),
     }
     setSaving(true)
@@ -329,23 +309,6 @@ function CategoryDialog({
                   onBlur={() => setNameError(checkName())}
                 />
                 <InlineFieldError>{nameError}</InlineFieldError>
-              </div>
-
-              <div className="flex flex-col gap-2">
-                <Label htmlFor="category-order">Order in lists</Label>
-                <Input
-                  id="category-order"
-                  inputMode="numeric"
-                  value={values.sortOrder}
-                  aria-invalid={Boolean(orderError) || undefined}
-                  onChange={(e) => setValues((v) => ({ ...v, sortOrder: e.target.value }))}
-                  onBlur={() => setOrderError(checkOrder())}
-                  className="w-field-min text-right"
-                />
-                {orderError ? null : (
-                  <p className="text-label text-text-secondary">Lower numbers are listed first.</p>
-                )}
-                <InlineFieldError>{orderError}</InlineFieldError>
               </div>
 
               <div className="flex items-start gap-3">

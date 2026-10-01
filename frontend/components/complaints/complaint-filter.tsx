@@ -26,27 +26,31 @@ import { STATUS_ORDER, statusLabel } from "@/components/complaints/status"
  *
  * The panel edits a draft; nothing applies until "Apply filters", so
  * closing it with Escape never half-changes the list.
+ *
+ * Complaints are filed against a site (CONTRACT §10), so the place
+ * filter is by site. Older location-only complaints have no site and are
+ * found by searching their location's name instead.
  */
 export interface ComplaintFilters {
   status?: string
-  locationId?: string
+  siteId?: string
   categoryId?: string
 }
 
 const ANY = "any"
 
 export function countFilters(filters: ComplaintFilters): number {
-  return [filters.status, filters.locationId, filters.categoryId].filter(Boolean).length
+  return [filters.status, filters.siteId, filters.categoryId].filter(Boolean).length
 }
 
 export function ComplaintFilterButton({
   filters,
-  locations,
+  sites,
   categories,
   onApply,
 }: {
   filters: ComplaintFilters
-  locations: ChoiceOption[]
+  sites: ChoiceOption[]
   categories: ChoiceOption[]
   onApply: (next: ComplaintFilters) => void
 }) {
@@ -58,7 +62,7 @@ export function ComplaintFilterButton({
     { value: ANY, label: "Any status" },
     ...STATUS_ORDER.map((s) => ({ value: s, label: statusLabel(s) })),
   ]
-  const locationOptions: ChoiceOption[] = [{ value: ANY, label: "Any location" }, ...locations]
+  const siteOptions: ChoiceOption[] = [{ value: ANY, label: "Any site" }, ...sites]
   const categoryOptions: ChoiceOption[] = [{ value: ANY, label: "Any category" }, ...categories]
 
   const pick = (key: keyof ComplaintFilters) => (value: string) =>
@@ -97,14 +101,14 @@ export function ComplaintFilterButton({
             />
           </div>
           <div className="flex flex-col gap-2">
-            <Label htmlFor="filter-location">Location</Label>
+            <Label htmlFor="filter-site">Site</Label>
             <Choice
-              id="filter-location"
-              options={locationOptions}
-              value={draft.locationId ?? ANY}
-              onValueChange={pick("locationId")}
-              placeholder="Any location"
-              searchPlaceholder="Search locations"
+              id="filter-site"
+              options={siteOptions}
+              value={draft.siteId ?? ANY}
+              onValueChange={pick("siteId")}
+              placeholder="Any site"
+              searchPlaceholder="Search sites"
             />
           </div>
           <div className="flex flex-col gap-2">
@@ -141,12 +145,12 @@ export function ComplaintFilterButton({
 /** The chips below the toolbar, one per active filter. */
 export function ComplaintFilterChips({
   filters,
-  locations,
+  sites,
   categories,
   onChange,
 }: {
   filters: ComplaintFilters
-  locations: ChoiceOption[]
+  sites: ChoiceOption[]
   categories: ChoiceOption[]
   onChange: (next: ComplaintFilters) => void
 }) {
@@ -157,8 +161,8 @@ export function ComplaintFilterChips({
 
   const chips: { key: keyof ComplaintFilters; label: string }[] = []
   if (filters.status) chips.push({ key: "status", label: statusLabel(filters.status) })
-  if (filters.locationId) {
-    chips.push({ key: "locationId", label: nameOf(locations, filters.locationId, "Location") })
+  if (filters.siteId) {
+    chips.push({ key: "siteId", label: nameOf(sites, filters.siteId, "Site") })
   }
   if (filters.categoryId) {
     chips.push({ key: "categoryId", label: nameOf(categories, filters.categoryId, "Category") })

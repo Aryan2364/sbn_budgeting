@@ -21,7 +21,7 @@ export interface ChoiceOption {
  * One value from a list, with section 16.3's rule applied for the
  * caller: 6 options or fewer is `select.tsx`, 7 or more is
  * `searchable-select.tsx`. The complaint screens pick from masters
- * whose size is not known in advance (locations, categories, people),
+ * whose size is not known in advance (sites, categories, people),
  * so the choice is made from the data, not guessed per screen.
  *
  * Not a new control: it renders one of the two existing ones.
@@ -33,6 +33,7 @@ export function Choice({
   onValueChange,
   placeholder,
   searchPlaceholder,
+  emptyMessage,
   disabled,
   invalid,
   className,
@@ -44,6 +45,8 @@ export function Choice({
   onValueChange: (value: string) => void
   placeholder: string
   searchPlaceholder?: string
+  /** What the search box says when nothing matches (searchable list only). */
+  emptyMessage?: string
   disabled?: boolean
   invalid?: boolean
   className?: string
@@ -70,6 +73,7 @@ export function Choice({
           onValueChange={onValueChange}
           placeholder={placeholder}
           searchPlaceholder={searchPlaceholder}
+          emptyMessage={emptyMessage}
           disabled={disabled}
           className={cn(invalid && "border-danger", "max-sm:text-base")}
         />

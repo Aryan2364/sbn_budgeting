@@ -23,15 +23,18 @@ import {
 export function RecordBreadcrumb({
   trail,
   current,
+  label,
 }: {
   trail: [] | [{ label: string; href: string }] | [
     { label: string; href: string },
     { label: string; href: string },
   ]
   current: React.ReactNode
+  /** The nav's accessible name, for a screen in another language. Defaults to "breadcrumb". */
+  label?: string
 }) {
   return (
-    <Breadcrumb>
+    <Breadcrumb {...(label ? { "aria-label": label } : {})}>
       <BreadcrumbList>
         {trail.map((step) => (
           <React.Fragment key={step.href}>

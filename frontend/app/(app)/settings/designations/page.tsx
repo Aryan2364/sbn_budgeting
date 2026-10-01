@@ -38,6 +38,9 @@ import {
  * The four seeded designations (supervisor, manager, HOD, CEO) route
  * complaints by their seed key, so they can be renamed or deactivated
  * but never deleted.
+ *
+ * Section 27.2: the list's sort is by name, A to Z. Designations have
+ * no position of their own, and nobody sets one.
  */
 export default function DesignationsSettingsPage() {
   const { can } = useSession()
@@ -46,7 +49,7 @@ export default function DesignationsSettingsPage() {
   const load = React.useCallback(
     (page: number) =>
       api.get<ListResponse<Designation & Matchable>>(
-        `/designations${query({ page, pageSize: MASTER_PAGE_SIZE, sort: "sortOrder", direction: "asc" })}`,
+        `/designations${query({ page, pageSize: MASTER_PAGE_SIZE, sort: "name", direction: "asc" })}`,
       ),
     [],
   )
@@ -59,17 +62,11 @@ export default function DesignationsSettingsPage() {
   const exportFetchPage = React.useCallback(
     async (exportPage: number, pageSize: number) =>
       api.get<ListResponse<Designation & Matchable>>(
-        `/designations${query({ page: exportPage, pageSize, sort: "sortOrder", direction: "asc" })}`,
+        `/designations${query({ page: exportPage, pageSize, sort: "name", direction: "asc" })}`,
       ),
     [],
   )
   const exportColumns: ExportColumn<Designation>[] = [
-    {
-      header: "#",
-      cell: (row) => formatNumber(row.sortOrder),
-      numeric: true,
-      excelValue: (row) => row.sortOrder,
-    },
     { header: "Name", cell: (row) => row.name },
     {
       header: "People",
@@ -102,13 +99,6 @@ export default function DesignationsSettingsPage() {
           fetchPage: exportFetchPage,
         }}
         columns={[
-          {
-            key: "sortOrder",
-            label: "#",
-            numeric: true,
-            className: "w-16",
-            render: (row) => formatNumber(row.sortOrder),
-          },
           {
             key: "name",
             label: "Name",
@@ -221,33 +211,24 @@ function DesignationDialog({
 }) {
   const isEdit = designation !== null
   const [name, setName] = React.useState(designation?.name ?? "")
-  const [sortOrder, setSortOrder] = React.useState(
-    designation ? String(designation.sortOrder) : "",
-  )
   const [isActive, setIsActive] = React.useState(designation?.isActive ?? true)
   const [saving, setSaving] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
   const [fieldErrors, setFieldErrors] = React.useState<{
     name?: string | null
-    sortOrder?: string | null
   }>({})
 
   const nameError = (v: string) => (v.trim() === "" ? "Enter the designation name" : null)
-  const sortError = (v: string) =>
-    v.trim() === "" || /^\d+$/.test(v.trim())
-      ? null
-      : "Enter the position as a whole number, like 10"
 
   async function save() {
-    const found = { name: nameError(name), sortOrder: sortError(sortOrder) }
+    const found = { name: nameError(name) }
     setFieldErrors(found)
-    if (found.name || found.sortOrder) return
+    if (found.name) return
     setSaving(true)
     setError(null)
     try {
       const body = {
         name: name.trim(),
-        ...(sortOrder.trim() ? { sortOrder: Number(sortOrder.trim()) } : {}),
         ...(isEdit ? { isActive } : {}),
       }
       if (isEdit) await api.patch(`/designations/${designation.id}`, body)
@@ -288,26 +269,6 @@ function DesignationDialog({
               onBlur={() => setFieldErrors((c) => ({ ...c, name: nameError(name) }))}
             />
             <InlineFieldError>{fieldErrors.name}</InlineFieldError>
-          </div>
-
-          <div className="flex flex-col gap-2">
-            <Label htmlFor="designation-sort">Position in lists</Label>
-            <Input
-              id="designation-sort"
-              inputMode="numeric"
-              className="w-field-min text-right"
-              value={sortOrder}
-              placeholder="10"
-              aria-invalid={Boolean(fieldErrors.sortOrder) || undefined}
-              onChange={(event) => setSortOrder(event.target.value)}
-              onBlur={() =>
-                setFieldErrors((c) => ({ ...c, sortOrder: sortError(sortOrder) }))
-              }
-            />
-            <p className="text-label text-text-secondary">
-              Lower numbers come first. Leave blank to add it at the end.
-            </p>
-            <InlineFieldError>{fieldErrors.sortOrder}</InlineFieldError>
           </div>
 
           {isEdit ? (

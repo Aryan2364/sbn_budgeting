@@ -101,6 +101,109 @@ type Noun = { one: string; many: string }
 
 const DEFAULT_NOUN: Noun = { one: "file", many: "files" }
 
+/**
+ * Every word the component shows, so a screen in another language can
+ * pass its own (the complaint raise form passes Gujarati). Each key is
+ * optional on the `text` prop; anything not passed keeps the English
+ * below. Sizes arrive already formatted ("5 MB"), type names already
+ * joined by `typeList`.
+ */
+type FileUploadText = {
+  /** The accepted type names joined: "JPG or PNG", "JPG, PNG or PDF". */
+  typeList: (names: string[]) => string
+  /** The line under the zone: "JPG or PNG. Up to 5 MB each. 3 photos at most." */
+  limits: (p: { types: string | null; maxSize: string; maxFiles: number; noun: Noun }) => string
+  /** The zone's line once the list is full. */
+  full: (p: { count: number; maxFiles: number; noun: Noun }) => string
+  /** Pointer screens: "Drag photos here, or choose them." */
+  drag: (p: { maxFiles: number; noun: Noun }) => string
+  /** Touch screens: "Take a photo or choose photos." / "Choose photos." */
+  touch: (p: { maxFiles: number; noun: Noun; camera: boolean }) => string
+  /** The camera button: "Take photo". */
+  takeButton: (p: { noun: Noun }) => string
+  /** The browse button: "Choose photos". */
+  chooseButton: (p: { maxFiles: number; noun: Noun }) => string
+  /** A photo the browser could not decode. */
+  unreadable: (p: { name: string }) => string
+  /** A file over the size limit. */
+  tooLarge: (p: { name: string; size: string; maxSize: string; noun: Noun }) => string
+  /** A file of a type the zone does not take. */
+  wrongType: (p: { name: string; types: string | null; noun: Noun }) => string
+  /** A file past the most the list may hold. */
+  tooMany: (p: { name: string; maxFiles: number; noun: Noun }) => string
+  /** Row status while a file is compressed: "Preparing photo". */
+  preparing: (p: { noun: Noun }) => string
+  /** Row status while the caller sends it: "Uploading, 40%". */
+  uploading: (p: { percent: number }) => string
+  /** A row the caller failed without giving an error. */
+  uploadFailed: (p: { name: string }) => string
+  retry: string
+  /** The download button's tooltip. */
+  download: string
+  /** The download button's accessible name. */
+  downloadLabel: (p: { name: string }) => string
+  remove: string
+  /** The remove button's accessible name. */
+  removeLabel: (p: { name: string }) => string
+  /** Confirmation for removing a SAVED file. */
+  confirmTitle: (p: { noun: Noun }) => string
+  confirmBody: (p: { name: string; context?: string }) => string
+  confirmCancel: string
+  confirmAction: (p: { noun: Noun }) => string
+}
+
+/** "a photo", "an image": the one-file wording (37.5 singular/plural). */
+const withArticle = (word: string) => `${/^[aeiou]/i.test(word) ? "an" : "a"} ${word}`
+const pluralFor = (maxFiles: number, noun: Noun) => (maxFiles === 1 ? noun.one : noun.many)
+
+const DEFAULT_TEXT: FileUploadText = {
+  typeList: (names) =>
+    names.length === 1
+      ? names[0]
+      : `${names.slice(0, -1).join(", ")} or ${names[names.length - 1]}`,
+  limits: ({ types, maxSize, maxFiles, noun }) =>
+    [
+      types ? `${types}.` : null,
+      `Up to ${maxSize} ${maxFiles === 1 ? "" : "each"}`.trim() + ".",
+      maxFiles > 1 ? `${maxFiles} ${noun.many} at most.` : null,
+    ]
+      .filter(Boolean)
+      .join(" "),
+  full: ({ count, maxFiles, noun }) =>
+    `${count} of ${maxFiles} ${pluralFor(maxFiles, noun)} added. Remove one to add another.`,
+  drag: ({ maxFiles, noun }) =>
+    maxFiles === 1
+      ? `Drag ${withArticle(noun.one)} here, or choose one.`
+      : `Drag ${pluralFor(maxFiles, noun)} here, or choose them.`,
+  touch: ({ maxFiles, noun, camera }) =>
+    camera
+      ? `Take ${withArticle(noun.one)} or choose ${maxFiles === 1 ? "one" : pluralFor(maxFiles, noun)}.`
+      : `Choose ${maxFiles === 1 ? withArticle(noun.one) : pluralFor(maxFiles, noun)}.`,
+  takeButton: ({ noun }) => `Take ${noun.one}`,
+  chooseButton: ({ maxFiles, noun }) => `Choose ${pluralFor(maxFiles, noun)}`,
+  unreadable: ({ name }) =>
+    `${name} could not be read as a photo. Choose a JPG or PNG photo, or take it again.`,
+  tooLarge: ({ name, size, maxSize, noun }) =>
+    `${name} is ${size}, over the ${maxSize} limit. Choose a smaller ${noun.one}.`,
+  wrongType: ({ name, types, noun }) =>
+    `${name} is not ${types ? `a ${types}` : "an accepted type"}. Choose ${types ? `a ${types} ${noun.one}` : `another ${noun.one}`}.`,
+  tooMany: ({ name, maxFiles, noun }) =>
+    `${name} was not added: ${maxFiles} ${pluralFor(maxFiles, noun)} is the most. Remove one to add another.`,
+  preparing: ({ noun }) => `Preparing ${noun.one}`,
+  uploading: ({ percent }) => `Uploading, ${percent}%`,
+  uploadFailed: ({ name }) => `${name} did not upload. Retry, or remove it.`,
+  retry: "Retry",
+  download: "Download",
+  downloadLabel: ({ name }) => `Download ${name}`,
+  remove: "Remove",
+  removeLabel: ({ name }) => `Remove ${name}`,
+  confirmTitle: ({ noun }) => `Remove ${noun.one}?`,
+  confirmBody: ({ name, context }) =>
+    `${name} will be removed${context ? ` from ${context}` : ""}. This cannot be undone.`,
+  confirmCancel: "Cancel",
+  confirmAction: ({ noun }) => `Remove ${noun.one}`,
+}
+
 /** Section 29 via the brief: at most 1600px on the long edge, JPEG ~0.8. */
 const MAX_EDGE = 1600
 const JPEG_QUALITY = 0.8
@@ -140,13 +243,12 @@ function acceptList(accept: string | undefined) {
 }
 
 /** "JPG or PNG", "JPG, PNG or PDF". Unique names, in the order given. */
-function describeTypes(accept: string | undefined) {
+function describeTypes(accept: string | undefined, typeList: FileUploadText["typeList"]) {
   const names = [
     ...new Set(acceptList(accept).map((part) => TYPE_NAMES[part] ?? part.replace(/^\./, "").toUpperCase())),
   ]
   if (names.length === 0) return null
-  if (names.length === 1) return names[0]
-  return `${names.slice(0, -1).join(", ")} or ${names[names.length - 1]}`
+  return typeList(names)
 }
 
 function matchesAccept(file: File, accept: string | undefined) {
@@ -275,6 +377,12 @@ type FileUploadProps = {
   onRemoveSaved?: (item: FileUploadItem) => void
   /** What the confirmation says the saved file is removed from: "this complaint". */
   savedContext?: string
+  /**
+   * The component's own words, for a screen in another language. Keys
+   * not given keep the English defaults. Pass a stable object (a module
+   * constant), not one built on every render.
+   */
+  text?: Partial<FileUploadText>
   disabled?: boolean
   /** Marks the zone invalid - pass it with the form's own inline error. */
   invalid?: boolean
@@ -297,12 +405,14 @@ function FileUpload({
   onRetry,
   onRemoveSaved,
   savedContext,
+  text,
   disabled = false,
   invalid = false,
   id,
   "aria-describedby": describedBy,
   className,
 }: FileUploadProps) {
+  const t = React.useMemo<FileUploadText>(() => ({ ...DEFAULT_TEXT, ...text }), [text])
   const pickerRef = React.useRef<HTMLInputElement>(null)
   const cameraRef = React.useRef<HTMLInputElement>(null)
   const errorId = React.useId()
@@ -327,17 +437,8 @@ function FileUpload({
 
   const full = value.length >= maxFiles
   const inert = disabled || full
-  const types = describeTypes(accept)
-  const plural = maxFiles === 1 ? noun.one : noun.many
-  /** "a photo", "an image": the one-file wording (37.5 singular/plural). */
-  const aNoun = `${/^[aeiou]/i.test(noun.one) ? "an" : "a"} ${noun.one}`
-  const generated = [
-    types ? `${types}.` : null,
-    `Up to ${formatBytes(maxBytes)} ${maxFiles === 1 ? "" : "each"}`.trim() + ".",
-    maxFiles > 1 ? `${maxFiles} ${noun.many} at most.` : null,
-  ]
-    .filter(Boolean)
-    .join(" ")
+  const types = describeTypes(accept, t.typeList)
+  const generated = t.limits({ types, maxSize: formatBytes(maxBytes), maxFiles, noun })
 
   const prepare = React.useCallback(
     async (item: FileUploadItem, original: File) => {
@@ -347,11 +448,16 @@ function FileUpload({
         try {
           prepared = await compressImage(original)
         } catch {
-          error = `${original.name} could not be read as a photo. Choose a JPG or PNG photo, or take it again.`
+          error = t.unreadable({ name: original.name })
         }
       }
       if (!error && prepared.size > maxBytes) {
-        error = `${original.name} is ${formatBytes(prepared.size)}, over the ${formatBytes(maxBytes)} limit. Choose a smaller ${noun.one}.`
+        error = t.tooLarge({
+          name: original.name,
+          size: formatBytes(prepared.size),
+          maxSize: formatBytes(maxBytes),
+          noun,
+        })
       }
       const current = valueRef.current
       if (!current.some((row) => row.id === item.id)) return // removed meanwhile
@@ -374,7 +480,7 @@ function FileUpload({
         )
       )
     },
-    [commit, compressImages, maxBytes, noun.one]
+    [commit, compressImages, maxBytes, noun, t]
   )
 
   const addFiles = (list: FileList | File[]) => {
@@ -385,14 +491,17 @@ function FileUpload({
     const accepted: File[] = []
     for (const file of incoming) {
       if (!matchesAccept(file, accept)) {
-        problems.push(`${file.name} is not ${types ? `a ${types}` : "an accepted type"}. Choose ${types ? `a ${types} ${noun.one}` : `another ${noun.one}`}.`)
+        problems.push(t.wrongType({ name: file.name, types, noun }))
       } else if (accepted.length >= room) {
-        problems.push(
-          `${file.name} was not added: ${maxFiles} ${plural} is the most. Remove one to add another.`
-        )
+        problems.push(t.tooMany({ name: file.name, maxFiles, noun }))
       } else if (!(compressImages && COMPRESSIBLE.has(file.type)) && file.size > maxBytes) {
         problems.push(
-          `${file.name} is ${formatBytes(file.size)}, over the ${formatBytes(maxBytes)} limit. Choose a smaller ${noun.one}.`
+          t.tooLarge({
+            name: file.name,
+            size: formatBytes(file.size),
+            maxSize: formatBytes(maxBytes),
+            noun,
+          })
         )
       } else {
         accepted.push(file)
@@ -488,18 +597,12 @@ function FileUpload({
         <UploadIcon aria-hidden className="size-icon-empty text-text-secondary" />
         <p className="text-body text-text-primary">
           {full
-            ? `${value.length} of ${maxFiles} ${plural} added. Remove one to add another.`
+            ? t.full({ count: value.length, maxFiles, noun })
             : (
               <>
-                <span className="pointer-coarse:hidden">
-                  {maxFiles === 1
-                    ? `Drag ${aNoun} here, or choose one.`
-                    : `Drag ${plural} here, or choose them.`}
-                </span>
+                <span className="pointer-coarse:hidden">{t.drag({ maxFiles, noun })}</span>
                 <span className="hidden pointer-coarse:inline">
-                  {capture
-                    ? `Take ${aNoun} or choose ${maxFiles === 1 ? "one" : plural}.`
-                    : `Choose ${maxFiles === 1 ? aNoun : plural}.`}
+                  {t.touch({ maxFiles, noun, camera: Boolean(capture) })}
                 </span>
               </>
             )}
@@ -517,7 +620,7 @@ function FileUpload({
               className="hidden w-full pointer-coarse:inline-flex sm:w-auto"
             >
               <CameraIcon />
-              Take {noun.one}
+              {t.takeButton({ noun })}
             </Button>
           ) : null}
           <Button
@@ -531,7 +634,7 @@ function FileUpload({
             className="w-full sm:w-auto"
           >
             <UploadIcon />
-            Choose {plural}
+            {t.chooseButton({ maxFiles, noun })}
           </Button>
         </div>
         <input
@@ -579,6 +682,7 @@ function FileUpload({
               key={item.id}
               item={item}
               noun={noun}
+              text={t}
               disabled={disabled}
               onRemove={() => remove(item)}
               onRetry={() => retry(item)}
@@ -590,14 +694,13 @@ function FileUpload({
       <AlertDialog open={confirming !== null} onOpenChange={(open) => !open && setConfirming(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Remove {noun.one}?</AlertDialogTitle>
+            <AlertDialogTitle>{t.confirmTitle({ noun })}</AlertDialogTitle>
             <AlertDialogDescription>
-              {confirming?.name} will be removed{savedContext ? ` from ${savedContext}` : ""}. This
-              cannot be undone.
+              {t.confirmBody({ name: confirming?.name ?? "", context: savedContext })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>{t.confirmCancel}</AlertDialogCancel>
             <AlertDialogAction
               onClick={() => {
                 const item = confirming
@@ -607,7 +710,7 @@ function FileUpload({
                 onRemoveSaved?.(item)
               }}
             >
-              Remove {noun.one}
+              {t.confirmAction({ noun })}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -619,12 +722,14 @@ function FileUpload({
 function FileRow({
   item,
   noun,
+  text: t,
   disabled,
   onRemove,
   onRetry,
 }: {
   item: FileUploadItem
   noun: Noun
+  text: FileUploadText
   disabled: boolean
   onRemove: () => void
   onRetry: () => void
@@ -639,9 +744,9 @@ function FileRow({
 
   const statusText =
     item.status === "processing"
-      ? `Preparing ${noun.one}`
+      ? t.preparing({ noun })
       : item.status === "uploading"
-        ? `Uploading, ${percent}%`
+        ? t.uploading({ percent })
         : null
 
   return (
@@ -670,7 +775,7 @@ function FileRow({
         <Truncate className="text-body text-text-primary">{item.name}</Truncate>
         {failed ? (
           <span role="alert" className="text-label text-danger">
-            {item.error ?? `${item.name} did not upload. Retry, or remove it.`}
+            {item.error ?? t.uploadFailed({ name: item.name })}
           </span>
         ) : (
           <span className="text-label text-text-secondary tabular-nums">
@@ -703,7 +808,7 @@ function FileRow({
         {failed ? (
           <Button type="button" variant="secondary" size="sm" disabled={disabled} onClick={onRetry}>
             <RotateCwIcon />
-            Retry
+            {t.retry}
           </Button>
         ) : null}
         {download && !busy && !failed ? (
@@ -715,13 +820,13 @@ function FileRow({
                   size="icon"
                   nativeButton={false}
                   render={<a href={download} download={item.name} />}
-                  aria-label={`Download ${item.name}`}
+                  aria-label={t.downloadLabel({ name: item.name })}
                 />
               }
             >
               <DownloadIcon />
             </TooltipTrigger>
-            <TooltipContent>Download</TooltipContent>
+            <TooltipContent>{t.download}</TooltipContent>
           </Tooltip>
         ) : null}
         <Button
@@ -730,9 +835,9 @@ function FileRow({
           size="sm"
           disabled={disabled || item.status === "uploading"}
           onClick={onRemove}
-          aria-label={`Remove ${item.name}`}
+          aria-label={t.removeLabel({ name: item.name })}
         >
-          Remove
+          {t.remove}
         </Button>
       </span>
     </li>
@@ -740,4 +845,4 @@ function FileRow({
 }
 
 export { FileUpload, compressImage, filesToSend, formatBytes, isBusy }
-export type { FileUploadItem, FileUploadProps, FileUploadStatus }
+export type { FileUploadItem, FileUploadProps, FileUploadStatus, FileUploadText }

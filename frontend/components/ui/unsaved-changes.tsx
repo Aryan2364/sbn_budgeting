@@ -69,14 +69,32 @@ function interceptableHref(event: MouseEvent): string | null {
   return url.pathname + url.search + url.hash
 }
 
+/** The dialog's words, for a screen in another language. */
+type UnsavedChangesText = {
+  title: string
+  /** Given the form's `noun`: "Your changes to this client will be lost." */
+  description: (noun: string) => string
+  stay: string
+  leave: string
+}
+
+const DEFAULT_TEXT: UnsavedChangesText = {
+  title: "Leave without saving?",
+  description: (noun) => `Your changes to this ${noun} will be lost.`,
+  stay: "Stay",
+  leave: "Leave without saving",
+}
+
 type Options = {
   /** Values differ from the saved ones. */
   changed: boolean
   /** What the form edits, for "Your changes to this client will be lost." */
   noun: string
+  /** The dialog's own words. Keys not given keep the English defaults. */
+  text?: Partial<UnsavedChangesText>
 }
 
-function useUnsavedChanges({ changed, noun }: Options) {
+function useUnsavedChanges({ changed, noun, text }: Options) {
   const router = useRouter()
   const [open, setOpen] = React.useState(false)
   const pending = React.useRef<(() => void) | null>(null)
@@ -134,6 +152,7 @@ function useUnsavedChanges({ changed, noun }: Options) {
     [changed, ask]
   )
 
+  const t = { ...DEFAULT_TEXT, ...text }
   const warning = (
     <AlertDialog
       open={open}
@@ -146,13 +165,11 @@ function useUnsavedChanges({ changed, noun }: Options) {
     >
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>Leave without saving?</AlertDialogTitle>
-          <AlertDialogDescription>
-            Your changes to this {noun} will be lost.
-          </AlertDialogDescription>
+          <AlertDialogTitle>{t.title}</AlertDialogTitle>
+          <AlertDialogDescription>{t.description(noun)}</AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel>Stay</AlertDialogCancel>
+          <AlertDialogCancel>{t.stay}</AlertDialogCancel>
           <AlertDialogAction
             onClick={() => {
               const leave = pending.current
@@ -161,7 +178,7 @@ function useUnsavedChanges({ changed, noun }: Options) {
               leave?.()
             }}
           >
-            Leave without saving
+            {t.leave}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
@@ -171,4 +188,4 @@ function useUnsavedChanges({ changed, noun }: Options) {
   return { warning, guard, changed }
 }
 
-export { useUnsavedChanges, isChanged }
+export { useUnsavedChanges, isChanged, type UnsavedChangesText }

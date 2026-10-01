@@ -36,6 +36,11 @@ import {
  * This is where "Miscellenous" gets corrected if it ever should be.
  * The seed matches on `seed_key` and never rewrites the name, so a
  * rename here survives every later deploy.
+ *
+ * Section 27.2: the list's sort is the spreadsheet's fixed order of
+ * heads, the same order the budget grid, the expense form and the
+ * variance report use. It is internal: no position number is shown or
+ * asked for, and a new head goes after the last.
  */
 export default function CostHeadsSettingsPage() {
   const { isAdmin } = useSession()
@@ -68,12 +73,6 @@ export default function CostHeadsSettingsPage() {
     [],
   )
   const exportColumns: ExportColumn<CostHead>[] = [
-    {
-      header: "#",
-      cell: (row) => formatNumber(row.sortOrder),
-      numeric: true,
-      excelValue: (row) => row.sortOrder,
-    },
     { header: "Name", cell: (row) => row.name },
     {
       header: "Status",
@@ -103,13 +102,6 @@ export default function CostHeadsSettingsPage() {
           fetchPage: exportFetchPage,
         }}
         columns={[
-          {
-            key: "sortOrder",
-            label: "#",
-            numeric: true,
-            className: "w-16",
-            render: (row) => formatNumber(row.sortOrder),
-          },
           {
             key: "name",
             label: "Name",

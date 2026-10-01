@@ -21,7 +21,7 @@ import { STATUS_META } from "@/components/complaints/status"
  *   1. tiles     open, in progress, awaiting approval, closed (with how
  *                many closed in the last 7 days); each links to the list
  *                that explains its number
- *   2. main      open and closed by location (the brand and ochre, 21:
+ *   2. main      open and closed by site (the brand and ochre, 21:
  *                positions 1 and 2, direct labels, zero baseline)
  *   3. panels    by category, and how long the open ones have waited
  *
@@ -37,11 +37,11 @@ const MAX_ROWS = 12
 type Row = { name: string; open: number; closed: number }
 
 /** The biggest first, and past MAX_ROWS the rest fold into "Other" (21 rule 1). */
-function fold(rows: Row[]): Row[] {
+function fold(rows: Row[], max = MAX_ROWS): Row[] {
   const sorted = [...rows].sort((a, b) => b.open + b.closed - (a.open + a.closed))
-  if (sorted.length <= MAX_ROWS) return sorted
-  const head = sorted.slice(0, MAX_ROWS - 1)
-  const tail = sorted.slice(MAX_ROWS - 1)
+  if (sorted.length <= max) return sorted
+  const head = sorted.slice(0, max - 1)
+  const tail = sorted.slice(max - 1)
   return [
     ...head,
     {
@@ -107,9 +107,19 @@ export function ComplaintDashboard() {
 
 function DashboardBody({ summary }: { summary: ComplaintSummary }) {
   const router = useRouter()
-  const byLocation = fold(
-    summary.byLocation.map((r) => ({ name: r.location.name, open: r.open, closed: r.closed })),
-  )
+  // Complaints raised before sites share one bucket with no site id
+  // (CONTRACT §10). It is not a site: it never folds into "Other", is
+  // never ranked among the sites, and always comes last.
+  const older = summary.bySite.find((r) => r.site.id === null)
+  const bySite = [
+    ...fold(
+      summary.bySite
+        .filter((r) => r.site.id !== null)
+        .map((r) => ({ name: r.site.name, open: r.open, closed: r.closed })),
+      older ? MAX_ROWS - 1 : MAX_ROWS,
+    ),
+    ...(older ? [{ name: older.site.name, open: older.open, closed: older.closed }] : []),
+  ]
   const byCategory = fold(
     summary.byCategory.map((r) => ({ name: r.category.name, open: r.open, closed: r.closed })),
   )
@@ -130,7 +140,7 @@ function DashboardBody({ summary }: { summary: ComplaintSummary }) {
         onAction={() => router.push("/complaints/new")}
         className="mt-8"
       >
-        Once complaints are raised at your locations, their numbers appear here.
+        Once complaints are raised at your sites, their numbers appear here.
       </EmptyState>
     )
   }
@@ -168,10 +178,10 @@ function DashboardBody({ summary }: { summary: ComplaintSummary }) {
       </MetricTileRow>
 
       <ChartCard
-        title="By location"
+        title="By site"
         description="Open counts every complaint not yet closed. All time."
-        rows={byLocation}
-        empty="No complaints at any location yet."
+        rows={bySite}
+        empty="No complaints at any site yet."
       />
 
       <DashboardPanels>

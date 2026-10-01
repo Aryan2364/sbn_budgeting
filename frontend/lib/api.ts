@@ -321,10 +321,7 @@ export interface Location {
   name: string
   isActive: boolean
   siteCount: number
-  userCount: number
   complaintCount: number
-  supervisor: { id: string; name: string } | null
-  manager: { id: string; name: string } | null
 }
 
 /** Kept for the budget screens: a location is a site location. */
@@ -348,7 +345,6 @@ export interface Person {
   canLogin: boolean
   designation: { id: string; name: string } | null
   reportsTo: { id: string; name: string } | null
-  locations: { id: string; name: string }[]
   modules: ModuleAccess
   /**
    * What points at this person — sites they manage or supervise,
@@ -368,7 +364,6 @@ export interface PersonBody {
   phone?: string | null
   designationId?: string | null
   reportsToId?: string | null
-  locationIds?: string[]
   modules?: {
     platform?: 'admin' | null
     budget?: 'admin' | 'staff' | null
@@ -384,7 +379,6 @@ export interface ImportRow {
   phone: string
   email?: string
   designation?: string
-  locations?: string[]
   reportsToPhone?: string
   canLogin?: boolean
   password?: string
@@ -400,7 +394,6 @@ export interface ImportPreview {
     changes: Array<{ field: string; from: string | null; to: string | null }>
     messages: string[]
   }>
-  newLocations: string[]
   summary: Record<ImportRowStatus, number>
 }
 

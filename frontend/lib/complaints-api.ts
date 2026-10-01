@@ -25,7 +25,7 @@ const UPLOAD_TIMEOUT_MS = 90_000
 const PHOTO_TIMEOUT_MS = 30_000
 
 // ---------------------------------------------------------------
-// Shapes, mirroring CONTRACT section 3
+// Shapes, mirroring CONTRACT sections 3 and 10
 // ---------------------------------------------------------------
 
 export type ComplaintStatus = "open" | "in_progress" | "awaiting_approval" | "closed"
@@ -44,7 +44,10 @@ export interface ComplaintRow {
   reference: string
   status: ComplaintStatus
   category: { id: string; name: string }
-  location: { id: string; name: string }
+  /** The budget site it was filed against. Null only on complaints raised before sites (§10). */
+  site: { id: string; name: string } | null
+  /** The complaint's own location (older complaints), else the site's location, else null. */
+  location: { id: string; name: string } | null
   /** Full text; the UI truncates. */
   description: string
   complainantName: string
@@ -56,7 +59,15 @@ export interface ComplaintRow {
   photoCount: number
 }
 
-export type ActionName = "start" | "resolve" | "approve" | "sendBack" | "reassign" | "comment"
+/**
+ * Where a complaint was filed, for display: its site, or for a complaint
+ * raised before sites, its location. Every screen names it this way.
+ */
+export function complaintPlace(row: Pick<ComplaintRow, "site" | "location">): string {
+  return row.site?.name ?? row.location?.name ?? "No site"
+}
+
+export type ActionName ="start" | "resolve" | "approve" | "sendBack" | "reassign" | "comment"
 
 export interface ActionState {
   allowed: boolean
@@ -121,10 +132,30 @@ export interface ComplaintCounts {
 
 export interface ComplaintSummary {
   byStatus: Record<ComplaintStatus, number>
-  byLocation: Array<{ location: { id: string; name: string }; open: number; closed: number }>
+  /**
+   * Older location-only complaints share one bucket with `site.id === null`
+   * ("No site (older complaint)"), always last. Never link that one.
+   */
+  bySite: Array<{ site: { id: string | null; name: string }; open: number; closed: number }>
   byCategory: Array<{ category: { id: string; name: string }; open: number; closed: number }>
   openAgeing: { d0_2: number; d3_7: number; d8_14: number; d15plus: number }
   closedLast7Days: number
+}
+
+/** One entry of the raise form's site picker (`GET /complaints/sites`, §10). */
+export interface ComplaintSiteOption {
+  id: string
+  name: string
+  /** The site's location, if it has one. */
+  location: { id: string; name: string } | null
+  /** Who routing would pick right now; null when nobody who can sign in. */
+  supervisor: PersonRef | null
+  /** Who routing would copy right now. */
+  manager: PersonRef | null
+  /** False: no supervisor who can sign in, so a raise here is refused. */
+  canReceive: boolean
+  /** When it cannot receive: the same sentence as the raise's 422. */
+  reason: string | null
 }
 
 export interface ComplaintCategory {
@@ -169,12 +200,12 @@ export interface ComplaintListParams {
   sort?: string
   direction?: "asc" | "desc"
   status?: string
-  locationId?: string
+  siteId?: string
   categoryId?: string
 }
 
 export interface RaiseComplaintBody {
-  locationId: string
+  siteId: string
   categoryId: string
   complainantName: string
   complainantPhone: string
@@ -229,7 +260,7 @@ export const complaintsApi = {
         sort: params.sort,
         direction: params.direction,
         status: params.status,
-        locationId: params.locationId,
+        siteId: params.siteId,
         categoryId: params.categoryId,
       })}`,
     ),
@@ -237,6 +268,9 @@ export const complaintsApi = {
   counts: () => api.get<ComplaintCounts>("/complaints/counts"),
 
   summary: () => api.get<ComplaintSummary>("/complaints/summary"),
+
+  /** Every site, by name (capped at 1000 by the API, unpaginated). */
+  sites: () => api.get<{ data: ComplaintSiteOption[] }>("/complaints/sites"),
 
   get: (id: string) => api.get<ComplaintDetail>(`/complaints/${id}`),
 

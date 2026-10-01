@@ -10,7 +10,6 @@ import {
   query,
   type Designation,
   type ListResponse,
-  type Location,
   type Matchable,
   type ModuleAccess,
   type Person,
@@ -55,7 +54,6 @@ import {
   MasterSection,
   useMasterRows,
 } from "@/components/forms/master-section"
-import { MultiSelect } from "@/components/ui/multi-select"
 import { useOptions } from "../_shared/use-options"
 
 /**
@@ -63,8 +61,12 @@ import { useOptions } from "../_shared/use-options"
  *
  * ONE list of people. Office staff sign in; a supervisor in the field
  * may sign in by phone; a manager named on a site may never sign in at
- * all. What each person is (designation), who they report to, where
- * they work (locations) and which modules they can open all live here.
+ * all. What each person is (designation), who they report to and
+ * which modules they can open all live here.
+ *
+ * People have no locations (removed 1 Oct 2026, user decision):
+ * complaints route by the budget site, which names its own supervisor
+ * and manager.
  */
 
 type ModuleKey = "platform" | "budget" | "complaints"
@@ -86,7 +88,6 @@ function describeModules(modules: ModuleAccess | null | undefined): string {
 
 interface PeopleFilters {
   designationId?: string
-  locationId?: string
   module?: ModuleKey
   canLogin?: "true" | "false"
 }
@@ -101,8 +102,7 @@ export default function PeopleSettingsPage() {
   const [search, setSearch] = React.useState("")
   const [filters, setFilters] = React.useState<PeopleFilters>({})
 
-  const designations = useOptions<Designation>("/designations", { sort: "sortOrder", direction: "asc" })
-  const locations = useOptions<Location>("/locations", { sort: "name", direction: "asc" })
+  const designations = useOptions<Designation>("/designations", { sort: "name", direction: "asc" })
 
   const load = React.useCallback(
     (page: number) =>
@@ -153,15 +153,12 @@ export default function PeopleSettingsPage() {
     { header: "Email", cell: (row) => row.email ?? "—", excelValue: (row) => row.email ?? null },
     { header: "Designation", cell: (row) => row.designation?.name ?? "—" },
     { header: "Reports to", cell: (row) => row.reportsTo?.name ?? "—" },
-    { header: "Locations", cell: (row) => row.locations.map((l) => l.name).join(", ") || "—" },
     { header: "Access", cell: (row) => describeModules(row.modules) },
     { header: "Signs in", cell: (row) => (row.canLogin ? "Yes" : "No") },
   ]
 
   const designationName = (id: string) =>
     designations.rows?.find((d) => d.id === id)?.name ?? "Designation"
-  const locationName = (id: string) =>
-    locations.rows?.find((l) => l.id === id)?.name ?? "Location"
 
   const activeFilterCount = Object.values(filters).filter(Boolean).length
   const filtered = activeFilterCount > 0 || search !== ""
@@ -172,7 +169,7 @@ export default function PeopleSettingsPage() {
         <ListSearch
           label="Search people"
           placeholder="Search people"
-          title="Searches name, phone, email, designation, reports to and locations"
+          title="Searches name, phone, email, designation and reports to"
           value={searchInput}
           onChange={(event) => setSearchInput(event.target.value)}
           onClear={() => setSearchInput("")}
@@ -181,7 +178,6 @@ export default function PeopleSettingsPage() {
           filters={filters}
           onApply={applyFilters}
           designations={designations.rows}
-          locations={locations.rows}
         />
         {!loading && rows !== null && filtered ? (
           <span className="text-label text-text-secondary">
@@ -216,12 +212,6 @@ export default function PeopleSettingsPage() {
               onRemove={() => applyFilters({ ...filters, designationId: undefined })}
             />
           ) : null}
-          {filters.locationId ? (
-            <FilterChip
-              label={`Location: ${locationName(filters.locationId)}`}
-              onRemove={() => applyFilters({ ...filters, locationId: undefined })}
-            />
-          ) : null}
           {filters.module ? (
             <FilterChip
               label={`Access: ${MODULE_LABEL[filters.module]}`}
@@ -246,7 +236,7 @@ export default function PeopleSettingsPage() {
     <>
       <MasterSection
         title="People"
-        description="Everyone in the organisation: what they are, who they report to, where they work and what they can open."
+        description="Everyone in the organisation: what they are, who they report to and what they can open."
         createLabel="Add person"
         canEdit={canEdit}
         cannotEditReason="Only a platform administrator can change people"
@@ -303,14 +293,6 @@ export default function PeopleSettingsPage() {
                   </Truncate>
                 </span>
               </div>
-            ),
-          },
-          {
-            key: "locations",
-            label: "Locations",
-            priority: "secondary",
-            render: (row) => (
-              <Truncate>{row.locations.map((l) => l.name).join(", ") || "—"}</Truncate>
             ),
           },
           {
@@ -379,7 +361,6 @@ export default function PeopleSettingsPage() {
           person={editing}
           selfId={user?.id ?? null}
           designations={designations.rows}
-          locations={locations.rows}
           onClose={() => {
             setCreating(false)
             setEditing(null)
@@ -405,12 +386,10 @@ function PeopleFilterButton({
   filters,
   onApply,
   designations,
-  locations,
 }: {
   filters: PeopleFilters
   onApply: (next: PeopleFilters) => void
   designations: Designation[] | null
-  locations: Location[] | null
 }) {
   const [open, setOpen] = React.useState(false)
   const [draft, setDraft] = React.useState<PeopleFilters>(filters)
@@ -418,8 +397,6 @@ function PeopleFilterButton({
 
   const designationOptions: Record<string, string> = { [ANY]: "Any designation" }
   for (const d of designations ?? []) designationOptions[d.id] = d.name
-  const locationOptions: Record<string, string> = { [ANY]: "Any location" }
-  for (const l of locations ?? []) locationOptions[l.id] = l.name
 
   return (
     <>
@@ -451,18 +428,6 @@ function PeopleFilterButton({
                   setDraft((d) => ({ ...d, designationId: v === ANY ? undefined : v }))
                 }
                 searchPlaceholder="Search designations"
-              />
-            </div>
-            <div className="flex flex-col gap-2">
-              <Label htmlFor="filter-location">Location</Label>
-              <SearchableSelect
-                id="filter-location"
-                options={locationOptions}
-                value={draft.locationId ?? ANY}
-                onValueChange={(v) =>
-                  setDraft((d) => ({ ...d, locationId: v === ANY ? undefined : v }))
-                }
-                searchPlaceholder="Search locations"
               />
             </div>
             <div className="flex flex-col gap-2">
@@ -545,7 +510,6 @@ interface PersonValues {
   phone: string
   designationId: string
   reportsToId: string
-  locationIds: string[]
   access: Access
   canLogin: boolean
   password: string
@@ -558,7 +522,6 @@ function valuesOf(person: Person | null): PersonValues {
     phone: person?.phone ?? "",
     designationId: person?.designation?.id ?? NONE,
     reportsToId: person?.reportsTo?.id ?? NONE,
-    locationIds: person?.locations.map((l) => l.id) ?? [],
     access: {
       platform: person?.modules.platform ?? null,
       budget: person?.modules.budget ?? null,
@@ -570,20 +533,18 @@ function valuesOf(person: Person | null): PersonValues {
   }
 }
 
-type FieldKey = "name" | "email" | "phone" | "reportsTo" | "locations" | "password"
+type FieldKey = "name" | "email" | "phone" | "reportsTo" | "password"
 
 function PersonDialog({
   person,
   selfId,
   designations,
-  locations,
   onClose,
   onSaved,
 }: {
   person: Person | null
   selfId: string | null
   designations: Designation[] | null
-  locations: Location[] | null
   onClose: () => void
   onSaved: () => void
 }) {
@@ -637,16 +598,12 @@ function PersonDialog({
 
   /**
    * Server refusals that belong to one field are shown on that field
-   * (section 7.1), not in the banner: the one-each 409 on Locations,
-   * a reports-to cycle on Reports to, a bad phone on Phone.
+   * (section 7.1), not in the banner: a reports-to cycle on Reports to,
+   * a bad or taken phone on Phone, a taken email on Email.
    */
   function place(caught: unknown): boolean {
     if (!(caught instanceof ApiError)) return false
     const message = caught.message
-    if (caught.status === 409 && /already has a (supervisor|manager)/i.test(message)) {
-      setFieldErrors((c) => ({ ...c, locations: message }))
-      return true
-    }
     if (caught.status === 422 && /report/i.test(message)) {
       setFieldErrors((c) => ({ ...c, reportsTo: message }))
       return true
@@ -685,7 +642,6 @@ function PersonDialog({
         phone: values.phone.trim() || null,
         designationId: values.designationId === NONE ? null : values.designationId,
         reportsToId: values.reportsToId === NONE ? null : values.reportsToId,
-        locationIds: values.locationIds,
         modules: {
           platform: values.access.platform,
           budget: values.access.budget,
@@ -719,14 +675,6 @@ function PersonDialog({
     if (p.id !== person?.id) {
       reportsToOptions[p.id] = p.designation ? `${p.name} (${p.designation.name})` : p.name
     }
-  }
-
-  const locationOptions: Record<string, string> = {}
-  for (const l of locations ?? []) {
-    if (l.isActive || values.locationIds.includes(l.id)) locationOptions[l.id] = l.name
-  }
-  for (const l of person?.locations ?? []) {
-    if (!(l.id in locationOptions)) locationOptions[l.id] = l.name
   }
 
   const close = unsaved.guard((open) => {
@@ -795,7 +743,7 @@ function PersonDialog({
             </section>
 
             <section className="flex flex-col gap-4">
-              <h3 className="text-card-heading font-medium text-text-primary">Role and places</h3>
+              <h3 className="text-card-heading font-medium text-text-primary">Role</h3>
               <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
                 <div className="flex min-w-0 flex-col gap-2">
                   <Label htmlFor="person-designation">Designation</Label>
@@ -825,28 +773,6 @@ function PersonDialog({
                     className={fieldErrors.reportsTo ? "border-danger" : undefined}
                   />
                   <InlineFieldError>{fieldErrors.reportsTo ?? people.error}</InlineFieldError>
-                </div>
-                <div className="flex min-w-0 flex-col gap-2 md:col-span-2">
-                  <Label htmlFor="person-locations">Locations</Label>
-                  <MultiSelect
-                    id="person-locations"
-                    options={locationOptions}
-                    value={values.locationIds}
-                    onValueChange={(v) => {
-                      set("locationIds", v)
-                      setFieldErrors((c) => ({ ...c, locations: null }))
-                    }}
-                    disabled={locations === null}
-                    invalid={Boolean(fieldErrors.locations)}
-                    describedBy="person-locations-help"
-                    placeholder={locations === null ? "Loading locations" : "No locations"}
-                    searchPlaceholder="Search locations"
-                  />
-                  <p id="person-locations-help" className="text-label text-text-secondary">
-                    Where they work. A supervisor or manager here receives the
-                    complaints raised at these locations.
-                  </p>
-                  <InlineFieldError>{fieldErrors.locations}</InlineFieldError>
                 </div>
               </div>
             </section>

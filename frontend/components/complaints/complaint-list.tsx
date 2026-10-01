@@ -9,6 +9,7 @@ import { cn } from "@/lib/utils"
 import { formatDate, formatNumber } from "@/lib/format"
 import type { ListResponse, Matchable } from "@/lib/api"
 import {
+  complaintPlace,
   complaintsApi,
   type ComplaintCounts,
   type ComplaintRow,
@@ -63,14 +64,18 @@ import { useComplaintMasters } from "@/components/complaints/use-masters"
  * own toolbar state (33.4): switching tab clears search and filters.
  *
  * Search covers what the API's runListQuery searches for complaints
- * (reference, description, complainant, location, category and the
- * people on it). Long free text is the API's to exclude, not ours.
+ * (reference, description, complainant, site, location, category and
+ * the people on it). Long free text is the API's to exclude, not ours.
+ *
+ * A complaint is filed against a site (CONTRACT §10); one raised before
+ * sites has none and shows its location in the Site column instead.
  */
 
 const TAB_VALUES = COMPLAINT_TABS.map((t) => t.value)
 const DEFAULT_SORT = "raisedAt"
 
-type SortKey = "number" | "raisedAt"
+type SortKey = "number" | "raisedAt" | "site"
+const SORT_KEYS: SortKey[] = ["number", "raisedAt", "site"]
 
 interface ListUrlState {
   tab: ComplaintTab
@@ -89,11 +94,11 @@ function readState(params: URLSearchParams): ListUrlState {
     search: params.get("q") ?? "",
     filters: {
       status: params.get("status") ?? undefined,
-      locationId: params.get("locationId") ?? undefined,
+      siteId: params.get("siteId") ?? undefined,
       categoryId: params.get("categoryId") ?? undefined,
     },
     page: Math.max(1, Number(params.get("page") ?? "1") || 1),
-    sort: sort === "number" ? "number" : "raisedAt",
+    sort: SORT_KEYS.includes(sort as SortKey) ? (sort as SortKey) : DEFAULT_SORT,
     direction: params.get("dir") === "asc" ? "asc" : "desc",
   }
 }
@@ -103,7 +108,7 @@ function writeState(state: ListUrlState): string {
   params.set("tab", state.tab)
   if (state.search) params.set("q", state.search)
   if (state.filters.status) params.set("status", state.filters.status)
-  if (state.filters.locationId) params.set("locationId", state.filters.locationId)
+  if (state.filters.siteId) params.set("siteId", state.filters.siteId)
   if (state.filters.categoryId) params.set("categoryId", state.filters.categoryId)
   if (state.page !== 1) params.set("page", String(state.page))
   if (state.sort !== DEFAULT_SORT) params.set("sort", state.sort)
@@ -124,7 +129,7 @@ const EMPTY_COPY: Record<
 > = {
   assigned: {
     heading: "Nothing is assigned to you",
-    body: "Complaints raised at a location you supervise appear here until you resolve them.",
+    body: "Complaints raised at a site you supervise appear here until you resolve them.",
     action: "all",
   },
   approval: {
@@ -196,9 +201,9 @@ export function ComplaintList() {
 
   // ---- the masters for the filter -----------------------------------
   const masters = useComplaintMasters({ activeOnly: false })
-  const locationOptions = React.useMemo(
-    () => (masters.locations ?? []).map((l) => ({ value: l.id, label: l.name })),
-    [masters.locations],
+  const siteOptions = React.useMemo(
+    () => (masters.sites ?? []).map((s) => ({ value: s.id, label: s.name })),
+    [masters.sites],
   )
   const categoryOptions = React.useMemo(
     () => (masters.categories ?? []).map((c) => ({ value: c.id, label: c.name })),
@@ -213,8 +218,18 @@ export function ComplaintList() {
     result: ListResponse<ComplaintRow & Matchable> | null
     error: string | null
   }>({ request: "", result: null, error: null })
-  /** The last good result, kept on screen while the next loads (5.6). */
-  const [shown, setShown] = React.useState<ListResponse<ComplaintRow & Matchable> | null>(null)
+  /**
+   * The last good result, kept on screen while the next loads (5.6) —
+   * but ONLY within the tab it came from. A new page, sort or search on
+   * the same tab keeps the old rows steady; a different tab is different
+   * data, and showing the previous tab's rows under it (then swapping
+   * them for that tab's empty state) is a flicker that lies about what
+   * the tab contains. A new tab shows its skeleton instead.
+   */
+  const [shown, setShown] = React.useState<{
+    tab: ComplaintTab
+    result: ListResponse<ComplaintRow & Matchable>
+  } | null>(null)
 
   React.useEffect(() => {
     let cancelled = false
@@ -231,7 +246,16 @@ export function ComplaintList() {
       .then((result) => {
         if (cancelled) return
         setAnswer({ request, result, error: null })
-        setShown(result)
+        setShown({ tab: state.tab, result })
+        // An unfiltered first page's total IS the tab's count (CONTRACT
+        // §3). Counts load once per visit, so keep the pill in step with
+        // what the list just said rather than letting the two disagree.
+        const unfiltered = state.search.trim() === "" && countFilters(state.filters) === 0
+        if (unfiltered) {
+          setCounts((c) =>
+            c && c[state.tab] !== result.total ? { ...c, [state.tab]: result.total } : c,
+          )
+        }
       })
       .catch((caught: unknown) => {
         if (!cancelled) setAnswer({ request, result: null, error: errorMessage(caught) })
@@ -249,10 +273,21 @@ export function ComplaintList() {
     : answer.error !== null
       ? "failed"
       : "ready"
-  const result = phase === "ready" ? answer.result : shown
+  const result =
+    phase === "ready" ? answer.result : shown?.tab === state.tab ? shown.result : null
   const rows = result?.data ?? []
   const total = result?.total ?? 0
   const filtered = state.search.trim() !== "" || countFilters(state.filters) > 0
+  /**
+   * The tab's own count already says it is empty, and nothing narrows it.
+   * Show the empty state at once instead of a table-shaped skeleton that
+   * then collapses into it (14.1: the page does not jump when data
+   * lands). The request still runs; if the count was stale the rows
+   * arrive and replace this, and the count is corrected above.
+   */
+  const knownEmpty =
+    phase === "loading" && !result && !filtered && counts !== null && counts[state.tab] === 0
+  const showsNothingYet = (phase === "ready" && rows.length === 0 && !filtered) || knownEmpty
 
   const switchTab = (tab: ComplaintTab) => {
     setSearchInput("")
@@ -263,7 +298,8 @@ export function ComplaintList() {
     setState((s) =>
       s.sort === key
         ? { ...s, direction: s.direction === "asc" ? "desc" : "asc", page: 1 }
-        : { ...s, sort: key, direction: "desc", page: 1 },
+        : // A name reads A to Z first; a number or a date, newest first.
+          { ...s, sort: key, direction: key === "site" ? "asc" : "desc", page: 1 },
     )
 
   const copy = EMPTY_COPY[state.tab]
@@ -297,7 +333,7 @@ export function ComplaintList() {
         Clearing the search and filters will show the whole tab again.
       </EmptyState>
     )
-  } else if (phase === "ready" && rows.length === 0) {
+  } else if (showsNothingYet) {
     body = (
       <EmptyState
         variant="nothing-yet"
@@ -333,7 +369,7 @@ export function ComplaintList() {
     <PageFrame className="max-sm:px-4">
       <PageHeader
         title="Complaints"
-        meta={result ? noun(total) : "Loading complaints"}
+        meta={result ? noun(total) : knownEmpty ? noun(0) : "Loading complaints"}
         actions={
           <Button render={<Link href="/complaints/new" />} nativeButton={false}>
             <PlusIcon />
@@ -360,7 +396,7 @@ export function ComplaintList() {
         ) : null}
         <ComplaintFilterButton
           filters={state.filters}
-          locations={locationOptions}
+          sites={siteOptions}
           categories={categoryOptions}
           onApply={setFilters}
         />
@@ -368,7 +404,7 @@ export function ComplaintList() {
 
       <ComplaintFilterChips
         filters={state.filters}
-        locations={locationOptions}
+        sites={siteOptions}
         categories={categoryOptions}
         onChange={setFilters}
       />
@@ -379,7 +415,7 @@ export function ComplaintList() {
           <ListPagination
             page={page}
             pageSize={pageSize}
-            total={result ? total : phase === "loading" ? null : 0}
+            total={result ? total : knownEmpty ? 0 : phase === "loading" ? null : 0}
             onPageChange={(next) => setState((s) => ({ ...s, page: next }))}
             emptyLabel={noun(0)}
             loadingLabel="Loading complaints"
@@ -433,8 +469,8 @@ function SortHeader({
 
 /**
  * From 768px. Column widths come from the col-* tokens (17.1); the
- * free-text columns (the complaint, the location) take what is left and
- * truncate. The category sits under the location; the supervisor is
+ * free-text columns (the complaint, the site) take what is left and
+ * truncate. The category sits under the site; the supervisor is
  * secondary and drops below 1024.
  */
 function ComplaintTable({
@@ -456,7 +492,9 @@ function ComplaintTable({
             <SortHeader label="Reference" sortKey="number" sort={sort} direction={direction} onSort={onSort} />
           </TableHead>
           <TableHead>Complaint</TableHead>
-          <TableHead>Location</TableHead>
+          <TableHead>
+            <SortHeader label="Site" sortKey="site" sort={sort} direction={direction} onSort={onSort} />
+          </TableHead>
           <TableHead className="hidden lg:table-cell">Supervisor</TableHead>
           <TableHead className="w-col-status">Status</TableHead>
           <TableHead numeric className="w-col-date">
@@ -487,10 +525,10 @@ function ComplaintTable({
               </span>
             </TableCell>
             <TableCell>
-              {/* Where, then what: the category rides under the location
+              {/* Where, then what: the category rides under the site
                   rather than taking a column the description needs. */}
               <span className="flex min-w-0 flex-col">
-                <Truncate>{row.location.name}</Truncate>
+                <Truncate>{complaintPlace(row)}</Truncate>
                 <Truncate className="text-meta text-text-secondary">{row.category.name}</Truncate>
               </span>
             </TableCell>
@@ -541,7 +579,7 @@ function ComplaintCards({ rows }: { rows: Array<ComplaintRow & Matchable> }) {
               <CardContent className="flex flex-col gap-2 pt-0">
                 <p className="line-clamp-2 text-body text-text-primary">{row.description}</p>
                 <p className="min-w-0 truncate text-label text-text-secondary">
-                  {row.location.name} · {row.category.name}
+                  {complaintPlace(row)} · {row.category.name}
                 </p>
                 <p className="text-meta text-text-muted">
                   Raised {formatDate(row.raisedAt)} · Age {ageLabel(row.ageDays).toLowerCase()}
