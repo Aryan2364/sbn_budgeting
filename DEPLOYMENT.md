@@ -172,12 +172,22 @@ connection's `search_path` is how it finds them:
 options=-c search_path=budgeting,complaints,shared,public
 ```
 
+That is production's, and right for any database shaped like it. A plain
+local database keeps the budget tables in `public` and has no `budgeting`
+schema, so it uses:
+
+```
+options=-c search_path=public,complaints,shared
+```
+
 **All three schemas must be on the path.** Without `shared`, `users` is
 not found and nobody can sign in.
 
-**`budgeting` stays first.** Migrations 0001–0008 created their tables
-unqualified, so they landed in the first schema on the path, and
-`migrate.js` creates `schema_migrations` there too. From 0009 on, each
+**The first schema on the path is the one holding the budget tables and
+`schema_migrations`** — `budgeting` in production, `public` locally.
+Migrations 0001–0008 created their tables unqualified, so they landed in
+the first schema on the path, and `migrate.js` creates
+`schema_migrations` there too. From 0009 on, each
 migration places its own tables with `set local search_path = …` at the
 top, which lasts only for that migration's transaction. A new migration
 **must** do the same:
@@ -187,6 +197,15 @@ top, which lasts only for that migration's transaction. A new migration
 - a complaints table: `set local search_path = complaints, shared, budgeting, public;`
 - a new module gets its own schema: `create schema if not exists <module>;`
   followed by `set local search_path = <module>, shared, public;`
+
+Why the rule is about the first schema that *exists*: on 1–2 Oct 2026 a
+local `.env` carried production's path, on a database with no
+`budgeting`. Postgres skips a missing schema when it looks a name up, but
+creates unqualified tables in the first schema on the path that does
+exist — here `complaints`, made by 0010. So `migrate.js` found no
+`schema_migrations`, created a fresh one in `complaints`, and re-ran
+0001–0008 into it, and the API then resolved `users` to that empty copy.
+Production was never affected: `budgeting` exists there and is first.
 
 The split was rehearsed on 30 Sep 2026 against a copy of the dev database
 reshaped like production (tables in `budgeting`, an empty `shared`).
