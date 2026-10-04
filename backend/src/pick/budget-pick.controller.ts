@@ -20,6 +20,11 @@ import { runPickQuery } from './pick-query';
  *   sites       id, name, projectId,      the report scope narrows by project;
  *               plantationStartDate,      the expense form derives the period
  *               plantationCompleteDate    from the two dates
+ *
+ * Narrowing (never widening): sites take `projectId=<uuid>`, or
+ * `projectId=none` for the sites in no project (the report scope's "No
+ * project"), so a searched site list can follow the chosen project
+ * without the browser filtering a capped answer (access plan P8).
  *   cost_heads  id, name, sortOrder,      pick-for-everyone; screens list heads
  *               isActive                  in the sheet's order; retired heads
  *                                         only with includeInactive=true
@@ -30,6 +35,19 @@ function one(value: unknown, name: string): string | undefined {
   if (value === undefined) return undefined;
   if (typeof value !== 'string') throw new BadRequestException(`Send ${name} once, as text.`);
   return value;
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** The reports' "sites in no project" (reports/variance.service.ts NO_PROJECT). */
+const NO_PROJECT = 'none';
+
+/** A project to narrow sites to: a uuid, `none`, or absent. */
+function projectFilter(value: unknown): string | undefined {
+  const v = one(value, 'projectId');
+  if (v === undefined || v === '') return undefined;
+  if (v === NO_PROJECT || UUID.test(v)) return v;
+  throw new BadRequestException('projectId must be a project id or none.');
 }
 
 /** `true` widens to retired heads too; `false` or absent leaves them out. */
@@ -84,7 +102,12 @@ export class BudgetPickController {
 
   @Get('sites')
   @PickOf('budget.sites')
-  sites(@CurrentAccess() access: AccessContext, @Query('q') q?: unknown): Promise<SitePick[]> {
+  sites(
+    @CurrentAccess() access: AccessContext,
+    @Query('q') q?: unknown,
+    @Query('projectId') projectId?: unknown,
+  ): Promise<SitePick[]> {
+    const project = projectFilter(projectId);
     return runPickQuery<SitePick>(
       this.pool,
       access,
@@ -96,6 +119,12 @@ export class BudgetPickController {
                  s.plantation_start_date as "plantationStartDate",
                  s.plantation_complete_date as "plantationCompleteDate"`,
         nameSql: 's.name',
+        where: (param) =>
+          project === undefined
+            ? []
+            : project === NO_PROJECT
+              ? ['s.project_id is null']
+              : [`s.project_id = ${param(project)}`],
       },
       one(q, 'q'),
     );

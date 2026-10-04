@@ -68,6 +68,11 @@ export interface Viewer {
    * rule on top.
    */
   may: Readonly<Record<PermissionAction, true | string>>;
+  /**
+   * Whether each key is held at SOME scope. A refusal of a held key is a
+   * scope miss on this complaint; of an unheld key, the key itself.
+   */
+  held: Readonly<Record<PermissionAction, boolean>>;
 }
 
 export interface PersonRef {
@@ -112,7 +117,9 @@ export function checkAction(action: ActionName, viewer: Viewer, c: PermissionSub
   // 1. The permission layer.
   const may = viewer.may[NEEDS[action]];
   if (may !== true) {
-    return permission(action === 'reassign' ? (reassignersReason(c) ?? may) : may);
+    // Reassign held, but not at a scope reaching this complaint: say who can.
+    const scopeMiss = action === 'reassign' && viewer.held.reassign;
+    return permission(scopeMiss ? (reassignersReason(c) ?? may) : may);
   }
 
   // 2. The workflow layer.

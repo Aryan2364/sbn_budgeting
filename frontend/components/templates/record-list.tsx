@@ -10,6 +10,7 @@ import { ApiError, type ListResponse, type Matchable } from "@/lib/api"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { EmptyState } from "@/components/ui/empty-state"
+import { PermissionTooltip } from "@/components/ui/permission-tooltip"
 import { PrintHeader } from "@/components/ui/print-header"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
@@ -147,6 +148,13 @@ export interface RecordListProps<T> {
   /** Omitted on a read-only screen, which then has no primary button. */
   createHref?: string
   createLabel?: string
+  /**
+   * Kit 26: whether this person may create one, and if not, why. The
+   * button stays, disabled inside PermissionTooltip, never hidden; while
+   * `allowed` is undefined it is disabled with no reason (kit 26.1).
+   * Omitted: always allowed.
+   */
+  createAllowed?: { allowed: boolean | undefined; reason: string }
   /**
    * Section 27.2: every list declares its default sort. Without this
    * the default was "the first sortable column, descending", which is
@@ -333,6 +341,7 @@ export function RecordList<T extends { id: string }>({
   searchPlaceholder,
   createHref,
   createLabel,
+  createAllowed,
   defaultSort,
   defaultDirection = "desc",
   columns,
@@ -613,7 +622,7 @@ export function RecordList<T extends { id: string }>({
             onAction={
               emptyActionHref
                 ? () => router.push(emptyActionHref)
-                : createHref
+                : createHref && (createAllowed === undefined || createAllowed.allowed === true)
                   ? () => router.push(createHref)
                   : undefined
             }
@@ -748,10 +757,26 @@ export function RecordList<T extends { id: string }>({
         }
         actions={
           createHref && createLabel ? (
-            <Button render={<Link href={createHref} />}>
-              <PlusIcon />
-              {createLabel}
-            </Button>
+            createAllowed === undefined ? (
+              <Button render={<Link href={createHref} />}>
+                <PlusIcon />
+                {createLabel}
+              </Button>
+            ) : (
+              <PermissionTooltip allowed={createAllowed.allowed} reason={createAllowed.reason}>
+                {createAllowed.allowed === true ? (
+                  <Button render={<Link href={createHref} />}>
+                    <PlusIcon />
+                    {createLabel}
+                  </Button>
+                ) : (
+                  <Button disabled>
+                    <PlusIcon />
+                    {createLabel}
+                  </Button>
+                )}
+              </PermissionTooltip>
+            )
           ) : undefined
         }
       />

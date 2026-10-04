@@ -86,9 +86,12 @@ export async function accessManagers(db: Db): Promise<AccessManager[]> {
   return rows;
 }
 
+/** The words after the person's name in kit 40.11's sentence (the list SQL builds the same sentence). */
+export const LAST_HOLDER_SUFFIX = ' is the only person who can manage access. Give that to someone else first.';
+
 /** Kit 40.11's sentence. Names what the person can do, never a role. */
 export function lastHolderReason(name: string): string {
-  return `${name} is the only person who can manage access. Give that to someone else first.`;
+  return `${name}${LAST_HOLDER_SUFFIX}`;
 }
 
 /** 409 `{ error: 'blocked', reason }` (R7). `message` repeats the reason for today's client. */

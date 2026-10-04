@@ -152,9 +152,28 @@ function actionsOnlyIdFor(d: Difference, world: IntendedWorld): string | null {
   return world.selfApprovals.has(who) ? 'D6' : 'D1';
 }
 
+/**
+ * D5 (plan 6.3.3; P6): "You can't remove your own platform admin" (422)
+ * becomes the last-holder rule. Removing your own Admin is allowed (200)
+ * while another active Admin exists, and refused (409) when you are the
+ * last. Only the case that sends `modules: { platform: null }` answered
+ * 422 before, and only for the caller's own record (the handler's one
+ * 422 for a modules-only body), so the matcher is that case and that
+ * change of status, nothing wider.
+ */
+export const D5_CASE = 'PATCH /api/users/:id [remove-platform-admin]';
+
+function d5IdFor(d: Difference): string | null {
+  if (d.kind !== 'field' || d.field !== 'status') return null;
+  if ((d.key.split(' |')[0] ?? '') !== D5_CASE) return null;
+  return d.baseline === 422 && (d.run === 200 || d.run === 409) ? 'D5' : null;
+}
+
 /** The id of the intended difference this one is, or null when it is unexplained. */
 export function intendedIdFor(d: Difference, world?: IntendedWorld): string | null {
   if ((d.kind === 'route-only-in-run' || d.kind === 'case-only-in-run') && isNewSystemRoute(d.key)) return 'D7';
+  const d5 = d5IdFor(d);
+  if (d5) return d5;
   if (d.kind === 'field' && world) {
     const id = d6IdFor(d, world) ?? actionsOnlyIdFor(d, world);
     if (id) return id;

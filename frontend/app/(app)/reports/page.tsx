@@ -4,6 +4,7 @@ import * as React from "react"
 import { useSearchParams } from "next/navigation"
 
 import { api, query } from "@/lib/api"
+import { usePageGuard } from "@/lib/permissions"
 import type {
   HeadPeriodReport,
   HeadPeriodRow,
@@ -122,11 +123,20 @@ const TABS: SectionTab[] = [
   { value: "heads", label: "By cost head and year" },
 ]
 
+/**
+ * Kit 26.7 rule 2: a report whose only purpose is the amounts is an
+ * area, so without see amounts it is the 11.8 "No access" page, never a
+ * page of blanks. Reports' own key already needs see amounts (plan O9);
+ * this holds the rule for a role that somehow has one without the other.
+ */
 export default function ReportsPage() {
+  const denied = usePageGuard("budget.amounts.see")
   return (
-    <React.Suspense fallback={null}>
-      <Reports />
-    </React.Suspense>
+    denied ?? (
+      <React.Suspense fallback={null}>
+        <Reports />
+      </React.Suspense>
+    )
   )
 }
 

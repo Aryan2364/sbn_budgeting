@@ -7,6 +7,7 @@ import { formatDate, formatNumber } from "@/lib/format"
 import { Truncate } from "@/components/ui/truncate"
 import type { ExportColumn } from "@/lib/pdf-export"
 import { RecordList, type RecordColumn } from "@/components/templates/record-list"
+import { useCanAll } from "@/lib/permissions"
 
 /**
  * Section 17.1: fixed widths go only to columns with a KNOWN maximum.
@@ -91,6 +92,8 @@ const PDF_COLUMNS: ExportColumn<Project>[] = [
 ]
 
 export default function ProjectsPage() {
+  // Kit 26: the button stays, disabled with its reason, for someone who may not add one.
+  const createAnswer = useCanAll(["budget.projects.create"])
   const load = React.useCallback(
     ({ page, search, sort, direction }: {
       page: number; search: string; sort: string; direction: "asc" | "desc"
@@ -111,6 +114,7 @@ export default function ProjectsPage() {
       searchPlaceholder="Search projects"
       createHref="/projects/new"
       createLabel="New project"
+      createAllowed={createAnswer}
       exportPdf={{
         title: "Projects",
         columns: PDF_COLUMNS,

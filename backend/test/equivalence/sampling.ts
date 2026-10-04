@@ -30,7 +30,9 @@ export type RecordType =
   | 'location'
   | 'complaint_category'
   | 'notification'
-  | 'photo';
+  | 'photo'
+  /** P6: the access API's roles (new-system routes, D7). */
+  | 'role';
 
 /** One sampled record. `id` is `complaintId/photoId` for photos. */
 export interface Sampled {
@@ -140,6 +142,10 @@ const QUERIES: Record<RecordType, ClassQuery[]> = {
     { cls: 'on-complaint-raised-by-me', sql: `select (c.id::text || '/' || p.id::text) as id from complaint_photos p join complaints c on c.id = p.complaint_id where c.raised_by = $1` },
     { cls: 'on-complaint-named-on', sql: `select (c.id::text || '/' || p.id::text) as id from complaint_photos p join complaints c on c.id = p.complaint_id where ${COMPLAINT_NAMED}` },
     { cls: 'none', sql: `select (c.id::text || '/' || p.id::text) as id from complaint_photos p join complaints c on c.id = p.complaint_id where c.raised_by <> $1 and not ${COMPLAINT_NAMED}` },
+  ],
+  role: [
+    { cls: 'held', sql: `select ur.role_id as id from user_roles ur where ur.user_id = $1` },
+    { cls: 'not-held', sql: `select r.id from roles r where not exists (select 1 from user_roles ur where ur.role_id = r.id and ur.user_id = $1)` },
   ],
 };
 

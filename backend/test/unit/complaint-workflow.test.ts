@@ -65,9 +65,11 @@ function idOf(who: Who): string {
 
 const REFUSED = 'You can do that only on complaints that name you.';
 
-function viewer(who: Who, refused: PermissionAction | null): Viewer {
+/** `refused` is held at a scope that misses this complaint, or with `unheld`, not held at all. */
+function viewer(who: Who, refused: PermissionAction | null, unheld = false): Viewer {
   const may = Object.fromEntries(PERMISSION_ACTIONS.map((a) => [a, a === refused ? REFUSED : true])) as Viewer['may'];
-  return { id: idOf(who), may };
+  const held = Object.fromEntries(PERMISSION_ACTIONS.map((a) => [a, !(unheld && a === refused)])) as Viewer['held'];
+  return { id: idOf(who), may, held };
 }
 
 /** The rules, stated once and plainly (plan 6.2 "Stays workflow, never a role"). */
@@ -173,11 +175,12 @@ describe('complaint workflow: permission x workflow (P5)', () => {
       checkAction('reassign', viewer('supervisor', 'reassign'), { ...c, hod: MANAGER }).reason,
       'Only Mahesh Manager, the manager, can reassign this.',
     );
-    // Nobody named: the permission layer's own sentence.
+    // Nobody named, or the key not held at all: the permission layer's own sentence.
     assert.equal(
       checkAction('reassign', viewer('supervisor', 'reassign'), { ...c, manager: null, hod: null }).reason,
       REFUSED,
     );
+    assert.equal(checkAction('reassign', viewer('supervisor', 'reassign', true), c).reason, REFUSED);
     for (const name of ACTION_NAMES) {
       for (const who of WHO) {
         for (const status of STATUSES) {

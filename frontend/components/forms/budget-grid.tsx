@@ -19,7 +19,9 @@ import {
 import { PERIODS, PERIOD_VALUES } from "@/lib/periods"
 import Link from "next/link"
 
+import { useCanAll } from "@/lib/permissions"
 import { errorMessage } from "@/components/shell/session"
+import { PermissionTooltip } from "@/components/ui/permission-tooltip"
 import { toast } from "@/components/ui/sonner"
 import { Button } from "@/components/ui/button"
 import { InlineFieldError } from "@/components/ui/inline-field-error"
@@ -63,6 +65,12 @@ export function BudgetGrid({
   plannedTrees: number
   siteName: string
 }) {
+  /**
+   * Kit 26: someone who may view but not edit budgets sees the same grid
+   * with its cells disabled and Save disabled with the reason. Editing
+   * needs see amounts too; the server refuses either missing with 403.
+   */
+  const edit = useCanAll(["budget.budgets.edit", "budget.amounts.see"])
   const [heads, setHeads] = React.useState<CostHeadPick[] | null>(null)
   const [cells, setCells] = React.useState<CellMap>({})
   const [initial, setInitial] = React.useState<CellMap>({})
@@ -326,6 +334,7 @@ export function BudgetGrid({
                           /* Section 31.2: the placeholder says what the
                              absence means. Never "0". */
                           placeholder="Not set"
+                          disabled={edit.allowed !== true}
                           onChange={(event) =>
                             setCell(head.id, period, event.target.value)
                           }
@@ -336,6 +345,8 @@ export function BudgetGrid({
                             "h-control w-grid-cell rounded-lg border border-border bg-surface px-3",
                             "text-right text-body tabular-nums text-text-primary transition-colors",
                             "placeholder:text-text-muted",
+                            // The input's own disabled treatment (31.1: an input in a table).
+                            "disabled:cursor-default disabled:border-border-light disabled:bg-surface-sunken disabled:text-text-muted",
                             "outline-none focus-visible:border-primary-ring focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-primary-ring",
                             "aria-invalid:border-danger aria-invalid:focus-visible:outline-danger",
                           )}
@@ -442,9 +453,14 @@ export function BudgetGrid({
           <Button variant="secondary" render={<Link href={`/sites/${siteId}`} />}>
             Cancel
           </Button>
-          <Button onClick={save} disabled={saving || !dirty || hasErrors}>
-            {saving ? "Saving…" : "Save budget"}
-          </Button>
+          <PermissionTooltip allowed={edit.allowed} reason={edit.reason}>
+            <Button
+              onClick={save}
+              disabled={edit.allowed !== true || saving || !dirty || hasErrors}
+            >
+              {saving ? "Saving…" : "Save budget"}
+            </Button>
+          </PermissionTooltip>
         </span>
       </FormFooter>
     </FormFrame>

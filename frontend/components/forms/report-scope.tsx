@@ -2,9 +2,9 @@
 
 import * as React from "react"
 
-import { pick, type SitePick } from "@/lib/api"
+import { pick } from "@/lib/api"
 import { Label } from "@/components/ui/label"
-import { SearchableSelect } from "@/components/ui/searchable-select"
+import { SearchableSelect, type SearchOption } from "@/components/ui/searchable-select"
 
 /**
  * The scope both year-wise reports are read at: every site by
@@ -34,6 +34,11 @@ import { SearchableSelect } from "@/components/ui/searchable-select"
  * section 16.3 puts the search box at six options. Choosing the plain
  * `select` because there is one project today is how a screen breaks
  * quietly at the seventh.
+ *
+ * Sites search the server as the user types (access plan P8): a Pick
+ * answers at most 50, and nothing caps the number of sites. The server
+ * narrows them to the chosen project, so the list follows the project
+ * without the browser filtering a capped answer.
  */
 
 /**
@@ -58,15 +63,18 @@ export interface ReportScope {
 export function useReportScope(): {
   scope: ReportScope
   setProjectId: (id: string) => void
-  setSiteId: (id: string) => void
+  setSiteId: (id: string, option?: SearchOption) => void
   projects: Record<string, string>
+  /** The names of the sites chosen so far, for labelling the scope. */
   sites: Record<string, string>
+  /** The site search, narrowed to the chosen project. */
+  searchSites: (query: string) => Promise<SearchOption[]>
   loading: boolean
   failure: string | null
   retry: () => void
 } {
   const [projects, setProjects] = React.useState<Record<string, string>>({})
-  const [allSites, setAllSites] = React.useState<SitePick[]>([])
+  const [siteNames, setSiteNames] = React.useState<Record<string, string>>({})
   const [projectId, setProjectIdState] = React.useState("")
   const [siteId, setSiteIdState] = React.useState("")
   const [loading, setLoading] = React.useState(true)
@@ -77,8 +85,9 @@ export function useReportScope(): {
     let cancelled = false
     // Choosing a scope is picking (access plan P7 inventory 7): the
     // project and site Picks, which a report's permission brings with it.
-    Promise.all([pick.projects(), pick.sites()])
-      .then(([projectList, siteList]) => {
+    pick
+      .projects()
+      .then((projectList) => {
         if (cancelled) return
         // "No project" leads, before the names. It is a scope in its
         // own right, not a fallback for a missing one, and a reader
@@ -93,7 +102,6 @@ export function useReportScope(): {
           [NO_PROJECT]: "No project",
           ...Object.fromEntries(projectList.map((p) => [p.id, p.name])),
         })
-        setAllSites(siteList)
         // No default to set: the initial "" IS the scope, and it means
         // every site. Seeding the first project here is what the change
         // above removed.
@@ -101,7 +109,7 @@ export function useReportScope(): {
       })
       .catch(() => {
         if (cancelled) return
-        setFailure("The project and site lists could not be loaded.")
+        setFailure("The project list could not be loaded.")
         setLoading(false)
       })
     return () => {
@@ -109,19 +117,12 @@ export function useReportScope(): {
     }
   }, [attempt])
 
-  // Derived in render, not synced in an effect: the sites a project has
-  // are a function of the project, never a separate piece of state.
-  const sites = React.useMemo(
-    () =>
-      Object.fromEntries(
-        allSites
-          .filter((s) => {
-            if (projectId === NO_PROJECT) return s.projectId === null
-            return !projectId || s.projectId === projectId
-          })
-          .map((s) => [s.id, s.name]),
-      ),
-    [allSites, projectId],
+  const searchSites = React.useCallback(
+    (query: string): Promise<SearchOption[]> =>
+      pick
+        .sites({ q: query, projectId: projectId || undefined })
+        .then((rows) => rows.map((site) => ({ value: site.id, label: site.name }))),
+    [projectId],
   )
 
   return {
@@ -132,9 +133,13 @@ export function useReportScope(): {
       setProjectIdState(id)
       setSiteIdState("")
     },
-    setSiteId: setSiteIdState,
+    setSiteId: (id: string, option?: SearchOption) => {
+      if (option) setSiteNames((names) => ({ ...names, [option.value]: option.label }))
+      setSiteIdState(id)
+    },
     projects,
-    sites,
+    sites: siteNames,
+    searchSites,
     loading,
     failure,
     retry: () => {
@@ -151,6 +156,7 @@ export function ReportScopeControls({
   setSiteId,
   projects,
   sites,
+  searchSites,
   loading,
 }: ReturnType<typeof useReportScope>) {
   return (
@@ -170,13 +176,18 @@ export function ReportScopeControls({
       <div className="flex items-center gap-2">
         <Label htmlFor="scope-site">Site</Label>
         <SearchableSelect
+          // A new project is a new list: remounting drops the old answer.
+          key={scope.projectId}
           id="scope-site"
-          options={{ "": "All sites", ...sites }}
+          options={{ "": "All sites" }}
+          search={searchSites}
+          selectedLabel={sites[scope.siteId]}
           value={scope.siteId}
           onValueChange={setSiteId}
           disabled={loading}
           placeholder="All sites"
           searchPlaceholder="Search sites"
+          emptyMessage={(q) => (q ? `No sites match '${q}'.` : "There are no sites here.")}
         />
       </div>
     </>

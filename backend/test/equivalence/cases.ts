@@ -121,6 +121,18 @@ const masterById = (route: string, table: string, type: RecordType): Record<stri
   [`DELETE /api/${route}/:id`]: { params: { id: type }, variants: [{ name: '' }] },
 });
 
+/** A role as it stands: its name, description and ticks (stored rows other than Picks). */
+async function sameRole(world: World, id: string): Promise<unknown> {
+  const row = await world.one<{ name: string; description: string; permissions: Record<string, string> | null }>(
+    `select r.name, r.description,
+            (select json_object_agg(rp.permission_key, rp.scope) from role_permissions rp
+             where rp.role_id = r.id and rp.permission_key not like '%.pick') as permissions
+     from roles r where r.id = $1`,
+    [id],
+  );
+  return { name: row?.name ?? 'Harness Role', description: row?.description ?? '', permissions: row?.permissions ?? {} };
+}
+
 export const ROUTES: Record<string, RouteSpec> = {
   // ---- auth ---------------------------------------------------------
   'POST /api/auth/login': {
@@ -333,6 +345,71 @@ export const ROUTES: Record<string, RouteSpec> = {
   'POST /api/users/import/commit': {
     variants: [{ name: '', json: () => ({ rows: [{ name: 'Harness Import', phone: '9000000099' }] }) }],
   },
+
+  // ---- the access API (P6; new-system routes, D7) ---------------------
+  // Writes resend the record's current state, so an allowed save changes
+  // nothing; every request is rolled back all the same.
+  'GET /api/access/roles': { variants: [{ name: '', list: true }] },
+  'GET /api/access/roles/:id': { params: { id: 'role' }, variants: [{ name: '' }] },
+  'POST /api/access/roles': {
+    variants: [
+      { name: '', json: () => ({ name: 'Harness Role', permissions: { 'budget.expenses.create': 'own' } }) },
+    ],
+  },
+  'PUT /api/access/roles/:id': {
+    params: { id: 'role' },
+    variants: [{ name: 'same', json: ({ world, params }) => sameRole(world, params.id!) }],
+  },
+  'DELETE /api/access/roles/:id': { params: { id: 'role' }, variants: [{ name: '' }] },
+  'GET /api/access/people': {
+    variants: [{ name: '', list: true }, { name: 'active', list: true, query: { status: 'active' } }],
+  },
+  'GET /api/access/people/:id': { params: { id: 'user' }, variants: [{ name: '' }] },
+  'GET /api/access/people/:id/effective': { params: { id: 'user' }, variants: [{ name: '' }] },
+  'PUT /api/access/people/:id/access': {
+    params: { id: 'user' },
+    variants: [
+      {
+        name: 'same',
+        json: async ({ world, params }) => {
+          const row = await world.one<{ roleIds: string[]; unitIds: string[] }>(
+            `select coalesce((select array_agg(role_id::text) from user_roles where user_id = $1), '{}') as "roleIds",
+                    coalesce((select array_agg(unit_id::text) from user_units where user_id = $1), '{}') as "unitIds"`,
+            [params.id],
+          );
+          return { roleIds: row?.roleIds ?? [], unitIds: row?.unitIds ?? [] };
+        },
+      },
+    ],
+  },
+  'PUT /api/access/people/:id/active': {
+    params: { id: 'user' },
+    variants: [
+      {
+        name: 'same',
+        json: async ({ world, params }) => {
+          const u = await world.one<{ active: boolean }>('select active from users where id = $1', [params.id]);
+          return { active: u?.active ?? true };
+        },
+      },
+    ],
+  },
+  'PUT /api/access/people/:id/reports-to': {
+    params: { id: 'user' },
+    variants: [
+      {
+        name: 'same',
+        json: async ({ world, params }) => {
+          const u = await world.one<{ reports_to: string | null }>('select reports_to from users where id = $1', [
+            params.id,
+          ]);
+          return { reportsToId: u?.reports_to ?? null };
+        },
+      },
+    ],
+  },
+  'GET /api/access/units': { variants: [{ name: '' }] },
+  'GET /api/access/history': { variants: [{ name: '', list: true }] },
 
   // ---- complaints ---------------------------------------------------
   'GET /api/complaints': {

@@ -35,7 +35,7 @@ import {
   expenseFilterLabels,
   type ExpenseFilterValues,
 } from "@/components/forms/expense-filter"
-import { reasonFor, useCan } from "@/lib/permissions"
+import { reasonFor, useCan, useCanAll, useCanSeeAmounts } from "@/lib/permissions"
 import { errorMessage } from "@/components/shell/session"
 import { Badge } from "@/components/ui/badge"
 import { Banner, BannerDescription, BannerTitle } from "@/components/ui/banner"
@@ -172,6 +172,11 @@ const SITE_EXPENSE_COLUMNS: RecordColumn<Expense>[] = [
   },
 ]
 
+/** Kit 26.7: without see amounts the Amount column is absent, never empty. */
+const SITE_EXPENSE_COLUMNS_WITHOUT_AMOUNTS = SITE_EXPENSE_COLUMNS.filter(
+  (column) => column.key !== "amountPaise",
+)
+
 /** Mirrors `SITE_EXPENSE_COLUMNS` exactly, same order and text. */
 const SITE_EXPENSE_PDF_COLUMNS: ExportColumn<Expense>[] = [
   {
@@ -211,6 +216,10 @@ const SITE_EXPENSE_PDF_COLUMNS: ExportColumn<Expense>[] = [
   },
 ]
 
+const SITE_EXPENSE_PDF_COLUMNS_WITHOUT_AMOUNTS = SITE_EXPENSE_PDF_COLUMNS.filter(
+  (column) => column.header !== "Amount",
+)
+
 /** Section 11.2. The detail template, with data. */
 export default function SiteDetailPage({
   params,
@@ -232,7 +241,20 @@ function SiteDetail({ params }: { params: Promise<{ id: string }> }) {
   const canEdit = useCan("budget.sites.edit")
   const canDelete = useCan("budget.sites.delete")
   const canEditBudget = useCan("budget.budgets.edit")
-  const canAddExpense = useCan("budget.expenses.create")
+  // Adding an expense needs see amounts too; the server refuses it without.
+  const addExpense = useCanAll(["budget.expenses.create", "budget.amounts.see"])
+  const canAddExpense = addExpense.allowed
+  /**
+   * Kit 26.7. The Budget card and the Variance tab are amount-only, so
+   * they are areas: shown only to someone who may open them AND see
+   * amounts, and otherwise absent (kit 26 rule 1), never "Hidden". The
+   * Expenses tab stays, without its Amount column, total or amount
+   * filters. The page renders after the answers land (plan 3.3), so
+   * nothing appears and then vanishes.
+   */
+  const seeAmounts = useCanSeeAmounts("budget") === true
+  const showBudget = useCan("budget.budgets.view") === true && seeAmounts
+  const showVariance = useCan("budget.reports.view") === true && seeAmounts
 
   /**
    * Which tab is open lives in the URL, not in component state.
@@ -244,7 +266,7 @@ function SiteDetail({ params }: { params: Promise<{ id: string }> }) {
    * navigation the product has instead of a back BUTTON (section 1
    * rule 11).
    */
-  const tab = searchParams.get("tab") === "variance" ? "variance" : "expenses"
+  const tab = searchParams.get("tab") === "variance" && showVariance ? "variance" : "expenses"
 
   const [site, setSite] = React.useState<Site | null>(null)
   const [project, setProject] = React.useState<Project | null>(null)
@@ -322,11 +344,12 @@ function SiteDetail({ params }: { params: Promise<{ id: string }> }) {
           pageSize,
           spentOnFrom: filters?.spentOnFrom,
           spentOnTo: filters?.spentOnTo,
-          amountMin: filters?.amountMin,
-          amountMax: filters?.amountMax,
+          // Kit 26.7: never filter on an amount the person cannot see.
+          amountMin: seeAmounts ? filters?.amountMin : undefined,
+          amountMax: seeAmounts ? filters?.amountMax : undefined,
         })}`,
       ),
-    [id],
+    [id, seeAmounts],
   )
 
   /**
@@ -387,7 +410,8 @@ function SiteDetail({ params }: { params: Promise<{ id: string }> }) {
           found.projectId
             ? api.get<Project>(`/projects/${found.projectId}`)
             : null,
-          api.get<BudgetGrid>(`/sites/${id}/budget`),
+          // Only asked by someone the Budget card is for (kit 26.7).
+          showBudget ? api.get<BudgetGrid>(`/sites/${id}/budget`) : null,
         ])
         if (cancelled) return
         setProject(proj)
@@ -399,7 +423,7 @@ function SiteDetail({ params }: { params: Promise<{ id: string }> }) {
     return () => {
       cancelled = true
     }
-  }, [id])
+  }, [id, showBudget])
 
   React.useEffect(() => reload(), [reload])
 
@@ -425,6 +449,143 @@ function SiteDetail({ params }: { params: Promise<{ id: string }> }) {
 
   const over =
     project !== null && project.allocatedTrees > project.plannedTrees
+
+  const budgetCard = (
+    <Card>
+      <CardHeader>
+        <div className="min-w-0">
+          <CardTitle>Budget</CardTitle>
+        </div>
+        <PermissionTooltip allowed={canEditBudget} reason={reasonFor("budget.budgets.edit")}>
+          {canEditBudget === true ? (
+            <Button
+              variant="secondary"
+              size="sm"
+              render={<Link href={`/sites/${id}/budget`} />}
+            >
+              <PencilIcon />
+              Edit budget
+            </Button>
+          ) : (
+            <Button variant="secondary" size="sm" disabled>
+              <PencilIcon />
+              Edit budget
+            </Button>
+          )}
+        </PermissionTooltip>
+      </CardHeader>
+      <CardContent>
+        {budget === null || site === null ? (
+          <Skeleton className="h-4 w-3/4" />
+        ) : perTree === null ? (
+          <p className="text-body text-text-secondary">
+            Budget not set. Nothing has been entered for this site yet.
+          </p>
+        ) : (
+          <>
+            <p className="text-page-title font-medium tabular-nums text-text-primary">
+              {formatCurrency(siteBudget)}
+            </p>
+            {/* Section 3: every budget figure states its basis. */}
+            <p className="mt-1 text-label text-text-secondary">
+              {formatCurrency(perTree)} per tree ×{" "}
+              {formatNumber(site.plannedTrees)} trees, across all five
+              periods
+            </p>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  )
+
+  const summaryCard = (
+    <Card>
+      <CardHeader>
+        <CardTitle>Summary</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <DetailFieldList className="sm:grid-cols-1">
+          <DetailField label="Project">
+            {!site ? (
+              <Skeleton className="h-4 w-3/4" />
+            ) : site.projectId ? (
+              <Link
+                href={`/projects/${site.projectId}`}
+                className="text-primary hover:text-primary-hover"
+              >
+                {site.projectName}
+              </Link>
+            ) : (
+              // A dash, as Location does below. The field stays
+              // rather than disappearing: a row that vanishes for
+              // some sites makes the summary a different shape
+              // per record.
+              "—"
+            )}
+          </DetailField>
+          <DetailField label="Location">
+            {site ? (site.locationName ?? "—") : <Skeleton className="h-4 w-1/2" />}
+          </DetailField>
+          <DetailField label="Donor">
+            {site ? (site.donorName ?? "—") : <Skeleton className="h-4 w-1/2" />}
+          </DetailField>
+          <DetailField label="Trees">
+            {site ? formatNumber(site.plannedTrees) : <Skeleton className="h-4 w-1/2" />}
+          </DetailField>
+          <DetailField label="Plantation started">
+            {site ? formatDate(site.plantationStartDate) : <Skeleton className="h-4 w-2/3" />}
+          </DetailField>
+          <DetailField label="Plantation completed">
+            {site ? (
+              site.plantationCompleteDate ? (
+                formatDate(site.plantationCompleteDate)
+              ) : (
+                <span className="font-normal text-text-secondary">
+                  Not yet recorded
+                </span>
+              )
+            ) : (
+              <Skeleton className="h-4 w-2/3" />
+            )}
+          </DetailField>
+          {/*
+            WHICH DATE THE PERIODS ARE MEASURED FROM, said out
+            loud. Client instruction, 7 Sep 2026: the complete
+            date anchors them, with the start date as her own
+            stated fallback until it exists.
+
+            Two sites can put the same expense date in different
+            periods, and without this the reason is invisible —
+            somebody would have to know the rule AND know which
+            of the two dates this site has. Section 19 is the
+            same argument: if the only way to learn something is
+            to already know it, nobody learns it.
+          */}
+          <DetailField label="Budget periods run from">
+            {site ? (
+              <>
+                {formatDate(periodAnchor(site).date)}
+                <span className="mt-0.5 block text-meta font-normal text-text-muted">
+                  the {anchorLabel(periodAnchor(site).source)}
+                  {periodAnchor(site).source === "start"
+                    ? " — until a complete date is recorded"
+                    : ""}
+                </span>
+              </>
+            ) : (
+              <Skeleton className="h-4 w-2/3" />
+            )}
+          </DetailField>
+          <DetailField label="Site manager">
+            {site ? (site.managerName ?? "—") : <Skeleton className="h-4 w-2/3" />}
+          </DetailField>
+          <DetailField label="Site supervisor">
+            {site ? (site.supervisorName ?? "—") : <Skeleton className="h-4 w-2/3" />}
+          </DetailField>
+        </DetailFieldList>
+      </CardContent>
+    </Card>
+  )
 
   return (
     <PageScroller>
@@ -528,143 +689,11 @@ function SiteDetail({ params }: { params: Promise<{ id: string }> }) {
         </Banner>
       ) : null}
 
+      {/* Kit 26.7: without the Budget card, the summary takes its place. */}
       <DetailColumns
         className="mt-8"
-        main={
-          <Card>
-            <CardHeader>
-              <div className="min-w-0">
-                <CardTitle>Budget</CardTitle>
-              </div>
-              <PermissionTooltip allowed={canEditBudget} reason={reasonFor("budget.budgets.edit")}>
-                {canEditBudget === true ? (
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    render={<Link href={`/sites/${id}/budget`} />}
-                  >
-                    <PencilIcon />
-                    Edit budget
-                  </Button>
-                ) : (
-                  <Button variant="secondary" size="sm" disabled>
-                    <PencilIcon />
-                    Edit budget
-                  </Button>
-                )}
-              </PermissionTooltip>
-            </CardHeader>
-            <CardContent>
-              {budget === null || site === null ? (
-                <Skeleton className="h-4 w-3/4" />
-              ) : perTree === null ? (
-                <p className="text-body text-text-secondary">
-                  Budget not set. Nothing has been entered for this site yet.
-                </p>
-              ) : (
-                <>
-                  <p className="text-page-title font-medium tabular-nums text-text-primary">
-                    {formatCurrency(siteBudget)}
-                  </p>
-                  {/* Section 3: every budget figure states its basis. */}
-                  <p className="mt-1 text-label text-text-secondary">
-                    {formatCurrency(perTree)} per tree ×{" "}
-                    {formatNumber(site.plannedTrees)} trees, across all five
-                    periods
-                  </p>
-                </>
-              )}
-            </CardContent>
-          </Card>
-        }
-        aside={
-          <Card>
-            <CardHeader>
-              <CardTitle>Summary</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <DetailFieldList className="sm:grid-cols-1">
-                <DetailField label="Project">
-                  {!site ? (
-                    <Skeleton className="h-4 w-3/4" />
-                  ) : site.projectId ? (
-                    <Link
-                      href={`/projects/${site.projectId}`}
-                      className="text-primary hover:text-primary-hover"
-                    >
-                      {site.projectName}
-                    </Link>
-                  ) : (
-                    // A dash, as Location does below. The field stays
-                    // rather than disappearing: a row that vanishes for
-                    // some sites makes the summary a different shape
-                    // per record.
-                    "—"
-                  )}
-                </DetailField>
-                <DetailField label="Location">
-                  {site ? (site.locationName ?? "—") : <Skeleton className="h-4 w-1/2" />}
-                </DetailField>
-                <DetailField label="Donor">
-                  {site ? (site.donorName ?? "—") : <Skeleton className="h-4 w-1/2" />}
-                </DetailField>
-                <DetailField label="Trees">
-                  {site ? formatNumber(site.plannedTrees) : <Skeleton className="h-4 w-1/2" />}
-                </DetailField>
-                <DetailField label="Plantation started">
-                  {site ? formatDate(site.plantationStartDate) : <Skeleton className="h-4 w-2/3" />}
-                </DetailField>
-                <DetailField label="Plantation completed">
-                  {site ? (
-                    site.plantationCompleteDate ? (
-                      formatDate(site.plantationCompleteDate)
-                    ) : (
-                      <span className="font-normal text-text-secondary">
-                        Not yet recorded
-                      </span>
-                    )
-                  ) : (
-                    <Skeleton className="h-4 w-2/3" />
-                  )}
-                </DetailField>
-                {/*
-                  WHICH DATE THE PERIODS ARE MEASURED FROM, said out
-                  loud. Client instruction, 7 Sep 2026: the complete
-                  date anchors them, with the start date as her own
-                  stated fallback until it exists.
-
-                  Two sites can put the same expense date in different
-                  periods, and without this the reason is invisible —
-                  somebody would have to know the rule AND know which
-                  of the two dates this site has. Section 19 is the
-                  same argument: if the only way to learn something is
-                  to already know it, nobody learns it.
-                */}
-                <DetailField label="Budget periods run from">
-                  {site ? (
-                    <>
-                      {formatDate(periodAnchor(site).date)}
-                      <span className="mt-0.5 block text-meta font-normal text-text-muted">
-                        the {anchorLabel(periodAnchor(site).source)}
-                        {periodAnchor(site).source === "start"
-                          ? " — until a complete date is recorded"
-                          : ""}
-                      </span>
-                    </>
-                  ) : (
-                    <Skeleton className="h-4 w-2/3" />
-                  )}
-                </DetailField>
-                <DetailField label="Site manager">
-                  {site ? (site.managerName ?? "—") : <Skeleton className="h-4 w-2/3" />}
-                </DetailField>
-                <DetailField label="Site supervisor">
-                  {site ? (site.supervisorName ?? "—") : <Skeleton className="h-4 w-2/3" />}
-                </DetailField>
-              </DetailFieldList>
-            </CardContent>
-          </Card>
-        }
+        main={showBudget ? budgetCard : summaryCard}
+        aside={showBudget ? summaryCard : null}
       />
 
       <Tabs
@@ -684,10 +713,12 @@ function SiteDetail({ params }: { params: Promise<{ id: string }> }) {
             Expenses
             <Badge variant="neutral">{formatNumber(expenseTotal)}</Badge>
           </TabsTrigger>
-          <TabsTrigger value="variance">
-            Variance
-            <Badge variant="neutral">{formatNumber(varianceRows)}</Badge>
-          </TabsTrigger>
+          {showVariance ? (
+            <TabsTrigger value="variance">
+              Variance
+              <Badge variant="neutral">{formatNumber(varianceRows)}</Badge>
+            </TabsTrigger>
+          ) : null}
         </TabsList>
 
         <TabsContent value="expenses">
@@ -695,13 +726,13 @@ function SiteDetail({ params }: { params: Promise<{ id: string }> }) {
             <CardHeader>
               <div className="min-w-0">
                 <CardTitle>Expenses</CardTitle>
-                {spent !== null ? (
+                {seeAmounts && spent !== null ? (
                   <p className="text-meta text-text-muted">
                     {formatCurrency(spent)} total
                   </p>
                 ) : null}
               </div>
-              <PermissionTooltip allowed={canAddExpense} reason={reasonFor("budget.expenses.create")}>
+              <PermissionTooltip allowed={canAddExpense} reason={addExpense.reason}>
                 {canAddExpense === true ? (
                   <Button
                     variant="secondary"
@@ -752,6 +783,7 @@ function SiteDetail({ params }: { params: Promise<{ id: string }> }) {
                     onApply={(next) =>
                       setSiteExpenseListState((s) => ({ ...s, filters: next, page: 1 }))
                     }
+                    showAmounts={seeAmounts}
                   />
                 }
                 renderFilterChips={(applied) =>
@@ -763,12 +795,12 @@ function SiteDetail({ params }: { params: Promise<{ id: string }> }) {
                   )
                 }
                 describeFilters={expenseFilterLabels}
-                columns={SITE_EXPENSE_COLUMNS}
+                columns={seeAmounts ? SITE_EXPENSE_COLUMNS : SITE_EXPENSE_COLUMNS_WITHOUT_AMOUNTS}
                 rowHref={(row) => `/expenses/${row.id}/edit`}
                 load={siteExpensesLoad}
                 onResult={({ total, aggregates }) => {
                   setExpenseTotal(total)
-                  setExpenseAmountPaise(aggregates?.amountPaise ?? null)
+                  setExpenseAmountPaise(seeAmounts ? (aggregates?.amountPaise ?? null) : null)
                 }}
                 emptyHeading="No expenses yet"
                 emptyBody="Expenses are booked against a cost head and a budget period."
@@ -776,9 +808,11 @@ function SiteDetail({ params }: { params: Promise<{ id: string }> }) {
                 emptyActionHref={canAddExpense === true ? `/expenses/new?siteId=${id}` : undefined}
                 exportPdf={{
                   title: site ? `${site.name} — Expenses` : "Expenses",
-                  columns: SITE_EXPENSE_PDF_COLUMNS,
+                  columns: seeAmounts
+                    ? SITE_EXPENSE_PDF_COLUMNS
+                    : SITE_EXPENSE_PDF_COLUMNS_WITHOUT_AMOUNTS,
                   buildTotalRow: (_rows, aggregates): PdfTotalRow | undefined =>
-                    aggregates
+                    seeAmounts && aggregates?.amountPaise !== undefined
                       ? {
                           cells: [
                             "",
@@ -801,6 +835,7 @@ function SiteDetail({ params }: { params: Promise<{ id: string }> }) {
           opens it. Its sibling's badge is always accurate — a peer
           reading 0 until clicked would be worse than no badge at all.
         */}
+        {showVariance ? (
         <TabsContent value="variance" keepMounted>
           <Card>
             <CardHeader>
@@ -873,6 +908,7 @@ function SiteDetail({ params }: { params: Promise<{ id: string }> }) {
             </CardContent>
           </Card>
         </TabsContent>
+        ) : null}
       </Tabs>
 
       {site ? (

@@ -130,6 +130,8 @@ async function seed(db: ScratchDb['client']): Promise<void> {
     for (const key of SCOPED_KEYS) {
       await db.query('insert into role_permissions (role_id, permission_key, scope) values ($1, $2, $3)', [roleId, key, scope]);
     }
+    // P4 (O9): budgets, reports and expense writes need see amounts; a role save derives it at All.
+    await db.query("insert into role_permissions (role_id, permission_key, scope) values ($1, 'budget.amounts.see', 'all')", [roleId]);
   }
   // The seed "Budget staff" role (the migration inserts it), with the rows the mapping writes.
   const { SEED_ROLES } = await import('../../src/access/seed-roles');
@@ -400,6 +402,19 @@ describe('budget scope through the real routes (P3b)', { skip: dbTestsEnabled ? 
     assert.deepEqual(labels((await pick('/pick/budget/projects', 'office')).map((r) => r.id as string)), ['P2', 'P3']);
     const [project] = await pick('/pick/budget/projects?q=P3', 'office');
     assert.deepEqual(project, { id: PR.P3, name: 'Scope P3', donorName: 'Donor Three' });
+  });
+
+  it('Picks: sites narrow by projectId (a project, or none), never widen; bad ids are 400 (P8)', async () => {
+    const ids = async (path: string, as: Who) => {
+      const res = await call(path, as);
+      assert.equal(res.status, 200, JSON.stringify(res.body));
+      return labels((res.body as Array<{ id: string }>).map((r) => r.id));
+    };
+    assert.deepEqual(await ids(`/pick/budget/sites?projectId=${PR.P1}&q=Scope`, 'ceo'), ['S1', 'S2']);
+    assert.deepEqual(await ids(`/pick/budget/sites?projectId=${PR.P1}`, 'mgrA'), ['S1'], 'still scoped');
+    assert.deepEqual(await ids('/pick/budget/sites?projectId=none&q=Scope', 'ceo'), ['S4']);
+    assert.deepEqual(await ids(`/pick/budget/sites?projectId=${PR.P1}&q=S2`, 'ceo'), ['S2']);
+    assert.equal((await call('/pick/budget/sites?projectId=nonsense', 'ceo')).status, 400);
   });
 
   it('Picks: cost heads for everyone, active unless asked; others 403 without the Pick', async () => {

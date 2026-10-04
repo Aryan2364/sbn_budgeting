@@ -1,5 +1,5 @@
 import {
-  BadRequestException, Body, ConflictException, Controller, Delete, Get,
+  BadRequestException, Body, ConflictException, Controller, Delete, ForbiddenException, Get,
   HttpCode, Inject, Param, ParseUUIDPipe, Patch, Post, Query,
   UnprocessableEntityException,
 } from '@nestjs/common';
@@ -11,7 +11,11 @@ import {
 import type { Pool, PoolClient } from 'pg';
 
 import { type AccessContext, CurrentAccess, can } from '../access/access-context';
+import { AccessService } from '../access/access.service';
+import type { AuditActor } from '../access/audit';
+import { ACCESS_MANAGE_KEY } from '../access/catalogue';
 import { Can, PickOf } from '../access/decorators';
+import { reasonFor } from '../access/permission.guard';
 import { type Param as SqlParam, type RecordCan, assertRecordAccess, canSelect, scopeWhere } from '../access/scope';
 import {
   findOneOrFail, isPgError, PG_FOREIGN_KEY_VIOLATION, PG_UNIQUE_VIOLATION, pgConstraint,
@@ -22,7 +26,7 @@ import { runListQuery, type ListResult, type ListScope, type MatchInfo } from '.
 import { ModuleRole, type ModuleName } from '../common/module-access.decorator';
 import { normalisePhone, PHONE_SQL } from '../common/phone';
 import { PG_POOL } from '../db/db.module';
-import { applyModules, assertNoCycle, MODULE_ROLES, type ModulesPatch } from './user-writes';
+import { applyModules, MODULE_ROLES, type ModulesPatch } from './user-writes';
 
 const blankToNull = ({ value }: { value: unknown }): unknown =>
   typeof value === 'string' && value.trim() === '' ? null : value;
@@ -78,6 +82,14 @@ export class UserDto {
   @IsOptional()
   @IsBoolean()
   canLogin?: boolean;
+
+  /**
+   * "This person is current" (plan 3.4.9). An access field: changing it
+   * needs access.rights.manage (O8) and is audited. PATCH only.
+   */
+  @IsOptional()
+  @IsBoolean()
+  active?: boolean;
 
   /** Only sent when setting or changing one. Never returned. */
   @IsOptional()
@@ -200,7 +212,10 @@ const canLoginFilter = (value: string, param: (v: unknown) => string): string =>
  */
 @Controller('users')
 export class UsersController {
-  constructor(@Inject(PG_POOL) private readonly pool: Pool) {}
+  constructor(
+    @Inject(PG_POOL) private readonly pool: Pool,
+    private readonly access: AccessService,
+  ) {}
 
   /**
    * A person picker's options. Declared before `:id` so "picker" is
@@ -329,7 +344,11 @@ export class UsersController {
   @Post()
   @ModuleRole('platform', 'admin')
   @Can('platform.people.create')
-  async create(@Body() body: UserDto, @CurrentAccess() access: AccessContext): Promise<UserRow> {
+  async create(
+    @Body() body: UserDto,
+    @CurrentUser() me: AuthUser,
+    @CurrentAccess() access: AccessContext,
+  ): Promise<UserRow> {
     const name = body.name?.trim();
     if (!name) throw new BadRequestException('Enter the person’s name');
     if (body.canLogin === undefined) {
@@ -338,6 +357,10 @@ export class UsersController {
     const email = body.email?.trim() || null;
     const phone = normalisePhone(body.phone);
     const modules = parseModules(body);
+    // Access parts of a new person (O8, plan 5.3.4): their module levels
+    // (the compatibility shim, as seed roles) and who they report to.
+    const givesModules = Object.values(modules).some((role) => role !== null && role !== undefined);
+    if (givesModules || body.reportsToId) assertCanManageAccess(access);
     assertLoginCredentials(body.canLogin, email, phone, Boolean(body.password));
     await this.assertReferences(body);
     await this.assertUnique(email, phone, null);
@@ -346,13 +369,19 @@ export class UsersController {
     const canLogin = body.canLogin;
     const id = await this.inTransaction(async (client) => {
       const { rows } = await client.query<{ id: string }>(
-        `insert into users (name, email, phone, designation_id, reports_to, password_hash, can_login)
-         values ($1, $2, $3, $4, $5, $6, $7) returning id`,
-        [name, email, phone, body.designationId ?? null, body.reportsToId ?? null,
-         passwordHash, canLogin],
+        `insert into users (name, email, phone, designation_id, password_hash, can_login)
+         values ($1, $2, $3, $4, $5, $6) returning id`,
+        [name, email, phone, body.designationId ?? null, passwordHash, canLogin],
       );
       const newId = rows[0]!.id;
-      await applyModules(client, newId, modules);
+      if (givesModules || body.reportsToId) {
+        const write = await this.access.begin(client, actorOf(me));
+        // Today's level rows, then the seed roles they mean (plan 5.5).
+        await applyModules(client, newId, modules);
+        await write.applyModulesPatch({ id: newId, name }, modules);
+        if (body.reportsToId) await write.setReportsTo(newId, body.reportsToId);
+        await write.finish();
+      }
       return newId;
     });
     // The person this request just created, read back for the response.
@@ -361,8 +390,8 @@ export class UsersController {
 
   @Patch(':id')
   @ModuleRole('platform', 'admin')
-  // The access fields (active, reportsToId) also need access.rights.manage
-  // (O8); that check is in the handler from P6.
+  // The access fields (modules, active, reportsToId) also need
+  // access.rights.manage (O8), checked in the handler when they change.
   @Can('platform.people.edit')
   async update(
     @Param('id', new ParseUUIDPipe()) id: string,
@@ -378,10 +407,14 @@ export class UsersController {
     });
     const existing = await findOneOrFail<{
       email: string | null; phone: string | null; canLogin: boolean; hasPassword: boolean;
+      active: boolean; reportsTo: string | null; modules: Record<string, string>;
     }>(
       this.pool,
       `select email, phone, can_login as "canLogin",
-              (password_hash is not null) as "hasPassword"
+              (password_hash is not null) as "hasPassword",
+              active, reports_to as "reportsTo",
+              (select coalesce(json_object_agg(m.module, m.role), '{}'::json)
+               from user_module_access m where m.user_id = users.id) as modules
        from users /*scope-exempt: the person assertRecordAccess just checked*/ where id = $1`,
       [id],
       'person',
@@ -393,38 +426,55 @@ export class UsersController {
     const email = body.email === undefined ? existing.email : body.email?.trim() || null;
     const phone = body.phone === undefined ? existing.phone : normalisePhone(body.phone);
     const canLogin = body.canLogin ?? existing.canLogin;
-    const modules = parseModules(body);
+    // Only what actually changes is an access write: the form resends every field.
+    const modules = Object.fromEntries(
+      Object.entries(parseModules(body)).filter(
+        ([module, role]) => role !== undefined && (role ?? null) !== (existing.modules[module] ?? null),
+      ),
+    ) as ModulesPatch;
+    const changesModules = Object.keys(modules).length > 0;
+    const changesActive = body.active !== undefined && body.active !== existing.active;
+    const changesReportsTo = body.reportsToId !== undefined && (body.reportsToId ?? null) !== existing.reportsTo;
+    if (changesModules || changesActive || changesReportsTo) assertCanManageAccess(access);
+    // Turning off the sign-in of the last person who can manage access is
+    // refused like removing their Admin (D5): it runs under the access lock.
+    const turnsOffSignIn = existing.canLogin && !canLogin;
 
-    if (id === me.id && modules.platform === null && me.modules.platform) {
-      throw new UnprocessableEntityException(
-        'You can’t remove your own platform admin, or nobody might be left to manage people. ' +
-          'Ask another platform admin to change it.',
-      );
-    }
     assertLoginCredentials(canLogin, email, phone, Boolean(body.password) || existing.hasPassword);
     await this.assertReferences(body);
     await this.assertUnique(email, phone, id);
 
     const passwordHash = body.password ? await hash(body.password, 12) : null;
     await this.inTransaction(async (client) => {
-      // Checked against the chain as it stands, before this edge exists.
-      if (body.reportsToId !== undefined) await assertNoCycle(client, id, body.reportsToId);
+      const write =
+        changesModules || changesActive || changesReportsTo || turnsOffSignIn
+          ? await this.access.begin(client, actorOf(me))
+          : null;
       await client.query(
         `update users /*scope-exempt: the person assertRecordAccess checked above*/ set
            name           = coalesce($2, name),
            email          = $3,
            phone          = $4,
            designation_id = case when $5 then $6::uuid else designation_id end,
-           reports_to     = case when $7 then $8::uuid else reports_to end,
-           can_login      = $9,
-           password_hash  = coalesce($10, password_hash)
+           can_login      = $7,
+           password_hash  = coalesce($8, password_hash)
          where id = $1`,
         [id, body.name?.trim() ?? null, email, phone,
          body.designationId !== undefined, body.designationId ?? null,
-         body.reportsToId !== undefined, body.reportsToId ?? null,
          canLogin, passwordHash],
       );
-      await applyModules(client, id, modules);
+      if (!write) return;
+      // The access parts, audited, under the access lock (plan 6.1.11).
+      const person = await write.person(id);
+      if (changesModules) {
+        // Today's level rows, then the seed roles they mean (plan 5.5).
+        await applyModules(client, id, modules);
+        await write.applyModulesPatch(person, modules);
+      }
+      if (changesActive) await write.setActive(id, body.active!);
+      // Checks the chain as it stands for a loop, then rebuilds the closure.
+      if (changesReportsTo) await write.setReportsTo(id, body.reportsToId ?? null);
+      await write.finish();
     });
     return this.load(id, access);
   }
@@ -473,7 +523,14 @@ export class UsersController {
       );
     }
     try {
-      await this.pool.query('delete from users /*scope-exempt: the person assertRecordAccess checked above*/ where id = $1', [id]);
+      await this.inTransaction(async (client) => {
+        // Deleting the last person who can manage access is refused (D5);
+        // the roles it removes are written to the access history (5.1.7).
+        const write = await this.access.begin(client, actorOf(me));
+        await write.setRoles(await write.person(id), []);
+        await client.query('delete from users /*scope-exempt: the person assertRecordAccess checked above*/ where id = $1', [id]);
+        await write.finish();
+      });
     } catch (error) {
       if (isPgError(error, PG_FOREIGN_KEY_VIOLATION)) {
         throw new ConflictException(
@@ -583,6 +640,19 @@ export class UsersController {
             'Each person needs their own phone number.',
     );
   }
+}
+
+const actorOf = (user: AuthUser): AuditActor => ({ id: user.id, name: user.name });
+
+/**
+ * The access fields of a person (module levels, active, reports_to) need
+ * access.rights.manage (O8, plan 5.3.4) on top of the route's own key.
+ * 403 with the kit 26.2 reason, like the route guard.
+ */
+function assertCanManageAccess(access: AccessContext): void {
+  if (can(access, ACCESS_MANAGE_KEY)) return;
+  const reason = reasonFor(ACCESS_MANAGE_KEY);
+  throw new ForbiddenException({ error: 'forbidden', permission: ACCESS_MANAGE_KEY, reason, message: reason });
 }
 
 /**

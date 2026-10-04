@@ -174,7 +174,7 @@ export interface MatchInfo {
 }
 
 /** A column holding money (bigint paise, as everywhere in this product). */
-const AMOUNT_SQL = /_paise/i;
+const AMOUNT_SQL = /_paise\b/i;
 
 /**
  * The spec's amount keys: those declared in `amountKeys`, plus, on a

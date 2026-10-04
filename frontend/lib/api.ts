@@ -494,7 +494,13 @@ async function pickRows<T>(path: string): Promise<T[]> {
 }
 
 export const pick = {
-  sites: (q?: string) => pickRows<SitePick>(`/pick/budget/sites${query({ q })}`),
+  /**
+   * `projectId` narrows to one project's sites, or `"none"` to the sites
+   * in no project (the report scope; access plan P8, since a searched,
+   * capped answer cannot be narrowed in the browser).
+   */
+  sites: (params: { q?: string; projectId?: string } = {}) =>
+    pickRows<SitePick>(`/pick/budget/sites${query({ q: params.q, projectId: params.projectId || undefined })}`),
   projects: (q?: string) => pickRows<ProjectPick>(`/pick/budget/projects${query({ q })}`),
   costHeads: (q?: string) => pickRows<CostHeadPick>(`/pick/budget/cost_heads${query({ q })}`),
   categories: (params: { q?: string; includeInactive?: boolean } = {}) =>
@@ -608,10 +614,7 @@ export interface Expense {
   billNumber: string | null
   approvedBy: string | null
   createdAt: string
-  /**
-   * Who entered it; null on old rows. Used only until the server sends
-   * `can` below (lib/permissions.ts `useLegacyOwnAnswer`).
-   */
+  /** Who entered it; null on old rows. Display only: `can` decides. */
   createdById: string | null
   /**
    * The server's own answer for this record (kit 26.5, access plan

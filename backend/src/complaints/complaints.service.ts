@@ -295,11 +295,13 @@ const EVENT_VERB: Record<string, string> = {
  */
 function viewerOf(access: AccessContext, c: DetailCore): Viewer {
   const may = {} as Record<PermissionAction, true | string>;
+  const held = {} as Record<PermissionAction, boolean>;
   for (const action of PERMISSION_ACTIONS) {
     const answer = c.may[action];
     may[action] = answer === true ? true : (answer ?? reasonFor(CAN_ACTIONS[action]));
+    held[action] = holds(access, CAN_ACTIONS[action]);
   }
-  return { id: access.userId, may };
+  return { id: access.userId, may, held };
 }
 
 /**

@@ -7,7 +7,7 @@ import { api, query, type Expense, type ListResponse, type Matchable } from "@/l
 import { formatAmount, formatDate, formatNumber } from "@/lib/format"
 import { paiseToRupeeInput } from "@/lib/money"
 import { periodLabel } from "@/lib/periods"
-import { useCanSeeAmounts } from "@/lib/permissions"
+import { useCanAll, useCanSeeAmounts } from "@/lib/permissions"
 import { Truncate } from "@/components/ui/truncate"
 import type { ExportColumn, PdfTotalRow } from "@/lib/pdf-export"
 import {
@@ -199,6 +199,7 @@ function ExpensesList() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const showAmounts = useCanSeeAmounts("budget") === true
+  const createAnswer = useCanAll(["budget.expenses.create", "budget.amounts.see"])
 
   // Read once on mount — after that this component owns the state and
   // pushes IT to the URL, rather than re-reading the URL on every
@@ -256,6 +257,7 @@ function ExpensesList() {
       searchPlaceholder="Search expenses"
       createHref="/expenses/new"
       createLabel="New expense"
+      createAllowed={createAnswer}
       listState={listState}
       onListStateChange={setListState}
       toolbarExtra={

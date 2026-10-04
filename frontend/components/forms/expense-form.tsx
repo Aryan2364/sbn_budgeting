@@ -12,13 +12,15 @@ import {
   type CostHeadPick,
   type Expense,
   type RecordCan,
+  type Site,
   type SitePick,
 } from "@/lib/api"
 import {
   reasonFor,
   recordAnswer,
   useCan,
-  useLegacyOwnAnswer,
+  useCanAll,
+  useCanSeeAmounts,
 } from "@/lib/permissions"
 import { formatCurrency, formatDate } from "@/lib/format"
 import { parseRupeesToPaise, paiseToRupeeInput } from "@/lib/money"
@@ -30,13 +32,13 @@ import {
   periodAnchor,
   periodLabel,
 } from "@/lib/periods"
-import { errorMessage, useSession } from "@/components/shell/session"
+import { errorMessage } from "@/components/shell/session"
 import { toast } from "@/components/ui/sonner"
 import { Button } from "@/components/ui/button"
 import { DatePicker } from "@/components/ui/date-picker"
 import { Input } from "@/components/ui/input"
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group"
-import { SearchableSelect } from "@/components/ui/searchable-select"
+import { SearchableSelect, type SearchOption } from "@/components/ui/searchable-select"
 import { Textarea } from "@/components/ui/textarea"
 import {
   Select,
@@ -58,9 +60,6 @@ import { RecordBreadcrumb } from "@/components/forms/record-breadcrumb"
 import { FormError, FormLoadFailed } from "@/components/forms/form-error"
 import { DeleteRecordDialog } from "@/components/forms/delete-record-dialog"
 import { PermissionTooltip } from "@/components/forms/permission-tooltip"
-
-/** The server's own sentence for an Own-scope miss (backend access/scope.ts `recordReason`). */
-const EDIT_OWN_ONLY = "You can edit expenses only if you added them."
 
 function toIsoDate(date: Date): string {
   const year = date.getFullYear()
@@ -89,18 +88,24 @@ function fromIsoDate(text: string | undefined): Date | undefined {
  * answer for that record (kit 26.5): `can.edit` on the expense, together
  * with holding `budget.expenses.edit` at all. Anyone who may not sees
  * the same form read-only, with Save disabled and the reason on it
- * (kit 26). Until the server sends `can` (P3b-budget), today's rule
- * stands: edit at Own reaches the expenses the person entered.
+ * (kit 26). Delete the same, with `can.delete`.
  *
  * Site and cost head choose through their Picks (access plan P7
  * inventory 1 and 2): the cost-head list is Settings, under manage (D3).
+ * Sites search the server as the user types (access plan P8): a Pick
+ * answers at most 50 and nothing caps the number of sites.
+ *
+ * Kit 26.7: without see amounts the Amount field is absent, not
+ * disabled. Adding and editing expenses need see amounts (plan 5.3.1),
+ * so such a person only ever sees the form read-only.
  */
 export function ExpenseForm({ expenseId }: { expenseId?: string }) {
   const router = useRouter()
-  const { user } = useSession()
-  const canCreate = useCan("budget.expenses.create")
   const canEditAny = useCan("budget.expenses.edit")
   const canDeleteAny = useCan("budget.expenses.delete")
+  const seeAmounts = useCanSeeAmounts("budget")
+  /** Adding needs the key and see amounts; the server refuses either missing. */
+  const createAnswer = useCanAll(["budget.expenses.create", "budget.amounts.see"])
   const params = useSearchParams()
   const isEdit = expenseId !== undefined
 
@@ -113,7 +118,10 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
   const [billNumber, setBillNumber] = React.useState("")
   const [approvedBy, setApprovedBy] = React.useState("")
 
-  const [sites, setSites] = React.useState<SitePick[]>([])
+  /** The chosen site's Pick row: its name, and the dates the period is measured from. */
+  const [site, setSite] = React.useState<SitePick | null>(null)
+  /** The rows the site search has returned, so a choice keeps its dates. */
+  const foundSites = React.useRef(new Map<string, SitePick>())
   const [heads, setHeads] = React.useState<CostHeadPick[]>([])
   const [budgetedHeadIds, setBudgetedHeadIds] = React.useState<Set<string> | null>(null)
 
@@ -130,21 +138,8 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
   const [loadError, setLoadError] = React.useState<string | null>(null)
   const [reloadTick, setReloadTick] = React.useState(0)
   const [fieldErrors, setFieldErrors] = React.useState<Record<string, string>>({})
-  /** Who entered the expense being edited. `undefined` until it has loaded. */
-  const [createdById, setCreatedById] = React.useState<string | null | undefined>(undefined)
-
-  /**
-   * The server's answers for this expense. `undefined` until it has
-   * loaded; `null` when the server sent none (before P3b-budget).
-   */
-  const [recordCan, setRecordCan] = React.useState<RecordCan | null | undefined>(undefined)
-
-  // TRANSITIONAL: today's rule, used only while the server sends no `can`.
-  const legacyEdit = useLegacyOwnAnswer(
-    "budget.expenses.edit",
-    createdById === undefined ? undefined : createdById !== null && createdById === user?.id,
-    EDIT_OWN_ONLY,
-  )
+  /** The server's answers for this expense (kit 26.5). `undefined` until it has loaded. */
+  const [recordCan, setRecordCan] = React.useState<RecordCan | undefined>(undefined)
 
   /**
    * Whether this user may save, and if not, why. While anything is still
@@ -152,18 +147,18 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
    * no reason (kit 26.1).
    */
   const save = !isEdit
-    ? { allowed: canCreate, reason: reasonFor("budget.expenses.create") }
-    : recordAnswer(
+    ? createAnswer
+    : seeAmounts === false
+      ? // Editing needs see amounts too (plan 5.3.1); the server says 403.
+        { allowed: false, reason: reasonFor("budget.amounts.see") }
+      : seeAmounts === undefined
+        ? { allowed: undefined, reason: "" }
+        : recordAnswer(
         canEditAny,
         "budget.expenses.edit",
-        recordCan === undefined ? undefined : recordCan === null ? legacyEdit : recordCan.edit,
+        recordCan?.edit,
       )
-  const remove = recordAnswer(
-    canDeleteAny,
-    "budget.expenses.delete",
-    // Before the server sends `can`, delete was the key alone, as today.
-    recordCan === undefined ? undefined : recordCan === null ? true : recordCan.delete,
-  )
+  const remove = recordAnswer(canDeleteAny, "budget.expenses.delete", recordCan?.delete)
   const mayEdit = save.allowed
   const readOnly = mayEdit !== true
 
@@ -178,12 +173,36 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
 
   React.useEffect(() => {
     let cancelled = false
+    const prefilled = params.get("siteId")
     Promise.all([
-      pick.sites(),
       pick.costHeads(),
       expenseId ? api.get<Expense>(`/expenses/${expenseId}`) : null,
     ])
-      .then(([siteList, headList, expense]) => {
+      .then(async ([headList, expense]) => {
+        // The saved (or prefilled) site's own row, for its period
+        // dates: found through the Pick by the name the expense
+        // carries, or, arriving from a site page, read from that site.
+        let chosen: SitePick | null = null
+        if (expense) {
+          chosen = await pick
+            .sites({ q: expense.siteName })
+            .then((rows) => rows.find((r) => r.id === expense.siteId) ?? null)
+            .catch(() => null)
+        } else if (prefilled) {
+          chosen = await api
+            .get<Site>(`/sites/${prefilled}`)
+            .then((s): SitePick => ({
+              id: s.id,
+              name: s.name,
+              projectId: s.projectId,
+              plantationStartDate: s.plantationStartDate,
+              plantationCompleteDate: s.plantationCompleteDate,
+            }))
+            .catch(() => null)
+        }
+        return [headList, expense, chosen] as const
+      })
+      .then(([headList, expense, chosen]) => {
         if (cancelled) return
         // The saved head, by the name the expense carries, so an
         // existing expense reads correctly even outside the Pick's rows
@@ -197,7 +216,23 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
             isActive: false,
           })
         }
-        setSites(siteList)
+        if (expense) {
+          // The name the expense carries, even if the Pick did not find the row.
+          setSite(
+            chosen ?? {
+              id: expense.siteId,
+              name: expense.siteName,
+              projectId: null,
+              plantationStartDate: "",
+              plantationCompleteDate: null,
+            },
+          )
+        } else if (chosen) {
+          setSite(chosen)
+        } else if (prefilled) {
+          // A site this person cannot reach: start without one.
+          setSiteId("")
+        }
         // The spreadsheet's order of heads, as the grid and the reports use.
         setHeads(headRows.sort((a, b) => a.sortOrder - b.sortOrder))
         if (expense) {
@@ -208,12 +243,11 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
           // An existing row's period is what was stored, not what the
           // date would suggest now (question 6).
           setPeriodOverridden(true)
-          setAmount(paiseToRupeeInput(expense.amountPaise))
+          setAmount(expense.amountPaise !== undefined ? paiseToRupeeInput(expense.amountPaise) : "")
           setDescription(expense.description ?? "")
           setBillNumber(expense.billNumber ?? "")
           setApprovedBy(expense.approvedBy ?? "")
-          setCreatedById(expense.createdById)
-          setRecordCan(expense.can ?? null)
+          setRecordCan(expense.can ?? {})
           /*
             Section 15: the confirmation names what is being deleted, so
             nobody removes the wrong row. An expense has no name of its
@@ -221,7 +255,11 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
             the list — amount, head and date.
           */
           setExpenseName(
-            `${formatCurrency(expense.amountPaise)} — ${expense.costHeadName}, ${formatDate(expense.spentOn)}`,
+            // Kit 26.7: without see amounts the amount is absent, so the
+            // name is the head and the date alone, never "₹0.00".
+            expense.amountPaise !== undefined
+              ? `${formatCurrency(expense.amountPaise)} — ${expense.costHeadName}, ${formatDate(expense.spentOn)}`
+              : `${expense.costHeadName}, ${formatDate(expense.spentOn)}`,
           )
         }
         setLoading(false)
@@ -234,9 +272,19 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
     return () => {
       cancelled = true
     }
+    // `params` is read once, for the prefill; a later change of address
+    // is a new page.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [expenseId, reloadTick])
 
-  const site = sites.find((s) => s.id === siteId) ?? null
+  const searchSites = React.useCallback(
+    (query: string): Promise<SearchOption[]> =>
+      pick.sites({ q: query }).then((rows) => {
+        for (const row of rows) foundSites.current.set(row.id, row)
+        return rows.map((row) => ({ value: row.id, label: row.name }))
+      }),
+    [],
+  )
 
   /**
    * Which cost heads this site has budgeted.
@@ -275,7 +323,10 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
    * the start date until then. `periodAnchor` is the only place that
    * chooses, so the hint below and the derivation cannot disagree.
    */
-  const anchor = React.useMemo(() => (site ? periodAnchor(site) : null), [site])
+  const anchor = React.useMemo(
+    () => (site && site.plantationStartDate ? periodAnchor(site) : null),
+    [site],
+  )
 
   // Question 6: the form PRE-FILLS the period by deriving it from the
   // date against that anchor. The value the user confirms is what gets
@@ -339,7 +390,6 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
     }
   }
 
-  const siteOptions = Object.fromEntries(sites.map((s) => [s.id, s.name]))
   const headOptions = Object.fromEntries(
     heads.map((h) => [
       h.id,
@@ -390,12 +440,17 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
               >
                 <SearchableSelect
                   id="siteId"
-                  options={siteOptions}
+                  search={searchSites}
+                  selectedLabel={site?.id === siteId ? site.name : undefined}
                   value={siteId}
-                  onValueChange={setSiteId}
+                  onValueChange={(next) => {
+                    setSiteId(next)
+                    setSite(foundSites.current.get(next) ?? null)
+                  }}
                   disabled={loading || readOnly}
                   placeholder="Choose a site"
                   searchPlaceholder="Search sites"
+                  emptyMessage={(q) => `No sites match '${q}'.`}
                 />
               </FormField>
 
@@ -485,6 +540,9 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
                 />
               </FormField>
 
+              {/* Kit 26.7: absent, not disabled, without see amounts. While
+                  the answer is unknown the form is still loading. */}
+              {seeAmounts !== false ? (
               <FormField
                 span={3}
                 label="Amount"
@@ -518,6 +576,7 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
                   />
                 </InputGroup>
               </FormField>
+              ) : null}
 
               <FormField span={12} label="Description" htmlFor="description">
                 <Textarea

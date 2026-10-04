@@ -3,6 +3,7 @@
 import * as React from "react"
 
 import { api, type Site } from "@/lib/api"
+import { usePageGuard } from "@/lib/permissions"
 import { errorMessage } from "@/components/shell/session"
 import { EmptyState } from "@/components/ui/empty-state"
 import { PageScroller } from "@/components/templates/page"
@@ -21,6 +22,13 @@ export default function SiteBudgetPage({
 }: {
   params: Promise<{ id: string }>
 }) {
+  // Kit 26.7: budgets are amounts, so without see amounts this is an area
+  // the person has no access to (the 11.8 page), checked before any load.
+  const denied = usePageGuard("budget.amounts.see")
+  return denied ?? <SiteBudget params={params} />
+}
+
+function SiteBudget({ params }: { params: Promise<{ id: string }> }) {
   const { id } = React.use(params)
   const [site, setSite] = React.useState<Site | null>(null)
   const [error, setError] = React.useState<string | null>(null)

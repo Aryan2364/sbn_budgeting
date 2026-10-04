@@ -6,7 +6,12 @@ import { compare, hash } from 'bcryptjs';
 import { ArrayMaxSize, IsArray } from 'class-validator';
 import type { Pool, PoolClient } from 'pg';
 
+import { type AccessContext, CurrentAccess, can } from '../access/access-context';
+import { AccessService } from '../access/access.service';
+import { ACCESS_MANAGE_KEY } from '../access/catalogue';
 import { Can } from '../access/decorators';
+import { IMPORT_DEFAULT_ROLE_ID } from '../access/seed-roles';
+import { CurrentUser, type AuthUser } from '../common/current-user';
 import { ModuleRole } from '../common/module-access.decorator';
 import { phoneDigits } from '../common/phone';
 import { PG_POOL } from '../db/db.module';
@@ -88,14 +93,17 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
  */
 @Controller('users/import')
 export class UsersImportController {
-  constructor(@Inject(PG_POOL) private readonly pool: Pool) {}
+  constructor(
+    @Inject(PG_POOL) private readonly pool: Pool,
+    private readonly access: AccessService,
+  ) {}
 
   @Post('preview')
   @HttpCode(200)
   @ModuleRole('platform', 'admin')
   @Can('platform.people.create')
-  async preview(@Body() body: ImportDto): Promise<PreviewResult> {
-    const { result } = await analyse(this.pool, body.rows);
+  async preview(@Body() body: ImportDto, @CurrentAccess() access: AccessContext): Promise<PreviewResult> {
+    const { result } = await analyse(this.pool, body.rows, can(access, ACCESS_MANAGE_KEY));
     return result;
   }
 
@@ -105,14 +113,19 @@ export class UsersImportController {
   @Can('platform.people.create')
   async commit(
     @Body() body: ImportDto,
+    @CurrentUser() me: AuthUser,
+    @CurrentAccess() access: AccessContext,
   ): Promise<{ created: number; updated: number; unchanged: number }> {
+    // reports_to is an access field (O8): without access.rights.manage the
+    // column is ignored, and the preview says so (plan 5.3.4).
+    const setsReportsTo = can(access, ACCESS_MANAGE_KEY);
     const client = await this.pool.connect();
     try {
       await client.query('begin');
       // One import at a time, so two admins cannot both create one person.
       await client.query(`select pg_advisory_xact_lock(hashtext('users-import'))`);
 
-      const { result, plans } = await analyse(client, body.rows);
+      const { result, plans } = await analyse(client, body.rows, setsReportsTo);
       if (result.summary.error > 0) {
         const n = result.summary.error;
         throw new UnprocessableEntityException(
@@ -120,6 +133,11 @@ export class UsersImportController {
             'Fix them in the file and preview again.',
         );
       }
+
+      // The access lock, after the import's own: new people's roles and
+      // reports_to changes are access writes, audited (plan 6.1.11).
+      const write = await this.access.begin(client, { id: me.id, name: me.name });
+      const defaultRole = await defaultRoleOf(client);
 
       const idByKey = new Map<string, string>();
       const touched: Plan[] = [];
@@ -143,12 +161,10 @@ export class UsersImportController {
             [plan.name, plan.phone, plan.email, plan.designationId, passwordHash, plan.canLogin],
           );
           id = rows[0]!.id;
-          // New people can raise complaints from day one (CONTRACT section 2).
-          await client.query(
-            `insert into user_module_access (user_id, module, role)
-             values ($1, 'complaints', 'member') on conflict do nothing`,
-            [id],
-          );
+          // New people can raise complaints from day one (CONTRACT section
+          // 2): the Complaints member role (C3, by its fixed id). The
+          // dual-write gives them today's complaints: member row with it.
+          if (defaultRole) await write.changeRoles({ id, name: plan.name }, [defaultRole.id], []);
           created += 1;
         } else {
           id = plan.matched!.id;
@@ -165,16 +181,16 @@ export class UsersImportController {
         touched.push(plan);
       }
 
-      // Pass 2: reports-to, now that everyone in the file has an id.
-      for (const plan of touched) {
+      // Pass 2: reports-to, now that everyone in the file has an id. Each
+      // change is audited; the chain is checked once, below, for the file
+      // as a whole (one edge at a time could see a loop that the finished
+      // file does not have).
+      for (const plan of setsReportsTo ? touched : []) {
         const id = idByKey.get(plan.key)!;
         const managerId = plan.reportsToKey
           ? (idByKey.get(plan.reportsToKey) ?? plan.reportsToKey)
           : null;
-        await client.query(
-          'update users /*scope-exempt: a person this import created or matched*/ set reports_to = $2 where id = $1',
-          [id, managerId],
-        );
+        await write.setReportsTo(id, managerId, { checkCycle: false });
       }
 
       // Backstop: the analysis already refused loops, but the database
@@ -187,6 +203,8 @@ export class UsersImportController {
         );
         await assertNoCycle(client, id, rows[0]?.reports_to ?? null);
       }
+
+      await write.finish();
 
       await client.query('commit');
       return { created, updated, unchanged };
@@ -201,10 +219,26 @@ export class UsersImportController {
 
 // -------------------------------------------------------------------
 
+/** The role new people get (C3), or null when the owner has deleted it. */
+async function defaultRoleOf(db: Db): Promise<{ id: string; name: string } | null> {
+  const { rows } = await db.query<{ id: string; name: string }>('select id, name from roles where id = $1', [
+    IMPORT_DEFAULT_ROLE_ID,
+  ]);
+  return rows[0] ?? null;
+}
+
+const REPORTS_TO_IGNORED =
+  'Reports to is ignored: only people allowed to manage roles and people’s access can set it.';
+const NO_DEFAULT_ROLE =
+  'New people normally get the Complaints member role, but it has been deleted, so they will ' +
+  'start with no access. Give them a role in Access › People.';
+
 async function analyse(
   db: Db,
   input: unknown[],
+  setsReportsTo: boolean,
 ): Promise<{ result: PreviewResult; plans: Plan[] }> {
+  const defaultRole = await defaultRoleOf(db);
   const { rows: users } = await db.query<DbUser>(
     `select u.id, u.name, u.email, u.phone, u.designation_id as "designationId",
             u.reports_to as "reportsTo", u.can_login as "canLogin",
@@ -294,7 +328,9 @@ async function analyse(
       }
     }
 
-    const reportsRaw = text(row.reportsToPhone);
+    const reportsCell = text(row.reportsToPhone);
+    if (reportsCell && !setsReportsTo) info.push(REPORTS_TO_IGNORED);
+    const reportsRaw = setsReportsTo ? reportsCell : '';
     const reportsToPhone = reportsRaw ? phoneDigits(reportsRaw) : null;
     if (reportsRaw && (!reportsToPhone || reportsToPhone.length < 10)) {
       errors.push(`Reports-to phone "${reportsRaw}" is not a full phone number.`);
@@ -423,7 +459,8 @@ async function analyse(
       if (same) plan.password = null;
       else changes.push({ field: 'password', from: m?.passwordHash ? 'set' : null, to: 'new password' });
     }
-    if (!m) changes.push({ field: 'modules', from: null, to: 'complaints: member' });
+    if (!m && defaultRole) changes.push({ field: 'modules', from: null, to: 'complaints: member' });
+    if (!m && !defaultRole) notes[i]!.push(NO_DEFAULT_ROLE);
 
     const status: Status =
       errors.length > 0 ? 'error' : !m ? 'new' : changes.length > 0 ? 'update' : 'unchanged';

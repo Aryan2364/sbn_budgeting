@@ -36,7 +36,7 @@ import { Input } from "@/components/ui/input"
 import { PasswordInput } from "@/components/ui/password-input"
 import { InlineFieldError } from "@/components/ui/inline-field-error"
 import { Label } from "@/components/ui/label"
-import { SearchableSelect } from "@/components/ui/searchable-select"
+import { SearchableSelect, type SearchOption } from "@/components/ui/searchable-select"
 import {
   Select,
   SelectContent,
@@ -92,7 +92,6 @@ function usePickRows<T>(load: (() => Promise<T[]>) | null): {
 // Retired designations too: the filter finds people who still hold one,
 // and the form shows a person's current one (it offers active ones).
 const loadDesignations = () => pick.designations({ includeInactive: true })
-const loadPeople = () => pick.people()
 
 /**
  * The people master (CONTRACT §2), platform admin only.
@@ -600,8 +599,22 @@ function PersonDialog({
   const [error, setError] = React.useState<string | null>(null)
   const [fieldErrors, setFieldErrors] = React.useState<Partial<Record<FieldKey, string | null>>>({})
 
-  // Only id, name and designation are needed here, so the names-only picker.
-  const people = usePickRows<PersonPick>(loadPeople)
+  /**
+   * Reports to searches the people Pick on the server as the user types
+   * (access plan P8): 145+ people outgrow one answer of 50, so the list
+   * is never loaded whole. Not the person themselves: nobody reports to
+   * themselves.
+   */
+  const personId = person?.id
+  const searchReportsTo = React.useCallback(
+    (query: string): Promise<SearchOption[]> =>
+      pick.people({ q: query }).then((rows: PersonPick[]) =>
+        rows
+          .filter((p) => p.id !== personId)
+          .map((p) => ({ value: p.id, label: p.name, detail: p.designationName })),
+      ),
+    [personId],
+  )
   const unsaved = useUnsavedChanges({ changed: isChanged(values, saved), noun: "person" })
 
   const set = <K extends keyof PersonValues>(key: K, value: PersonValues[K]) =>
@@ -714,13 +727,8 @@ function PersonDialog({
     if (d.isActive || d.id === person?.designation?.id) designationOptions[d.id] = d.name
   }
 
+  // "No one" leads the list; the people come from the search.
   const reportsToOptions: Record<string, string> = { [NONE]: "No one" }
-  if (person?.reportsTo) reportsToOptions[person.reportsTo.id] = person.reportsTo.name
-  for (const p of people.rows ?? []) {
-    if (p.id !== person?.id) {
-      reportsToOptions[p.id] = p.designationName ? `${p.name} (${p.designationName})` : p.name
-    }
-  }
 
   const close = unsaved.guard((open) => {
     if (!open) onClose()
@@ -807,17 +815,23 @@ function PersonDialog({
                   <SearchableSelect
                     id="person-reports-to"
                     options={reportsToOptions}
+                    search={searchReportsTo}
+                    selectedLabel={
+                      person?.reportsTo && values.reportsToId === person.reportsTo.id
+                        ? person.reportsTo.name
+                        : undefined
+                    }
                     value={values.reportsToId}
                     onValueChange={(v) => {
                       set("reportsToId", v)
                       setFieldErrors((c) => ({ ...c, reportsTo: null }))
                     }}
-                    disabled={people.rows === null && people.error === null}
-                    placeholder={people.rows === null ? "Loading people" : "Choose a person"}
+                    placeholder="Choose a person"
                     searchPlaceholder="Search people"
+                    emptyMessage={(q) => `No people match '${q}'.`}
                     className={fieldErrors.reportsTo ? "border-danger" : undefined}
                   />
-                  <InlineFieldError>{fieldErrors.reportsTo ?? people.error}</InlineFieldError>
+                  <InlineFieldError>{fieldErrors.reportsTo}</InlineFieldError>
                 </div>
               </div>
             </section>

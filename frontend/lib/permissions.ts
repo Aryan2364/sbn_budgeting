@@ -116,12 +116,12 @@ import { toast } from "@/components/ui/sonner"
  *    (GET /cost-heads, /designations, /locations, /complaint-categories)
  *    under `manage`. Those are the lists, not pickers.
  *
- * KNOWN LIMIT, for P8: a Pick returns at most 50 matches. The people
- * pickers (6, 8, 12) list everyone, and there are 145+ people, so until
- * P8's server search lands only the first 50 by name can be chosen
- * there (before P7 it was the first 100). Sites (1, 7) carry the same
- * cap and have no P8 of their own; raise it with the owner if the site
- * count passes 50.
+ * P8 (done): a Pick returns at most 50 matches, so the pickers whose
+ * lists can outgrow that search the server as the user types, through
+ * searchable-select's `search`: the people pickers (6, 8, 12) and the
+ * site pickers (1, 7; nothing caps the number of sites). The report
+ * scope's sites are narrowed to the chosen project on the server
+ * (`projectId`, `none` for no project), not filtered in the browser.
  * ---------------------------------------------------------------------
  */
 
@@ -449,29 +449,21 @@ export function usePageGuard(needs: Needs | null): React.ReactNode | null {
 }
 
 /**
- * TRANSITIONAL, product addition, not kit API. DELETE IT when every
- * record carries the server's `can` (P3b-budget adds it to expenses).
- *
- * Kit 26.5 says the browser never works out whether a person may act on
- * one record. Until the server sends that answer, though, today's screen
- * must keep today's behaviour (plan 4: unchanged until P9), and today the
- * expense form decided "only the person who entered it, or someone who
- * may edit any expense" itself. This keeps exactly that rule, asked as
- * permission scope rather than role: held beyond Own reaches every
- * expense; held at Own reaches the ones the person added. The sentence
- * is the server's own (backend access/scope.ts `recordReason`).
+ * Product addition, not kit API: an action that needs every one of
+ * several keys, such as adding an expense, which needs `create` and see
+ * amounts (the server refuses either missing with 403). Enabled only
+ * when all are held; the reason names the first one missing (kit 26.2).
+ * While any answer is unknown: disabled, no reason (kit 26.1).
  */
-export function useLegacyOwnAnswer(
-  key: PermissionKey,
-  mine: boolean | undefined,
-  ownReason: string,
-): true | string | undefined {
+export function useCanAll(keys: PermissionKey[]): { allowed: boolean | undefined; reason: string } {
   const snap = useSnapshot()
-  if (snap.status !== "ready" || !snap.access || mine === undefined) return undefined
-  const scopes = snap.access.permissions[key] ?? []
-  if (scopes.length === 0) return undefined
-  if (scopes.some((scope) => scope !== "own")) return true
-  return mine ? true : ownReason
+  let unknown = false
+  for (const key of keys) {
+    const held = answer(snap, key)
+    if (held === false) return { allowed: false, reason: reasonFor(key) }
+    if (held === undefined) unknown = true
+  }
+  return unknown ? { allowed: undefined, reason: "" } : { allowed: true, reason: "" }
 }
 
 /**

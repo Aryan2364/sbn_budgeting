@@ -224,7 +224,7 @@ behind is worse than no table, because it is believed.
 | A field error | `inline-field-error` | Section 7.1. Never a toast |
 | A prefix, suffix or in-field button | `input-group` | The ₹ addon, a search icon |
 | Up to 6 options | `select` | Warns in dev past 6 options |
-| More than 6 options | `searchable-select` | Search box fixed above the list |
+| More than 6 options | `searchable-select` | Search box fixed above the list. `search` makes it ask the server as the user types (300 ms, at most 50 rows; access plan P8): the people and site pickers |
 | A date | `date-picker` | Typeable as well as pickable |
 | A time | `time-picker` | 15-minute steps |
 | A calendar surface | `calendar` | Inside `date-picker`; rarely used alone |
@@ -1246,20 +1246,191 @@ own overlay.
 
 ## 26. Permissions in the interface
 
-- **Hide** controls for entire areas the user has no access to. A user
-  with no finance role does not see Invoices in the sidebar at all.
-- **Disable** individual actions the user can see but cannot perform, and
-  always attach a tooltip saying why: "Only an administrator can delete
-  clients."
-- **Never show a control that fails after being clicked.** A permission
-  error after the fact is the worst option of the three.
-- Read-only users see the same screens with fields disabled, not a
-  separate stripped-down screen. Building a second read-only version of
-  every screen doubles the work and guarantees the two drift apart.
+1. Hide controls for entire areas the user has no access to. A user who holds no permission in invoicing does not see Invoices in the sidebar at all.
+2. Disable individual actions the user can see but cannot perform, and always attach a tooltip saying why, in the wording of section 26.2: "Only people allowed to delete clients can do this."
+3. Never show a control that fails after being clicked.
+4. Read-only users see the same screens with fields disabled, not a separate stripped-down screen.
+5. **Permissions are not roles.** Code asks whether the user holds a permission (section 26.3), never which role they hold. No screen checks for an administrator, and no code carries an isAdmin flag. The administrator's role is an ordinary role that happens to hold every permission. Roles are created and renamed by each client, so nothing on screen or in code may depend on a role's name.
 
-**These are appearance rules only.** Hiding a button is not security. The
-real permission check happens on the server. Anyone can unhide a button
-with browser tools.
+These are appearance rules only. Hiding a button is not security. The real permission check happens on the server.
+
+The server side, and the contract between the two, is the backend kit's ACCESS_RIGHTS.md. Its vocabulary (permission, role, scope, unit, Pick) is used here unchanged.
+
+**How to attach the reason.** Every disabled control in this system has pointer-events-none, so it never receives a hover and a tooltip attached to it never opens. The reason must be caught by a wrapper around the control that is not disabled, and the wrapper must also be focusable so keyboard users can reach the reason. When the action is permitted, the wrapper renders its children unchanged, with no extra element.
+
+The wrapper must also open the tooltip on tap, because a tablet user can neither hover nor press Tab (section 19).
+
+That wrapper is permission-tooltip.tsx. Do not write a second one, and never put a Tooltip directly on a disabled control. If permission-tooltip.tsx does not yet open on tap, fix it there, once, rather than at any call site.
+
+### 26.1 Not known yet is not "not allowed"
+
+The browser learns what the user may do from the server. Until the answer arrives nothing is known, and "not known" must not look like "not allowed".
+
+1. A permission's answer has three values: true, false and undefined. undefined means not known yet.
+2. While the answer is undefined, the control is disabled and shows **no reason**. A reason shown before the answer lands is a guess, and is wrong for everyone who turns out to be allowed.
+3. When the answer lands, the control enables, or stays disabled and gains its reason. It does not move or change size; only its state changes.
+4. A control is never hidden while the answer is undefined and then shown. That makes the toolbar jump (section 14 rule 1).
+5. If the permissions failed to load, that is the failed branch of section 14 rule 3, not loading. Controls stay disabled without a reason, and the shell shows a danger banner (section 7.1): "We could not load what you can do here. Try again." with a "Try again" button.
+6. A refresh of permissions already held (section 26.4) never returns answers to undefined. The old answers stand until the new ones arrive.
+
+permission-tooltip.tsx takes allowed as true, false or undefined, and the prop is required: an optional prop lets a caller forget it, and a forgotten prop would read as "not known yet" for ever. Only a definite yes enables:
+
+```tsx
+const canDelete = useCan("clients.records.delete")
+<PermissionTooltip allowed={canDelete} reason={reasonFor("clients.records.delete")}>
+  <Button variant="danger" disabled={canDelete !== true}>Delete client</Button>
+</PermissionTooltip>
+```
+
+### 26.2 Wording the reason
+
+A reason names who may do it by what they are allowed to do, never by a role. Roles are named by each client and change; a permission's label does not.
+
+| Case | Wording |
+|---|---|
+| The user lacks the permission | "Only people allowed to delete clients can do this." |
+| The same, where asking is the next step | "Only people allowed to approve invoices can do this. Ask an administrator if you need it." |
+| A rule about this record, not a permission (sections 15.1, 38.3) | State the fact: "You raised this invoice, so someone else must approve it." |
+| A whole page (section 26.6) | Section 11.8's no-access wording, unchanged |
+
+Rules:
+
+1. Never "You do not have permission". It says nothing the disabled control did not already say.
+2. Never a role name: not "Only an administrator can…", not "Only accountants can…".
+3. "Ask an administrator" means a person who manages access, as in section 11.8. It is not a role check.
+4. The words come from the permission's label through reasonFor(key) (section 26.3), so each permission has one wording everywhere. A caller writes its own reason only for a record rule (third row), and the server sends those (section 26.5).
+5. Section 37 applies: sentence case, plain, cause first.
+
+### 26.3 Asking: lib/permissions.ts
+
+Every question about permissions goes through one file. No screen reads the permission list itself.
+
+```ts
+/** module.section.action, as declared in the backend catalogue. */
+type PermissionKey = `${string}.${string}.${string}`
+
+/** May this person do this at all? undefined = not known yet (26.1). */
+function useCan(key: PermissionKey): boolean | undefined
+
+/** "Any of", for an area opened by several permissions. */
+function useCanAny(keys: PermissionKey[]): boolean | undefined
+
+/** The module's see-amounts permission (26.7). */
+function useCanSeeAmounts(module: string): boolean | undefined
+
+/** For the shell and lists that ask many questions at once. */
+function usePermissions(): {
+  status: "loading" | "ready" | "failed"
+  can: (key: PermissionKey) => boolean | undefined
+  refresh: () => void
+}
+
+/** The section 26.2 sentence for a key, built from its label. */
+function reasonFor(key: PermissionKey): string
+
+/** The product's unit (section 0.1 item 8). */
+const UNIT: { one: string; many: string; grouped: boolean }
+
+/** Mounted once in the app shell. `initial` comes from the server (26.4). */
+function PermissionsProvider(props: { initial: MyAccess | null; children: React.ReactNode }): React.ReactNode
+```
+
+Rules:
+
+1. Keys are typed, and the type and each key's label are generated from the backend catalogues, never written by hand. A key that does not exist is a type error, not a control that is silently always disabled.
+2. useCan answers "may this person do this at all". It never answers "on this record". That is section 26.5.
+3. Never check a role name, and never write an isAdmin flag (section 26 rule 5).
+
+### 26.4 Keeping the answer fresh
+
+1. The server renders the user's permissions into the page with the shell (the backend kit's /me payload). The sidebar and the first screen are therefore right on first paint, with no "not known yet" state.
+2. The browser asks again in three cases only: when any request comes back "not allowed" (403); when the tab regains focus, at most once every 10 seconds; and after the user saves anything on the access screens (section 40). Never on 404 or 409; those are not access changes.
+3. A refresh keeps the old answers until the new ones land (section 26.1 rule 6).
+4. A request refused with 403 shows an error toast with the reason (section 7.1), and the control that sent it moves to disabled with its reason once the refreshed permissions land. It is never left looking usable (section 26 rule 3).
+5. A page the user loses access to while it is open is not torn down mid-task. Its controls disable, and the next navigation shows section 26.6.
+
+### 26.5 Record-level answers come from the server
+
+Whether a person may act on one particular record depends on things the browser does not know: the record's unit, its owner, the reporting line, its status. The browser never works these out.
+
+1. Each record the server sends carries its own answers for the actions shown on it: `can: { edit: true, approve: "You raised this invoice, so someone else must approve it." }`. true means allowed; a string is the reason it is not.
+2. A row or record action is enabled only when useCan(key) and the record's own answer are both true.
+3. The record's reason is shown as given, through permission-tooltip.tsx.
+4. Lists show only records the user may see. A filter, search or export never offers a record the user cannot open, so there is no "you cannot open this" state inside a list.
+5. A refusal for a workflow rule (409) is an error toast carrying the server's plain reason, then the record reloads.
+
+### 26.6 Opening a page you cannot use
+
+1. Every page whose area belongs to a permission checks it on the server before rendering anything, through one helper in lib/permissions.server.ts:
+
+```ts
+/** Returns the no-access page to render, or null to carry on. */
+async function guardPage(key: PermissionKey | PermissionKey[]): Promise<React.ReactNode | null>
+```
+
+```tsx
+export default async function InvoicesPage() {
+  const denied = await guardPage("invoices.records.view")
+  if (denied) return denied
+  // ...
+}
+```
+
+2. When the answer is no, the page renders the section 11.8 "No access" page inside the shell. It does not redirect, so the address stays in the bar and the user can send it to whoever manages access.
+3. The sidebar and top bar stay (section 11.8 rule 1).
+4. The check lives in the page or its layout, once. Next's forbidden() is not used while it is experimental in the version this kit runs; if a product enables it, guardPage calls forbidden() and app/forbidden.tsx renders the same page.
+5. **A record outside the user's scope is not found, not forbidden.** The server answers 404 for it, and the screen shows the section 11.8 "Page not found" page. Saying "no access" would confirm that the record exists.
+
+### 26.7 See amounts
+
+Some modules have one see-amounts permission covering sensitive figures: cost, rates, salary. The server removes those figures from everything it sends, including exports and reports.
+
+1. A person who cannot see amounts does not see the amount column at all. Never an empty cell, a dash, "Hidden" or a padlock in its place. An empty amount cell reads as "Not set" or zero (section 31.2), which is false.
+2. The same applies to totals, summary tiles, chart series, sorts and filters built from those figures. A report whose only purpose is the amounts is an area, and section 26 rule 1 hides it.
+3. Columns are chosen with useCanSeeAmounts(module) once, before the table renders, so columns never appear and vanish.
+4. A form field holding an amount follows the same rule: absent, not disabled.
+
+### 26.8 Brought across from the rest of the kit (access plan P7 step 1)
+
+Copied from `Kits/frontend-kit/FRONTEND_RULES.md` (committed 9273e7d) so
+the permission rules can be read in one place. The kit is the authority;
+where this copy and the kit differ, the kit is right.
+
+**Kit section 1, rule 7, with its exceptions** (this file's own rule 7
+above predates them):
+
+7. Never render an unbounded list. Everything is paginated. The exceptions are the report table (section 34.2), the unit picker (section 40.7) and the tables of "What they can do" (section 40.9), and only because their rows come from master data or the code catalogue, which grow only when an administrator edits a list or a release ships.
+
+**Kit section 4.1, the permission rows:**
+
+| File | What it is |
+|---|---|
+| permission-tooltip.tsx | Makes a disabled control's reason reachable by hover, keyboard focus and tap (sections 19, 26). A tooltip on the disabled control itself never opens. allowed is true, false or undefined, and is required; undefined means not known yet and shows no reason (section 26.1). |
+
+Specified in the kit, not yet built (Tracking builds them first, P10;
+RESOLUTIONS PQ4):
+
+| File | What it will be |
+|---|---|
+| permission-grid.tsx | The role editor's grid for one module (section 40.3): sections down, actions across, a tick and a scope in each cell, partly ticked module and row ticks, the "Also includes" line for Picks (section 40.5), and a read-only form. |
+| unit-picker.tsx | The selected-units tick list on a person's access page (section 40.7): every unit, grouped where the product groups them, with partly ticked group ticks, the "8 of 48" counts, and search above 50 units. Not SearchableSelect: that chooses one value, and this chooses many. |
+
+**Kit section 11.8, the No access page:**
+
+| Page | Heading | Line | Actions |
+|---|---|---|---|
+| No access | You don't have access to this page | Ask an administrator if you need it. | Primary: "Go to dashboard" |
+
+**Kit section 12.1, the sidebar's permission bullets:**
+
+- **An item belongs to a permission.** Each item may carry the permission key, or several meaning "any of", that opens its area (section 26.3). An item the user cannot use is not rendered (section 26 rule 1), and a group whose items are all hidden loses its label too. The seven-item limit counts the full configured list, not what one user sees: the person who can see everything must still see seven or fewer.
+- The sidebar is drawn from the permissions the server sent with the page (section 26.4), so it is right on first paint and never shows an item and then removes it.
+
+**This product's declared first-paint exception** (access plan 3.3):
+Sadbhavna keeps its token in `localStorage`, so section 26.4 rule 1
+cannot hold. The shell renders nothing permission-dependent until
+`/auth/me` lands, and `guardPage` (26.6) runs in the browser, in
+`lib/permissions.ts`; there is no `lib/permissions.server.ts`.
 
 ---
 
@@ -1754,3 +1925,230 @@ the cost head name is the first thing to leave.
 **Measure it in the browser after any change to the column set.**
 Section 31.4 carries two wrong width tables written from arithmetic
 before the screen existed; this section is not going to be a third.
+
+---
+
+## 40. Access screens
+
+Who may do what is set on four screens. Every product with roles uses them as written here. The backend kit's ACCESS_RIGHTS.md fixes what each screen must show and do (its section 7.4); this section fixes how it looks and behaves. A product without configurable roles skips this section.
+
+The words are the backend kit's, used the same way on every screen and in every message:
+
+| Word | Meaning |
+|---|---|
+| Permission | One action on one section of one module: "Invoices › Records › Approve" |
+| Role | A named set of permissions, each carrying a scope. People hold one or more roles, and their access is the sum of them |
+| Scope | Which records a permission reaches: Own, Team, Selected units or All |
+| Unit | The product's one business-unit dimension (section 0.1 item 8). On screen, always the product's own word |
+| Pick | Seeing names only, to choose them in a list on another screen. Never shown as a tick (section 40.5) |
+
+Scope labels, exactly, in this order wherever scopes are listed:
+
+| Scope | Label | Meaning |
+|---|---|---|
+| Own | Own | Records they created or are named on |
+| Team | Team | Their own, plus those of everyone under them in the reporting line, plus the units they or those people lead |
+| Selected units | "Selected " and the unit's plural: "Selected branches" | The units ticked on their access page, plus the units they lead |
+| All | All | Every record |
+
+There is no "None". An unticked permission is no access.
+
+### 40.1 Where the four screens live
+
+1. One sidebar item, **Access**, with the shield icon, behind the permission that manages access. Everyone else does not see it (section 26 rule 1).
+2. Inside it, four section tabs (section 33), in this order: **Roles**, **People**, **What they can do**, **History**. Four is the section 33.5 limit, and nothing else is added here.
+3. The role editor (section 40.3) and a person's access page (section 40.7) are pages under their tab, reached by opening a row. Breadcrumbs: "Access › Roles › Office accountant", "Access › People › Rakesh Mehta".
+4. Neither is a dialog. Both hold more than a short form, and both can raise a warning that would otherwise need a dialog inside a dialog (section 24 rule 4).
+5. Changes take effect on the person's next request. No screen says "may take a few minutes".
+
+### 40.2 Roles list (the Roles tab)
+
+A list page (section 11.1).
+
+1. Columns: Name (TableRowLink, free width, truncates), People (col-count, right-aligned), row actions (col-actions).
+2. **People** is the number of active people holding the role now. It is a link that opens the People tab filtered to that role, with the filter showing as a chip (section 27.3). Zero is written "0" and is not a link.
+3. Job roles are named after the job ("Office accountant"). Add-on roles, held on top of a job role, start with "+" ("+ Invoice approver"). The "+" is how they are told apart; there is no Type column.
+4. Default sort: job roles first, then add-on roles, each alphabetical.
+5. Row actions in the three-dot menu: Edit, Duplicate, Delete.
+6. A role can be deleted only while nobody holds it. Otherwise Delete is disabled with its reason (section 15.1): "3 people have this role. Remove it from them before deleting it." Deleting follows section 15. The history keeps the role's name (section 40.10).
+7. **The system role** (the one that holds every permission) cannot be edited or deleted. Its Edit and Delete are disabled with "This role always holds every permission and cannot be changed." Its row opens the editor read-only (section 40.3 rule 14).
+8. Duplicate opens the role editor as a new role, named "Copy of Office accountant", with every tick and scope copied. Nothing is saved until Save.
+9. **Add role** is the page's one primary button. It opens the role editor empty.
+
+### 40.3 Role editor: the permission grid
+
+A form page (section 11.3) with a fixed footer (section 11.3 rule 8), because it is long.
+
+```
+Access › Roles › Office accountant
+Office accountant                                                      [⋯]
+14 people have this role
+┌─ Details ───────────────────────────────────────────────────────────────┐
+│ Name *                     Description                                  │
+└─────────────────────────────────────────────────────────────────────────┘
+Own: records they created or are named on. Team: ... All: every record.
+┌─ Invoices ──────────────────────────────────────────────────────────────┐
+│ [▣] Everything in Invoices   [ ] See amounts (cost, rates)              │
+│ ┌──────────────────────────┬────────────┬────────────┬────────────┐     │
+│ │ Section                  │ View       │ Add        │ Approve    │     │
+│ ├──────────────────────────┼────────────┼────────────┼────────────┤     │
+│ │ [■] Records              │ [■] All ▾  │ [■] Own ▾  │ [■] Own ▾  │     │
+│ │     Also includes: pick clients       │            │            │     │
+│ │ [▣] Payments             │ [■] Team ▾ │ [ ]        │            │     │
+│ │ [ ] Reports              │ [ ]        │            │            │     │
+│ └──────────────────────────┴────────────┴────────────┴────────────┘     │
+└─────────────────────────────────────────────────────────────────────────┘
+═══════════════════════════════════════════════════════════ fixed footer ═
+                                                   [Cancel]  [Save role]
+```
+
+[■] ticked, [▣] partly ticked, [ ] unticked; a blank cell means that section has no such action. "All ▾" is the scope as an inline choice (section 40.4).
+
+**The page**
+
+1. Breadcrumb, then the record header (section 11.2): the role name as the page title, and "14 people have this role" as the meta line. The three-dot menu holds Duplicate and Delete.
+2. A Details card (name and description). Then one line stating the meaning of each scope, once, so the scope menus need no explanations of their own. Then one panel card (section 36.10) per module, in the catalogue's order. Every module in the catalogue appears, including ones added since the role was last edited; their ticks start empty.
+3. The page owns the vertical scroll (section 10). Each module's table scrolls sideways inside its own overflow-x-auto container when it is too wide, with the Section column frozen and its 1px right border (sections 31.4, 34.3). The card must not clip it.
+4. **One Save for the whole role**, the primary button in the fixed footer, labelled "Save role", with Cancel on its left (section 11.3 rule 7). Never a Save per module card: a role is one record, and saving half of it gives people half a role. This is not a settings page, so section 11.5's Save per card does not apply.
+5. Unsaved changes are guarded (section 11.3 rule 10, unsaved-changes.tsx). Ctrl+S saves (section 39.5).
+6. The save toast states the effect: "Office accountant saved. 14 people have the new permissions from their next request."
+
+**The module card**
+
+7. The band holds the module name only. Ticks never sit on a band: a primary tick on a primary ground cannot be seen.
+8. The first line of the card body holds the module tick, "Everything in Invoices", and the module's see-amounts tick where the module has one (section 26.7), naming what it covers: "See amounts (cost, rates)".
+9. The module tick is ticked when every permission in the module is ticked, partly ticked when some are, and unticked when none are. Ticking it ticks every unticked permission at its starting scope (section 40.4 rule 4); permissions already ticked keep their scope. Unticking it clears the whole module, see amounts included.
+
+**The table**
+
+10. Rows are the module's sections; columns are the module's actions, in the catalogue's order, with short names: "View", "Add", "Edit", "Delete", "Approve", "Export" (section 37). A cell for an action its section does not have is empty: no tick, no dash. It is not a disabled tick, because no one can ever tick it, and a disabled control would need a reason.
+11. The Section column is the row spine (TableRowHeader, section 34.3): tinted, body strong, frozen. It starts with a row tick that is ticked, partly ticked or unticked across that section's actions, and behaves like the module tick for one row. A ticked row is a value, not a selection, so the row takes no selected tint.
+12. Each cell is a tick box, with its scope beside it once ticked (section 40.4).
+13. The permission that manages access is never offered on an ordinary role. The module holding it appears only on the system role.
+14. **The system role's editor is read-only.** Every permission is ticked at All, every tick is disabled, scopes are plain text, there is no Save, and one neutral banner sits above the first module card: "This role always holds every permission, in every module, at All. It cannot be changed."
+
+**Keyboard**
+
+15. Tab moves through the ticks and scope choices in reading order. Space ticks (section 39.2). Enter or Space on a scope opens its menu. The grid does not use the spreadsheet movement of section 39.6: its cells are controls, not text fields.
+
+Component: permission-grid.tsx (pending, section 4.1). It renders one module. The page owns the whole role, the cross-module Picks and the one Save.
+
+### 40.4 Scope on a tick
+
+1. A ticked cell shows its scope beside the tick as an inline choice (sections 6.7 and 40.3): the scope's label in primary-text, underlined, with the 12px chevron, 8px (space-2) from the tick. An unticked cell shows the tick alone.
+2. Scope is chosen per tick, never per row or per module. "View all, edit own" is the most common shape a role takes.
+3. The choice offers only the scopes that section can honour (backend kit section 3.4), in the order of the table above. Where a section offers one scope, the scope is plain text beside the tick, not a choice.
+4. **A new tick starts at the narrowest scope.** That is Own wherever the section offers it, otherwise the only scope it offers. The administrator widens it on purpose. A tick never starts at All because All is convenient, and ticking again after unticking starts at the narrowest scope again. This is least privilege: a mistake that gives too little is noticed and fixed; one that gives too much is not.
+5. Every action column is col-scope wide (section 17.1), so a column never changes width as scopes change and the scope label never truncates. col-scope is measured on "Selected units" and re-measured for the product's own unit word (section 0.1 item 8).
+6. A scope's screen-reader label names the permission: "Scope for approve invoices".
+
+### 40.5 Picks
+
+Some permissions need Pick on another section, so the person can choose from that list on a form: adding an invoice needs Pick on clients. The catalogue in code says which.
+
+1. **Pick has no column and no tick.** It is not something an administrator grants on its own.
+2. **Picks follow the ticks.** Ticking a permission adds the Picks it needs, at that permission's scope or at the wider scope the catalogue fixes. When no ticked permission needs a Pick any longer, it goes.
+3. **They are never added silently.** A row whose ticked permissions bring in Picks shows one line under the section name in its row spine, in label style: "Also includes: pick clients, pick price lists". Label style, not meta: text-muted fails contrast on the primary-subtle spine (section 2.3).
+4. A list everyone may pick from (the catalogue's pick-for-everyone) is never mentioned.
+5. Every Pick a person holds is listed in full, with what it is for, on What they can do (section 40.9).
+
+### 40.6 People list (the People tab)
+
+A list page (section 11.1).
+
+1. Columns: Name (TableRowLink), Roles (free width, truncates), Selected units (free width, truncates), Status (col-status), row actions (col-actions). Below 1024px Selected units is secondary and hides (section 10 rule 4). The column header uses the product's unit word: "Selected branches".
+2. **Roles** lists every role they hold, comma separated, job roles first, then add-on roles, each alphabetical. It truncates (section 8), with the full list in the tooltip and on the person's page, so the tooltip is never the only source. Never a count pill: section 6.8's count is for controls, not cells. A person with no roles reads "No roles".
+3. **Selected units** summarises the units ticked on their page. Where units are grouped, by group: "North: all 6 · East: 2". Otherwise as a count: "4 branches".
+   - If none of their roles uses the Selected units scope: "Not used by their roles", in text-muted.
+   - If a role uses it and no unit is ticked: a warning badge, "None chosen". Their Selected units permissions then reach nothing, which is almost always a mistake.
+4. **Status**: Active (success) or Inactive (neutral).
+5. Filters (section 27.3): Role, Status, the unit group where there is one, and "Selected units: none chosen". The Role filter is what the Roles list's People link sets.
+6. Row actions: Edit access, What they can do (opens that tab for this person), Deactivate or Activate.
+7. Deactivating a person is reversible: it happens at once, with an Undo toast (section 38.1): "Rakesh Mehta deactivated. Their access ends on their next request."
+8. Units nobody covers are reported in the list banner (section 40.8).
+9. Adding a person and editing their own details belong to the product's people screens, not to Access. **Add person** appears here only if the product has no other place for it, and then it is the one primary button.
+
+### 40.7 A person's access page
+
+Opened from a People row. A form page with a fixed footer and one Save, like the role editor (section 40.3 rule 4).
+
+**The page**
+
+1. The record header holds the person's name, their Active or Inactive badge, and a meta line: who they report to, and the units they lead. "What they can do" is a secondary button that opens that tab for this person. The three-dot menu holds Deactivate (or Activate) and "View access history" (the History tab filtered to this person).
+2. Save is "Save access". The toast: "Rakesh Mehta's access saved. It applies from their next request."
+3. Removing your own access to these screens, by removing the role that gives it, is allowed while someone else can still manage access, but asks first in an alert dialog: "Remove your own access to these screens?" "You will no longer be able to manage roles or people. Someone else who can will have to give it back." Buttons: "Keep my access" and "Remove my access".
+
+**Roles card**
+
+4. One row per role held: the role name, the scopes that role uses in text-secondary, and a quiet remove icon button (x, tooltip "Remove role"). Job roles first, then add-on roles.
+5. Below the rows, a picker of the roles not yet held (section 16.3) and a secondary **Add role** button beside it. Adding or removing changes the form, not the record, until Save.
+6. Roles only add up. Nothing on this page grants or removes a single permission; only roles do.
+
+**Selected units card, and the unit picker**
+
+7. Shown only when at least one held role uses the Selected units scope. Otherwise one line replaces it: "None of their roles uses selected branches." Ticked units are kept, not cleared, in case such a role is added back.
+8. The first line says which roles use it, and the count: "Used by Office accountant. 8 of 48 branches selected."
+9. **Every unit is shown, unpaginated** (the section 1 rule 7 exception): paging would split a group and hide ticks. The page owns the scroll; the card never scrolls on its own (section 10).
+10. **Search appears above 50 units.** At 50 or fewer, the list alone is quicker to scan than a search box. Above 50, a search box sits above the list and filters units by name, as section 27.1 describes. Ticks hidden by the search stay ticked.
+11. **Groups, where the product groups its units.** Units sit under their group. Each group row has a tick that is ticked, partly ticked or unticked across its units, with "6 of 6" beside it. Ticking it ticks every unit in the group, and any unit can then be unticked on its own. What is stored is the units, never the group, so a unit added to the group later is not ticked. While a search is active, the group tick acts only on the units shown, and its label says so: "Tick the 2 shown". Groups start expanded and collapse instantly, never with an animated height (section 5.6 rule 1).
+12. Units sit as tick boxes in a wrapping grid: 4 columns at 1280, 3 at 1024, 2 at 768 (section 9). Names truncate (section 8).
+13. Units the person leads, which they see without being ticked, are listed at the foot of the card as text, with "(set on each unit)". They are not ticks here, because they are changed on the unit.
+14. Deactivated units are not listed.
+15. If a product's units could grow into the hundreds, this pattern needs agreeing again (section 30) before it is built.
+
+Component: unit-picker.tsx (pending, section 4.1).
+
+### 40.8 Units nobody covers
+
+A new unit is not given to anyone automatically. Until someone covers it, its records are seen only by people with All scope.
+
+1. While any active unit is uncovered, the People tab shows the list banner of section 11.1 zone 1b, in warning: "3 branches have nobody covering them: North yard, East depot, Plant 7." Past three names: "…and 4 more."
+2. Its one action, **Review branches**, opens the product's units list filtered to the uncovered units, where a lead can be named or a person opened to tick it.
+3. What "covered" means is decided by the server and sent as a list.
+
+### 40.9 What they can do (the third tab)
+
+A read-only view of one person's real access: every permission they hold, its scope, and which role gave it.
+
+1. The toolbar holds one control: the person, chosen with the picker of section 16.3. The chosen person is in the URL, so the view can be linked to and the People row action opens it directly. With nobody chosen, the area shows section 13's nothing-yet state: "Choose a person to see what they can do."
+2. **Edit access** is a secondary button that opens their access page. There is no primary button: this view changes nothing.
+3. A summary under the toolbar: name and status badge, their roles in one line, their selected units in the form of section 40.6 rule 3, the units they lead, and the size of their team.
+4. One panel card per module **where they hold at least one permission**, in catalogue order. After the last card, one line in text-secondary names the modules where they hold nothing: "No access to: Payroll, Stock." Absence is stated, not left to be inferred.
+5. Each card's first line states see amounts, where the module has it: "Sees amounts: yes, from Office accountant" or "Sees amounts: no".
+6. The table has the columns Section (the row spine, named once per group of rows), Action, Scope and From. It is not paginated: its rows are the code catalogue, which only a release changes (the section 1 rule 7 exception).
+7. **Scope is the combined reach.** Scopes from several roles add up, so they are listed together: "Team, Selected branches". All replaces the rest: never "Own, All".
+8. **From** names every role that grants the permission, each with its own scope where they differ: "Office accountant (Own), + Invoice approver (All)". This is how an administrator answers "why can they do this?".
+9. **Picks are listed in full**, as rows with the action "Pick" and what they are for: "All, for add invoices".
+10. An inactive person's view carries a neutral banner: "Rakesh Mehta is inactive, so none of this applies until they are activated." The table still shows what would apply.
+11. Workflow rules (for example, that a creator cannot approve their own record) are not permissions and are not listed. One line under the summary says so: "Some actions also depend on the record itself, such as who raised it."
+
+### 40.10 Access history (the fourth tab)
+
+Every access change across the product, newest first. A record's own history (section 38.2) is unchanged; this is a separate list because access changes belong to no single record.
+
+1. A list page (section 11.1). 25 rows per page. Default sort: newest first, and When is the only sortable column.
+2. Columns: When (col-datetime, the section 18 date and time, never "2 hours ago"), Changed by, Affected (a person's name, or "Role: " and the role's name), Change (a one-line summary, free width, truncates).
+3. One summary form per kind of change: "Role added: + Invoice approver", "Role removed: …", "3 permissions changed", "Branches: 2 added, 1 removed", "Lead changed", "Reports to changed", "Deactivated", "Activated", "Role created", "Role deleted".
+4. Names show as they were at the time of the change. A role renamed or deleted since keeps its old name here.
+5. Filters (section 27.3): Changed by, Affected person, Affected role, Kind of change, and the date range presets of section 27.4. Search covers the names of people and roles.
+6. Clicking a row opens a sheet (sheet.tsx, from the right) with the full change: who, when and whom, then **Before** and **After** for each changed item, each line marked with the plus or minus icon and the words "Added" or "Removed". No status colours: a removal is not a failure.
+7. Nobody can edit, delete or undo an entry. There are no tick boxes and no row actions, and the sheet has no button but Close.
+8. A person's page links here filtered to that person (section 40.7 rule 1), with the filter showing as a chip. There is no second history list.
+
+### 40.11 Someone must always be able to manage access
+
+The server refuses to remove or deactivate the last person who can manage access. The screens show that before anyone tries, using section 15.1. The server sends, with each person, whether they are that last person.
+
+1. On the last holder's row and page, Deactivate is disabled with the reason: "Rakesh Mehta is the only person who can manage access. Give that to someone else first."
+2. On their page, removing the role that gives that access is disabled with the same reason.
+3. The server checks regardless (section 26). If it refuses anyway, for example because two people acted at once, the refusal is an error toast with the same sentence, and the person's state reloads.
+4. The words name what the person can do, not a role (section 26.2).
+
+### 40.12 Checks before an access screen is done
+
+1. Load every screen as someone who can manage access and as someone who cannot. The second sees no Access item, and gets the no-access page on every Access address.
+2. Throttle the network and load a screen with permission-gated buttons: they show disabled without a reason, then settle, without moving (section 26.1).
+3. In the role editor: tick a permission that needs a Pick. The "Also includes" line appears under its row. Untick it: the line goes. A new tick starts at the narrowest scope.
+4. Tick a group of units, untick one, save, reload: the group reads partly ticked and the count is right.
+5. With one person able to manage access, try every way to remove it: row action and person page. Each is disabled with its reason before the server is reached.
+6. Section 9 widths: 1280, 1024 and 768. The permission grid scrolls sideways inside its card, the Section column stays frozen, the columns do not change width as scopes change, and the page never scrolls sideways.

@@ -464,7 +464,8 @@ describe('scope filter: fixture graph (P3a)', { skip: dbTestsEnabled ? false : S
   });
 
   it('runListQuery: the page, total and aggregates cover the scoped rows only, each with its can', async () => {
-    const supA = ctxOf('supA', [['budget.expenses.view', 'team'], ['budget.expenses.edit', 'own']]);
+    // P4: aggregates on an amount need see amounts, as every role that views expenses with totals holds it.
+    const supA = ctxOf('supA', [['budget.expenses.view', 'team'], ['budget.expenses.edit', 'own'], ['budget.amounts.see', 'all']]);
     const result = await runListQuery<{ id: string; can: Record<string, true | string> }>(pool, expenseList(), {}, supA);
     assert.deepEqual(labels(result.data.map((r) => r.id)), ['E1', 'E4']);
     assert.equal(result.total, 2);
