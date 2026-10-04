@@ -4,7 +4,8 @@ import * as React from "react"
 
 import { api, query, type CostHead, type ListResponse, type Matchable } from "@/lib/api"
 import { formatNumber } from "@/lib/format"
-import { errorMessage, useSession } from "@/components/shell/session"
+import { reasonFor, useCan } from "@/lib/permissions"
+import { errorMessage } from "@/components/shell/session"
 import { toast } from "@/components/ui/sonner"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -43,7 +44,7 @@ import {
  * asked for, and a new head goes after the last.
  */
 export default function CostHeadsSettingsPage() {
-  const { isAdmin } = useSession()
+  const canManage = useCan("budget.cost_heads.manage")
 
   const load = React.useCallback(
     (page: number) =>
@@ -86,8 +87,8 @@ export default function CostHeadsSettingsPage() {
         title="Cost heads"
         description="Every expense is booked against a cost head, and budgets are set per tree per head per period."
         createLabel="New cost head"
-        canEdit={isAdmin}
-        cannotEditReason="Only a budget administrator can change cost heads"
+        canEdit={canManage}
+        cannotEditReason={reasonFor("budget.cost_heads.manage")}
         rows={rows}
         loading={loading}
         error={error}

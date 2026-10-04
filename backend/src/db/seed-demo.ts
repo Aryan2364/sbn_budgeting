@@ -93,20 +93,20 @@ async function seedDemo(): Promise<void> {
 
     // Idempotent: this fixture owns these rows and replaces them whole.
     await client.query(
-      `delete from expenses where site_id in (
+      `delete from expenses /*scope-exempt: seed script, run by hand on a local database, never by a request*/ where site_id in (
          select id from sites where project_id in (
            select id from projects where name = 'Green Belt'))`,
     );
     await client.query(
-      `delete from site_budgets where site_id in (
+      `delete from site_budgets /*scope-exempt: seed script, run by hand on a local database, never by a request*/ where site_id in (
          select id from sites where project_id in (
            select id from projects where name = 'Green Belt'))`,
     );
     await client.query(
-      `delete from sites where project_id in (
+      `delete from sites /*scope-exempt: seed script, run by hand on a local database, never by a request*/ where project_id in (
          select id from projects where name = 'Green Belt')`,
     );
-    await client.query(`delete from projects where name = 'Green Belt'`);
+    await client.query(`delete from projects /*scope-exempt: seed script, run by hand on a local database, never by a request*/ where name = 'Green Belt'`);
 
     const heads = await client.query<{ id: string; name: string; sort_order: number }>(
       'select id, name, sort_order from cost_heads order by sort_order',

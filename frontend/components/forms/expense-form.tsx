@@ -7,14 +7,19 @@ import { TrashIcon } from "lucide-react"
 
 import {
   api,
-  query,
+  pick,
   type BudgetGrid,
-  type CostHead,
+  type CostHeadPick,
   type Expense,
-  type ListResponse,
-  type Matchable,
-  type Site,
+  type RecordCan,
+  type SitePick,
 } from "@/lib/api"
+import {
+  reasonFor,
+  recordAnswer,
+  useCan,
+  useLegacyOwnAnswer,
+} from "@/lib/permissions"
 import { formatCurrency, formatDate } from "@/lib/format"
 import { parseRupeesToPaise, paiseToRupeeInput } from "@/lib/money"
 import {
@@ -54,6 +59,9 @@ import { FormError, FormLoadFailed } from "@/components/forms/form-error"
 import { DeleteRecordDialog } from "@/components/forms/delete-record-dialog"
 import { PermissionTooltip } from "@/components/forms/permission-tooltip"
 
+/** The server's own sentence for an Own-scope miss (backend access/scope.ts `recordReason`). */
+const EDIT_OWN_ONLY = "You can edit expenses only if you added them."
+
 function toIsoDate(date: Date): string {
   const year = date.getFullYear()
   const month = String(date.getMonth() + 1).padStart(2, "0")
@@ -76,10 +84,23 @@ function fromIsoDate(text: string | undefined): Date | undefined {
  * period, amount, description, bill / voucher number, approved by.
  * **There is no upload control** (question 4) — considered and ruled
  * out, so it is not missing by accident.
+ *
+ * Whether this person may save an existing expense is the server's
+ * answer for that record (kit 26.5): `can.edit` on the expense, together
+ * with holding `budget.expenses.edit` at all. Anyone who may not sees
+ * the same form read-only, with Save disabled and the reason on it
+ * (kit 26). Until the server sends `can` (P3b-budget), today's rule
+ * stands: edit at Own reaches the expenses the person entered.
+ *
+ * Site and cost head choose through their Picks (access plan P7
+ * inventory 1 and 2): the cost-head list is Settings, under manage (D3).
  */
 export function ExpenseForm({ expenseId }: { expenseId?: string }) {
   const router = useRouter()
-  const { isAdmin } = useSession()
+  const { user } = useSession()
+  const canCreate = useCan("budget.expenses.create")
+  const canEditAny = useCan("budget.expenses.edit")
+  const canDeleteAny = useCan("budget.expenses.delete")
   const params = useSearchParams()
   const isEdit = expenseId !== undefined
 
@@ -92,8 +113,8 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
   const [billNumber, setBillNumber] = React.useState("")
   const [approvedBy, setApprovedBy] = React.useState("")
 
-  const [sites, setSites] = React.useState<Site[]>([])
-  const [heads, setHeads] = React.useState<CostHead[]>([])
+  const [sites, setSites] = React.useState<SitePick[]>([])
+  const [heads, setHeads] = React.useState<CostHeadPick[]>([])
   const [budgetedHeadIds, setBudgetedHeadIds] = React.useState<Set<string> | null>(null)
 
   const [loading, setLoading] = React.useState(true)
@@ -109,6 +130,42 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
   const [loadError, setLoadError] = React.useState<string | null>(null)
   const [reloadTick, setReloadTick] = React.useState(0)
   const [fieldErrors, setFieldErrors] = React.useState<Record<string, string>>({})
+  /** Who entered the expense being edited. `undefined` until it has loaded. */
+  const [createdById, setCreatedById] = React.useState<string | null | undefined>(undefined)
+
+  /**
+   * The server's answers for this expense. `undefined` until it has
+   * loaded; `null` when the server sent none (before P3b-budget).
+   */
+  const [recordCan, setRecordCan] = React.useState<RecordCan | null | undefined>(undefined)
+
+  // TRANSITIONAL: today's rule, used only while the server sends no `can`.
+  const legacyEdit = useLegacyOwnAnswer(
+    "budget.expenses.edit",
+    createdById === undefined ? undefined : createdById !== null && createdById === user?.id,
+    EDIT_OWN_ONLY,
+  )
+
+  /**
+   * Whether this user may save, and if not, why. While anything is still
+   * loading the answer is "not known yet": Save is disabled and claims
+   * no reason (kit 26.1).
+   */
+  const save = !isEdit
+    ? { allowed: canCreate, reason: reasonFor("budget.expenses.create") }
+    : recordAnswer(
+        canEditAny,
+        "budget.expenses.edit",
+        recordCan === undefined ? undefined : recordCan === null ? legacyEdit : recordCan.edit,
+      )
+  const remove = recordAnswer(
+    canDeleteAny,
+    "budget.expenses.delete",
+    // Before the server sends `can`, delete was the key alone, as today.
+    recordCan === undefined ? undefined : recordCan === null ? true : recordCan.delete,
+  )
+  const mayEdit = save.allowed
+  const readOnly = mayEdit !== true
 
   /**
    * Whether the user has taken the period into their own hands.
@@ -122,18 +179,27 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
   React.useEffect(() => {
     let cancelled = false
     Promise.all([
-      api.get<ListResponse<Site & Matchable>>(
-        `/sites${query({ pageSize: 100, sort: "name", direction: "asc" })}`,
-      ),
-      api.get<ListResponse<CostHead & Matchable>>(
-        `/cost-heads${query({ pageSize: 100, sort: "sortOrder", direction: "asc" })}`,
-      ),
+      pick.sites(),
+      pick.costHeads(),
       expenseId ? api.get<Expense>(`/expenses/${expenseId}`) : null,
     ])
       .then(([siteList, headList, expense]) => {
         if (cancelled) return
-        setSites(siteList.data)
-        setHeads(headList.data)
+        // The saved head, by the name the expense carries, so an
+        // existing expense reads correctly even outside the Pick's rows
+        // (display is not picking).
+        const headRows = [...headList]
+        if (expense && !headRows.some((h) => h.id === expense.costHeadId)) {
+          headRows.push({
+            id: expense.costHeadId,
+            name: expense.costHeadName,
+            sortOrder: Number.MAX_SAFE_INTEGER,
+            isActive: false,
+          })
+        }
+        setSites(siteList)
+        // The spreadsheet's order of heads, as the grid and the reports use.
+        setHeads(headRows.sort((a, b) => a.sortOrder - b.sortOrder))
         if (expense) {
           setSiteId(expense.siteId)
           setCostHeadId(expense.costHeadId)
@@ -146,6 +212,8 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
           setDescription(expense.description ?? "")
           setBillNumber(expense.billNumber ?? "")
           setApprovedBy(expense.approvedBy ?? "")
+          setCreatedById(expense.createdById)
+          setRecordCan(expense.can ?? null)
           /*
             Section 15: the confirmation names what is being deleted, so
             nobody removes the wrong row. An expense has no name of its
@@ -239,6 +307,7 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
 
   async function submit(event: React.FormEvent) {
     event.preventDefault()
+    if (readOnly) return
     const found = validate()
     if (Object.keys(found).length > 0) {
       setFieldErrors(found)
@@ -289,12 +358,12 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
         <PageColumn>
           <RecordBreadcrumb
             trail={[{ label: "Expenses", href: "/expenses" }]}
-            current={isEdit ? "Edit" : "New expense"}
+            current={isEdit ? (mayEdit === false ? "View" : "Edit") : "New expense"}
           />
 
           <PageHeader
             className="mt-4"
-            title={loading && isEdit ? <Skeleton className="h-8 w-64" /> : isEdit ? "Edit expense" : "New expense"}
+            title={loading && isEdit ? <Skeleton className="h-8 w-64" /> : isEdit ? (mayEdit === false ? "Expense" : "Edit expense") : "New expense"}
           />
 
           {loadError !== null ? (
@@ -324,7 +393,7 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
                   options={siteOptions}
                   value={siteId}
                   onValueChange={setSiteId}
-                  disabled={loading}
+                  disabled={loading || readOnly}
                   placeholder="Choose a site"
                   searchPlaceholder="Search sites"
                 />
@@ -341,7 +410,7 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
                   id="spentOn"
                   value={spentOn}
                   onValueChange={setSpentOn}
-                  disabled={loading}
+                  disabled={loading || readOnly}
                   invalid={Boolean(fieldErrors.spentOn) || undefined}
                 />
               </FormField>
@@ -373,7 +442,7 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
                     setChosenPeriod(Number(value))
                     setPeriodOverridden(true)
                   }}
-                  disabled={loading}
+                  disabled={loading || readOnly}
                 >
                   <SelectTrigger id="period">
                     {/* Base UI renders the raw VALUE unless given a
@@ -410,7 +479,7 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
                   options={headOptions}
                   value={costHeadId}
                   onValueChange={setCostHeadId}
-                  disabled={loading || !siteId}
+                  disabled={loading || readOnly || !siteId}
                   placeholder={siteId ? "Choose a cost head" : "Choose a site first"}
                   searchPlaceholder="Search cost heads"
                 />
@@ -432,7 +501,7 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
                     id="amount"
                     inputMode="decimal"
                     value={amount}
-                    disabled={loading}
+                    disabled={loading || readOnly}
                     aria-invalid={Boolean(fieldErrors.amount) || undefined}
                     className="text-right tabular-nums"
                     placeholder="4200.00"
@@ -454,7 +523,7 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
                 <Textarea
                   id="description"
                   value={description}
-                  disabled={loading}
+                  disabled={loading || readOnly}
                   onChange={(event) => setDescription(event.target.value)}
                 />
               </FormField>
@@ -465,7 +534,7 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
                 <Input
                   id="billNumber"
                   value={billNumber}
-                  disabled={loading}
+                  disabled={loading || readOnly}
                   onChange={(event) => setBillNumber(event.target.value)}
                 />
               </FormField>
@@ -474,7 +543,7 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
                 <Input
                   id="approvedBy"
                   value={approvedBy}
-                  disabled={loading}
+                  disabled={loading || readOnly}
                   onChange={(event) => setApprovedBy(event.target.value)}
                 />
               </FormField>
@@ -493,13 +562,10 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
         */}
         {isEdit ? (
           <div className="mr-auto">
-            <PermissionTooltip
-              allowed={isAdmin}
-              reason="Only a budget administrator can delete an expense"
-            >
+            <PermissionTooltip allowed={remove.allowed} reason={remove.reason}>
               <Button
                 variant="danger"
-                disabled={!isAdmin || saving || loading}
+                disabled={remove.allowed !== true || saving || loading}
                 onClick={() => setDeleting(true)}
               >
                 <TrashIcon />
@@ -514,9 +580,11 @@ export function ExpenseForm({ expenseId }: { expenseId?: string }) {
         >
           Cancel
         </Button>
-        <Button type="submit" form="expense-form" disabled={saving || loading}>
-          {saving ? "Saving…" : isEdit ? "Save expense" : "Record expense"}
-        </Button>
+        <PermissionTooltip allowed={save.allowed} reason={save.reason}>
+          <Button type="submit" form="expense-form" disabled={saving || loading || readOnly}>
+            {saving ? "Saving…" : isEdit ? "Save expense" : "Record expense"}
+          </Button>
+        </PermissionTooltip>
       </FormFooter>
 
       {/*

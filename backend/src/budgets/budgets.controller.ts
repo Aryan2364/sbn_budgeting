@@ -20,8 +20,11 @@ import {
 } from 'class-validator';
 import type { Pool } from 'pg';
 
-import { findOneOrFail } from '../common/crud';
 import { ModuleAccess, ModuleRole } from '../common/module-access.decorator';
+import { type AccessContext, CurrentAccess } from '../access/access-context';
+import { Can } from '../access/decorators';
+import { assertRecordAccess, scopeWhere } from '../access/scope';
+import { inTransaction, notFound, params } from '../sites/budget-access';
 import { PG_POOL } from '../db/db.module';
 
 export class BudgetCellDto {
@@ -66,6 +69,9 @@ export interface BudgetCell {
  * number exist as rows: a blank cell is an absent row, and that is what
  * makes "Budget not set" and "0.00" different facts downstream
  * (question 7).
+ *
+ * A site's budget is reached through its site (decision 26): the grid
+ * of a site outside the caller's budgets scope is not found (R7).
  */
 @ModuleAccess('budget')
 @Controller('sites/:siteId/budget')
@@ -73,22 +79,37 @@ export class BudgetsController {
   constructor(@Inject(PG_POOL) private readonly pool: Pool) {}
 
   @Get()
-  async get(
+  @Can('budget.budgets.view')
+  get(
     @Param('siteId', new ParseUUIDPipe()) siteId: string,
+    @CurrentAccess() access: AccessContext,
   ): Promise<{ siteId: string; plannedTrees: number; cells: BudgetCell[] }> {
-    const site = await findOneOrFail<{ id: string; plannedTrees: number }>(
-      this.pool,
-      'select id, planned_trees as "plannedTrees" from sites where id = $1',
-      [siteId],
-      'site',
+    return this.read(access, siteId);
+  }
+
+  private async read(
+    access: AccessContext,
+    siteId: string,
+  ): Promise<{ siteId: string; plannedTrees: number; cells: BudgetCell[] }> {
+    const site = params();
+    const siteParam = site.param(siteId);
+    const { rows: sites } = await this.pool.query<{ id: string; plannedTrees: number }>(
+      `select s.id, s.planned_trees as "plannedTrees" from sites s
+       where s.id = ${siteParam}::uuid and ${scopeWhere(access, 'budget.budgets.view', 'site', 's', site.param)}`,
+      site.values,
     );
+    if (!sites[0]) throw notFound('site');
+
+    const cells = params();
+    const cellSite = cells.param(siteId);
     const { rows } = await this.pool.query<BudgetCell>(
-      `select cost_head_id as "costHeadId", period,
-              per_tree_paise as "perTreePaise"
-       from site_budgets where site_id = $1`,
-      [siteId],
+      `select sb.cost_head_id as "costHeadId", sb.period,
+              sb.per_tree_paise as "perTreePaise"
+       from site_budgets sb
+       where sb.site_id = ${cellSite}::uuid and ${scopeWhere(access, 'budget.budgets.view', 'site_budget', 'sb', cells.param)}`,
+      cells.values,
     );
-    return { siteId: site.id, plannedTrees: site.plannedTrees, cells: rows };
+    return { siteId: sites[0].id, plannedTrees: sites[0].plannedTrees, cells: rows };
   }
 
   /**
@@ -105,20 +126,29 @@ export class BudgetsController {
    */
   @Put()
   @ModuleRole('budget', 'admin', 'staff')
+  @Can('budget.budgets.edit')
   async replace(
     @Param('siteId', new ParseUUIDPipe()) siteId: string,
     @Body() body: BudgetGridDto,
+    @CurrentAccess() access: AccessContext,
   ): Promise<{ siteId: string; plannedTrees: number; cells: BudgetCell[] }> {
-    await findOneOrFail(this.pool, 'select id from sites where id = $1', [siteId], 'site');
-
-    const client = await this.pool.connect();
-    try {
-      await client.query('begin');
+    await inTransaction(this.pool, async (client) => {
+      // The site in view (else 404) and its budget editable (else 403), locked.
+      await assertRecordAccess(client, access, {
+        table: 'sites',
+        alias: 's',
+        record: 'site',
+        id: siteId,
+        view: 'budget.budgets.view',
+        action: 'budget.budgets.edit',
+        notFound: 'That site no longer exists. It may have been deleted.',
+        forUpdate: true,
+      });
 
       for (const cell of body.cells) {
         if (cell.perTreePaise === null) {
           await client.query(
-            `delete from site_budgets
+            `delete from site_budgets /*scope-exempt: follows the scoped read of its site*/
              where site_id = $1 and cost_head_id = $2 and period = $3`,
             [siteId, cell.costHeadId, cell.period],
           );
@@ -132,15 +162,8 @@ export class BudgetsController {
           );
         }
       }
+    });
 
-      await client.query('commit');
-    } catch (error) {
-      await client.query('rollback');
-      throw error;
-    } finally {
-      client.release();
-    }
-
-    return this.get(siteId);
+    return this.read(access, siteId);
   }
 }

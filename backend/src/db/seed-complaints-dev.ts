@@ -127,7 +127,7 @@ async function seedComplaintsDev(): Promise<void> {
         throw new Error(`Designation ${p.designation} is missing. Run the migrations first.`);
       }
       const existing = await client.query<{ id: string }>(
-        `select id from users
+        `select id from users /*scope-exempt: seed script, run by hand on a local database, never by a request*/
          where right(regexp_replace(phone, '\\D', '', 'g'), 10) = $1
             or lower(email) = lower($2)
          order by (right(regexp_replace(phone, '\\D', '', 'g'), 10) = $1) desc
@@ -137,7 +137,8 @@ async function seedComplaintsDev(): Promise<void> {
       let id = existing.rows[0]?.id;
       if (id) {
         await client.query(
-          `update users set name = $2, phone = $3, email = $4, designation_id = $5,
+          `update users /*scope-exempt: seed script, run by hand on a local database, never by a request*/
+              set name = $2, phone = $3, email = $4, designation_id = $5,
                   reports_to = null, password_hash = $6, can_login = true
            where id = $1`,
           [id, p.name, p.phone, p.email, designation, passwordHash],
@@ -163,7 +164,7 @@ async function seedComplaintsDev(): Promise<void> {
 
     // Pass 2: the chain.
     for (const p of PEOPLE) {
-      await client.query('update users set reports_to = $2 where id = $1', [
+      await client.query('update users /*scope-exempt: seed script, run by hand on a local database, never by a request*/ set reports_to = $2 where id = $1', [
         ids.get(p.key),
         p.reportsTo ? ids.get(p.reportsTo) : null,
       ]);
@@ -175,7 +176,8 @@ async function seedComplaintsDev(): Promise<void> {
         site.name, locationIds.get(site.location), ids.get(site.supervisor), ids.get(site.manager),
       ];
       const updated = await client.query(
-        `update sites set location_id = $2, supervisor_id = $3, manager_id = $4
+        `update sites /*scope-exempt: seed script, run by hand on a local database, never by a request*/
+            set location_id = $2, supervisor_id = $3, manager_id = $4
          where name = $1`,
         values,
       );

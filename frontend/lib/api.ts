@@ -5,6 +5,8 @@
  * into a number — see lib/money.ts for why.
  */
 
+import type { PermissionKey, Scope } from './permission-keys'
+
 const BASE =
   process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4100/api'
 
@@ -71,6 +73,26 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * Kit 26.4 rule 2 and access plan 6.1.9: a 403 means what the browser
+ * believes about this person's permissions may be stale, so it asks
+ * again. lib/permissions.ts registers the handler (refresh `/me` and
+ * show the reason in an error toast). It lives behind a hook rather than
+ * an import so this file never depends on the permissions module, which
+ * itself calls `api`.
+ *
+ * Never on 404 or 409: those are not access changes. Never for a 403
+ * from `/auth/me` itself, or a refused `/me` would ask for `/me` again
+ * for ever.
+ */
+let forbiddenHandler: ((error: ApiError) => void) | null = null
+
+export function setForbiddenHandler(handler: ((error: ApiError) => void) | null): void {
+  forbiddenHandler = handler
+}
+
+const ME_PATH = '/auth/me'
+
 /** Per-call overrides, used by uploads that need longer and say more. */
 export interface RequestOptions {
   /** Defaults to REQUEST_TIMEOUT_MS. */
@@ -135,11 +157,13 @@ async function request<T>(
     const fieldErrors = Array.isArray(raw) ? raw : []
     const fromServer = Array.isArray(raw) ? raw[0] : raw
 
-    throw new ApiError(
+    const error = new ApiError(
       response.status,
       options.statusMessages?.[response.status] ?? humanMessage(response.status, fromServer),
       fieldErrors,
     )
+    if (response.status === 403 && path.split('?')[0] !== ME_PATH) forbiddenHandler?.(error)
+    throw error
   }
 
   return payload as T
@@ -241,8 +265,31 @@ export interface AuthUser {
   email: string | null
   phone: string | null
   designation: { id: string; name: string; seedKey: string | null } | null
+  /**
+   * Today's per-module levels. Kept on the payload until access plan
+   * P11 so an already-open old tab keeps working through deploys, and
+   * read by NOTHING in this app: every permission question goes
+   * through lib/permissions.ts (kit 26.3), which reads `access` below.
+   */
   modules: ModuleAccess
 }
+
+/**
+ * The access part of `GET /auth/me`: the backend kit's `MyAccess` (8.1),
+ * exactly (access plan 6.1.7, R3). No role names, no refusals, no
+ * labels; the labels come from the generated lib/permission-keys.ts.
+ * Read only by lib/permissions.ts.
+ */
+export interface MyAccess {
+  version: number
+  /** Only the keys held, Picks and module-wide keys included. */
+  permissions: Partial<Record<PermissionKey, Scope[]>>
+  /** Site ids Selected sites reaches: ticked on the person, plus those they lead. */
+  units: string[]
+}
+
+/** `GET /auth/me`: the person, with what they may do beside it. */
+export type Me = AuthUser & { access?: MyAccess }
 
 /** `POST /auth/login`. `login` is an email or a phone number. */
 export interface LoginBody {
@@ -357,6 +404,139 @@ export interface Person {
   openComplaintCount: number
 }
 
+/**
+ * One option from `GET /users/picker`, for any screen that only has to
+ * choose a person. `Person` (with phone, email and roles) is the
+ * platform-admin-only `GET /users`; never use it for a picker.
+ */
+export interface PersonOption {
+  id: string
+  name: string
+  designationName: string | null
+}
+
+// ---------------------------------------------------------------
+// Picks: `GET /pick/<module>/<section>?q=` (access plan 5.3, R11.7)
+// ---------------------------------------------------------------
+//
+// A Pick is how a screen CHOOSES a value from another section without
+// holding View on it. Each returns `{ id, name }` plus the fields its
+// catalogue entry declares in `pick.fields` (the P7 picker inventory in
+// lib/permissions.ts lists which, and why), at most 50 matches, ordered
+// by name, searched by `q`, through the scope filter.
+//
+// Display is not picking (backend kit 3.5 rule 6): a form shows its
+// saved values from the names embedded in the record it loaded, never
+// through a Pick.
+//
+// One small function per Pick, so a screen never builds the path by
+// hand and a section's extra fields are typed in one place.
+
+/** Every Pick's base row. */
+export interface PickOption {
+  id: string
+  name: string
+}
+
+/** `budget.sites.pick`: the period anchors feed the expense form, `projectId` the report scope. */
+export interface SitePick extends PickOption {
+  projectId: string | null
+  plantationStartDate: string
+  plantationCompleteDate: string | null
+}
+
+/** `budget.projects.pick`: `donorName` prefills a new site's donor. */
+export interface ProjectPick extends PickOption {
+  donorName: string
+}
+
+/** `budget.cost_heads.pick`: the grid and the expense form keep the spreadsheet's order. */
+export interface CostHeadPick extends PickOption {
+  sortOrder: number
+  isActive: boolean
+}
+
+/**
+ * `complaints.categories.pick`. Active ones only unless
+ * `includeInactive`: the raise form offers active ones and says when a
+ * category needs approval, and by whom; the complaint list's filter
+ * wants retired ones too, because old complaints still carry them.
+ */
+export interface CategoryPick extends PickOption {
+  isActive: boolean
+  requiresApproval: boolean
+  approverDesignation: { id: string; name: string } | null
+}
+
+/**
+ * `platform.designations.pick`. `seedKey` finds the Supervisor (reassign)
+ * and the default HOD approver (categories); `isActive` keeps a retired
+ * one off a form that is choosing afresh.
+ */
+export interface DesignationPick extends PickOption {
+  seedKey: string | null
+  isActive: boolean
+}
+
+/** `platform.locations.pick`. */
+export type LocationPick = PickOption
+
+/** `platform.people.pick` (plan 5.3.3, O10 Q7). Same shape as `PersonOption`. */
+export type PersonPick = PersonOption
+
+/**
+ * A Pick answers with its rows. Accepts `{ data: [...] }` as well, so a
+ * controller that wraps them does not break every dropdown at once.
+ */
+async function pickRows<T>(path: string): Promise<T[]> {
+  const result = await api.get<T[] | { data: T[] }>(path)
+  return Array.isArray(result) ? result : result.data
+}
+
+export const pick = {
+  sites: (q?: string) => pickRows<SitePick>(`/pick/budget/sites${query({ q })}`),
+  projects: (q?: string) => pickRows<ProjectPick>(`/pick/budget/projects${query({ q })}`),
+  costHeads: (q?: string) => pickRows<CostHeadPick>(`/pick/budget/cost_heads${query({ q })}`),
+  categories: (params: { q?: string; includeInactive?: boolean } = {}) =>
+    pickRows<CategoryPick>(
+      `/pick/complaints/categories${query({
+        q: params.q,
+        includeInactive: params.includeInactive ? 'true' : undefined,
+      })}`,
+    ),
+  /** Active ones unless `includeInactive` (a form that must show a retired current value). */
+  designations: (params: { q?: string; includeInactive?: boolean } = {}) =>
+    pickRows<DesignationPick>(
+      `/pick/platform/designations${query({
+        q: params.q,
+        includeInactive: params.includeInactive ? 'true' : undefined,
+      })}`,
+    ),
+  /** Active ones unless `includeInactive`. */
+  locations: (params: { q?: string; includeInactive?: boolean } = {}) =>
+    pickRows<LocationPick>(
+      `/pick/platform/locations${query({
+        q: params.q,
+        includeInactive: params.includeInactive ? 'true' : undefined,
+      })}`,
+    ),
+  /**
+   * `q` searches name and designation on the server (P8's search-as-
+   * you-type picker sends it 300 ms after typing stops). `designationId`
+   * and `canReceive` (active and can sign in) narrow, never widen (plan
+   * 5.3.3): the reassign dialog asks for Supervisors who can take a
+   * complaint.
+   */
+  people: (params: { q?: string; designationId?: string; canReceive?: boolean } = {}) =>
+    pickRows<PersonPick>(
+      `/pick/platform/people${query({
+        q: params.q,
+        designationId: params.designationId,
+        canReceive: params.canReceive === undefined ? undefined : String(params.canReceive),
+      })}`,
+    ),
+}
+
 /** `POST/PATCH /users`. `null` in `modules` removes that module. */
 export interface PersonBody {
   name: string
@@ -428,7 +608,22 @@ export interface Expense {
   billNumber: string | null
   approvedBy: string | null
   createdAt: string
+  /**
+   * Who entered it; null on old rows. Used only until the server sends
+   * `can` below (lib/permissions.ts `useLegacyOwnAnswer`).
+   */
+  createdById: string | null
+  /**
+   * The server's own answer for this record (kit 26.5, access plan
+   * 6.1.4 step 6), arriving with P3b-budget: `true`, or the reason it is
+   * not allowed. Absent for an action whose key the person does not
+   * hold at all.
+   */
+  can?: RecordCan
 }
+
+/** Kit 26.5: a record's answers, `true` or the reason it is not allowed. */
+export type RecordCan = Partial<Record<string, true | string>>
 
 export interface DashboardSummary {
   projectCount: number

@@ -7,6 +7,8 @@ import {
 import { Reflector } from '@nestjs/core';
 import { JwtService } from '@nestjs/jwt';
 
+import type { AccessContext } from '../access/access-context';
+import { RoleMapService } from '../access/role-map.service';
 import type { AuthUser } from '../common/current-user';
 import { IS_PUBLIC } from '../common/public.decorator';
 import { AuthService } from './auth.service';
@@ -17,6 +19,7 @@ export class JwtAuthGuard implements CanActivate {
     private readonly jwt: JwtService,
     private readonly reflector: Reflector,
     private readonly auth: AuthService,
+    private readonly roleMap: RoleMapService,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -29,6 +32,7 @@ export class JwtAuthGuard implements CanActivate {
     const request = context.switchToHttp().getRequest<{
       headers: Record<string, string | undefined>;
       user?: AuthUser;
+      access?: AccessContext;
     }>();
 
     const header = request.headers.authorization;
@@ -43,12 +47,17 @@ export class JwtAuthGuard implements CanActivate {
       throw new UnauthorizedException('Your session has expired. Sign in again.');
     }
 
-    const user = payload.sub ? await this.auth.findActive(payload.sub) : null;
-    if (!user) {
+    // The one access query of the request (access plan 6.1.1): the
+    // person, their active flag, their role ids and the access version.
+    const active = payload.sub ? await this.auth.findActive(payload.sub) : null;
+    if (!active) {
       throw new UnauthorizedException('Your session has expired. Sign in again.');
     }
 
-    request.user = user;
+    request.user = active.user;
+    // In memory, unless the access version moved (then the role map
+    // reloads once, for every request waiting on it). Fails closed: 503.
+    request.access = await this.roleMap.contextFor(active.user.id, active.roleIds, active.accessVersion);
     return true;
   }
 }

@@ -9,9 +9,10 @@ import { cn } from "@/lib/utils"
 import { ApiError } from "@/lib/api"
 import {
   complaintsApi,
-  type ComplaintCategory,
   type ComplaintSiteOption,
 } from "@/lib/complaints-api"
+import type { CategoryPick } from "@/lib/api"
+import { useCan } from "@/lib/permissions"
 import { errorMessage, useSession } from "@/components/shell/session"
 import { Banner, BannerAction, BannerDescription, BannerTitle } from "@/components/ui/banner"
 import { Button } from "@/components/ui/button"
@@ -60,7 +61,8 @@ import { useComplaintMasters } from "@/components/complaints/use-masters"
  * nobody to send to is flagged BEFORE the person types a paragraph, and
  * the server's 422 is still shown as a banner with a way forward if the
  * picture changed in between. The supervisor is set on the site itself,
- * so only a budget administrator is offered the way to the site form.
+ * so only someone allowed to change a site's people is offered the way
+ * to the site form.
  */
 
 const MAX_PHOTOS = 3
@@ -244,10 +246,14 @@ const ORDER: FieldKey[] = [
 
 export function RaiseComplaintForm() {
   const router = useRouter()
-  const { user, can } = useSession()
+  const { user } = useSession()
   const masters = useComplaintMasters({ activeOnly: true })
-  /** A site's supervisor is set on the site form, which only a budget administrator opens. */
-  const canEditSites = can.budget === "admin"
+  /**
+   * Only someone allowed to change a site's people may set its supervisor
+   * (the API refuses anyone else, and the site form disables the field
+   * for them), so only they are offered the way there.
+   */
+  const canEditSites = useCan("budget.sites.change_people") === true
 
   const initial = React.useMemo<Values>(
     () => ({
@@ -293,7 +299,7 @@ export function RaiseComplaintForm() {
   const categoryOptions = categories.map((c) => ({ value: c.id, label: c.name }))
 
   const site: ComplaintSiteOption | undefined = sites.find((s) => s.id === values.siteId)
-  const category: ComplaintCategory | undefined = categories.find(
+  const category: CategoryPick | undefined = categories.find(
     (c) => c.id === values.categoryId,
   )
 

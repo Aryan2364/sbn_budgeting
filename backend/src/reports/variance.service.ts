@@ -1,7 +1,9 @@
-import { BadRequestException, Inject, Injectable } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Inject, Injectable } from '@nestjs/common';
 import type { Pool } from 'pg';
 
 import { PG_POOL } from '../db/db.module';
+import { type AccessContext, can } from '../access/access-context';
+import { type Param, scopeWhere } from '../access/scope';
 
 /**
  * The only code in this service that reads a budget, an actual or a
@@ -19,6 +21,48 @@ import { PG_POOL } from '../db/db.module';
  * reader by lib/format.ts on the other side of the wire. A paise amount
  * that becomes a JS number is silently approximate.
  */
+
+/**
+ * Every figure below is scoped by the caller's budget.reports.view
+ * (access plan 6.1.4 item 2, decision 26): a report row, total or
+ * dashboard tile covers only the sites within that reach, so a total
+ * over a project is the sum of its visible sites. At All, as every role
+ * mapped from today holds it, that is every site.
+ */
+const REPORTS = 'budget.reports.view';
+
+/**
+ * See amounts (access plan 6.1.6, R10, O9). budget.reports.view needs
+ * budget.amounts.see, so a report caller always holds it, and the
+ * amounts interceptor refuses these routes outright without it. This is
+ * the second line, so a report can never leak amounts even if that
+ * dependency is somehow missing:
+ *
+ * - VARIANCE_AMOUNT_KEYS names the figures below that are DERIVED from
+ *   amounts but carry no `Paise`/`Pct` suffix the catalogue already
+ *   strips: the count of sites over budget, and the dashboard's
+ *   "needs attention" list, which is the overspent sites in overspend
+ *   order. The interceptor removes them with the amounts.
+ * - A sort on an amount is refused (403), and the default sort, which is
+ *   by variance, falls back to the site name: the order of the rows
+ *   would otherwise reveal the hidden figures.
+ */
+const SEE_AMOUNTS = 'budget.amounts.see';
+
+export const VARIANCE_AMOUNT_KEYS: readonly string[] = ['sitesOverBudget', 'attention'];
+
+/** The report list's sort keys that are amounts. */
+const AMOUNT_SORTS: ReadonlySet<string> = new Set(['variance', 'budget', 'actual', 'variancePct']);
+
+const SORT_NEEDS_AMOUNTS = 'Sorting by amount needs see amounts.';
+
+/** A `param` that numbers onto an existing values array. */
+function pushTo(values: unknown[]): Param {
+  return (v) => {
+    values.push(v);
+    return `$${values.length}`;
+  };
+}
 
 export const PERIODS = ['Initial', 'Year 1', 'Year 2', 'Year 3', 'Year 4'] as const;
 
@@ -98,22 +142,25 @@ export class VarianceService {
    * anyone filtering, with NULLS LAST in both directions so that
    * unbudgeted sites do not float to the top of a descending sort.
    */
-  async sites(params: {
-    search?: string;
-    projectId?: string;
-    managerId?: string;
-    sort?: string;
-    direction?: 'asc' | 'desc';
-    page?: number;
-    pageSize?: number;
-  }): Promise<{ data: VarianceRow[]; total: number; page: number; pageSize: number }> {
+  async sites(
+    access: AccessContext,
+    params: {
+      search?: string;
+      projectId?: string;
+      managerId?: string;
+      sort?: string;
+      direction?: 'asc' | 'desc';
+      page?: number;
+      pageSize?: number;
+    },
+  ): Promise<{ data: VarianceRow[]; total: number; page: number; pageSize: number }> {
     const values: unknown[] = [];
     const param = (value: unknown): string => {
       values.push(value);
       return `$${values.length}`;
     };
 
-    const where: string[] = [`v.grain = 'site'`];
+    const where: string[] = [`v.grain = 'site'`, scopeWhere(access, REPORTS, 'variance', 'v', param)];
 
     if (params.search?.trim()) {
       const pattern = param(`%${params.search.trim().replace(/[\\%_]/g, (c) => `\\${c}`)}%`);
@@ -132,12 +179,21 @@ export class VarianceService {
       actual: 'v.actual_paise',
       variancePct: 'v.variance_pct',
     };
-    const sortKey = params.sort ?? 'variance';
+    const seesAmounts = can(access, SEE_AMOUNTS);
+    const sortKey = params.sort ?? (seesAmounts ? 'variance' : 'site');
     const sortSql = sortable[sortKey];
     if (!sortSql) {
       throw new BadRequestException(
         `Cannot sort by "${sortKey}". Sortable: ${Object.keys(sortable).join(', ')}.`,
       );
+    }
+    if (!seesAmounts && AMOUNT_SORTS.has(sortKey)) {
+      throw new ForbiddenException({
+        error: 'forbidden',
+        permission: SEE_AMOUNTS,
+        reason: SORT_NEEDS_AMOUNTS,
+        message: SORT_NEEDS_AMOUNTS,
+      });
     }
     const direction = params.direction === 'desc' ? 'desc' : 'asc';
 
@@ -194,7 +250,7 @@ export class VarianceService {
    * with expenses and no budget appears too, with budget null —
    * Rajkot's Irrigation is exactly that row.
    */
-  async siteHeads(siteId: string, period?: number): Promise<VarianceRow[]> {
+  async siteHeads(access: AccessContext, siteId: string, period?: number): Promise<VarianceRow[]> {
     if (period !== undefined && (!Number.isInteger(period) || period < 0 || period > 4)) {
       throw new BadRequestException('period must be 0 (Initial) to 4 (Year 4)');
     }
@@ -206,6 +262,13 @@ export class VarianceService {
       values.push(period);
       periodFilter = 'and v.period = $3';
     }
+    const param: Param = (v) => {
+      values.push(v);
+      return `$${values.length}`;
+    };
+    // A site outside the caller's reach yields no rows, exactly as a site
+    // that does not exist does: its existence is not revealed (R7).
+    const scope = scopeWhere(access, REPORTS, 'site', 's', param);
 
     /**
      * Driven from cost_heads, not from the view.
@@ -252,6 +315,7 @@ export class VarianceService {
         and v.grain        = $2
         ${periodFilter}
       where s.id = $1
+        and ${scope}
         and (ch.is_active or v.cost_head_id is not null)
       order by ch.sort_order asc
       `,
@@ -273,7 +337,31 @@ export class VarianceService {
    * Budgets and variances come from the same `variance` view every
    * other screen reads, at the 'site' grain. Not a second definition.
    */
-  async dashboard(): Promise<DashboardSummary> {
+  async dashboard(access: AccessContext): Promise<DashboardSummary> {
+    // Each statement numbers its own parameters.
+    const scoped = (record: 'variance', alias: string) => {
+      const values: unknown[] = [];
+      const param: Param = (v) => {
+        values.push(v);
+        return `$${values.length}`;
+      };
+      return { values, sql: scopeWhere(access, REPORTS, record, alias, param) };
+    };
+    // The counts statement holds two predicates, numbered in one sequence.
+    const countValues: unknown[] = [];
+    const countParam: Param = (v) => {
+      countValues.push(v);
+      return `$${countValues.length}`;
+    };
+    const projectScope = scopeWhere(access, REPORTS, 'project', 'p', countParam);
+    const siteScope = scopeWhere(access, REPORTS, 'site', 's', countParam);
+    const totalsScope = scoped('variance', 'v');
+    // Expenses are reached through their site (decision 26): the variance
+    // predicate is `site_id in <the sites in reach>`.
+    const spendScope = scoped('variance', 'e');
+    const attentionScope = scoped('variance', 'v');
+    const recentScope = scoped('variance', 'e');
+
     const [counts, totals, spend, attention, recent] = await Promise.all([
       this.pool.query<{
         project_count: string;
@@ -281,9 +369,10 @@ export class VarianceService {
         planned_trees: string;
       }>(
         `select
-           (select count(*) from projects)::text            as project_count,
-           (select count(*) from sites)::text               as site_count,
-           (select coalesce(sum(planned_trees), 0) from sites)::text as planned_trees`,
+           (select count(*) from projects p where ${projectScope})::text as project_count,
+           (select count(*) from sites s where ${siteScope})::text      as site_count,
+           (select coalesce(sum(s.planned_trees), 0) from sites s where ${siteScope})::text as planned_trees`,
+        countValues,
       ),
       this.pool.query<{
         budget_paise: string | null;
@@ -295,18 +384,21 @@ export class VarianceService {
            coalesce(sum(v.actual_paise), 0)::text           as actual_paise,
            count(*) filter (where v.variance_paise < 0)::text as over_budget
          from variance v
-         where v.grain = 'site'`,
+         where v.grain = 'site' and ${totalsScope.sql}`,
+        totalsScope.values,
       ),
       this.pool.query<{ this_month: string; last_month: string }>(
         `select
-           coalesce(sum(amount_paise) filter (
-             where spent_on >= date_trunc('month', current_date)
+           coalesce(sum(e.amount_paise) filter (
+             where e.spent_on >= date_trunc('month', current_date)
            ), 0)::text as this_month,
-           coalesce(sum(amount_paise) filter (
-             where spent_on >= date_trunc('month', current_date) - interval '1 month'
-               and spent_on <  date_trunc('month', current_date)
+           coalesce(sum(e.amount_paise) filter (
+             where e.spent_on >= date_trunc('month', current_date) - interval '1 month'
+               and e.spent_on <  date_trunc('month', current_date)
            ), 0)::text as last_month
-         from expenses`,
+         from expenses e
+         where ${spendScope.sql}`,
+        spendScope.values,
       ),
       // Section 11.4: "items needing attention". Worst overspend first,
       // which is the same default sort the Reports list uses.
@@ -319,9 +411,10 @@ export class VarianceService {
            v.actual_paise   as "actualPaise",
            v.variance_paise as "variancePaise"
          from variance v
-         where v.grain = 'site' and v.variance_paise < 0
+         where v.grain = 'site' and v.variance_paise < 0 and ${attentionScope.sql}
          order by v.variance_paise asc
          limit 5`,
+        attentionScope.values,
       ),
       this.pool.query(
         `select e.id, s.name as "siteName", ch.name as "costHeadName",
@@ -329,10 +422,13 @@ export class VarianceService {
          from expenses e
          join sites s on s.id = e.site_id
          join cost_heads ch on ch.id = e.cost_head_id
+         where ${recentScope.sql}
          order by e.spent_on desc, e.created_at desc
          limit 5`,
+        recentScope.values,
       ),
     ]);
+
 
     const c = counts.rows[0]!;
     const t = totals.rows[0]!;
@@ -382,10 +478,10 @@ export class VarianceService {
    * Year 3 row reading "Budget not set" — the same reason the head
    * grain is driven from `cost_heads` rather than from the view.
    */
-  async periods(params: {
-    projectId?: string;
-    siteId?: string;
-  }): Promise<{ rows: VariancePeriodRow[]; total: VariancePeriodRow }> {
+  async periods(
+    access: AccessContext,
+    params: { projectId?: string; siteId?: string },
+  ): Promise<{ rows: VariancePeriodRow[]; total: VariancePeriodRow }> {
     const values: unknown[] = [];
     const where: string[] = [`v.grain = 'site_period'`];
     if (params.projectId === NO_PROJECT) {
@@ -398,6 +494,7 @@ export class VarianceService {
       values.push(params.siteId);
       where.push(`v.site_id = $${values.length}`);
     }
+    where.push(scopeWhere(access, REPORTS, 'variance', 'v', pushTo(values)));
 
     const { rows } = await this.pool.query(
       `
@@ -479,10 +576,10 @@ export class VarianceService {
    * where the two meet. They are sums of the same scoped set, so a row
    * total cannot disagree with the cells it sits beside.
    */
-  async headPeriods(params: {
-    projectId?: string;
-    siteId?: string;
-  }): Promise<HeadPeriodReport> {
+  async headPeriods(
+    access: AccessContext,
+    params: { projectId?: string; siteId?: string },
+  ): Promise<HeadPeriodReport> {
     const values: unknown[] = [];
     const where: string[] = [`v.grain = 'site_head_period'`];
     if (params.projectId === NO_PROJECT) {
@@ -495,6 +592,7 @@ export class VarianceService {
       values.push(params.siteId);
       where.push(`v.site_id = $${values.length}`);
     }
+    where.push(scopeWhere(access, REPORTS, 'variance', 'v', pushTo(values)));
 
     const { rows } = await this.pool.query(
       `
@@ -607,11 +705,14 @@ export class VarianceService {
    * view so the period total is a roll-up of the same definition
    * rather than an addition done here.
    */
-  async siteTotal(siteId: string, period?: number): Promise<VarianceRow | null> {
+  async siteTotal(access: AccessContext, siteId: string, period?: number): Promise<VarianceRow | null> {
     if (period !== undefined && (!Number.isInteger(period) || period < 0 || period > 4)) {
       throw new BadRequestException('period must be 0 (Initial) to 4 (Year 4)');
     }
 
+    const values: unknown[] = period === undefined ? [siteId, 'site'] : [siteId, 'site_period', period];
+    // Outside the caller's reach: no total, exactly as for a site that does not exist.
+    const scope = scopeWhere(access, REPORTS, 'variance', 'v', pushTo(values));
     const { rows } = await this.pool.query(
       `
       select
@@ -631,8 +732,9 @@ export class VarianceService {
       where v.site_id = $1
         and v.grain = $2
         ${period === undefined ? '' : 'and v.period = $3'}
+        and ${scope}
       `,
-      period === undefined ? [siteId, 'site'] : [siteId, 'site_period', period],
+      values,
     );
     return (rows[0] as VarianceRow | undefined) ?? null;
   }

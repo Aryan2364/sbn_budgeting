@@ -10,17 +10,28 @@ import {
   login,
   setToken,
   type AuthUser,
+  type Me,
 } from "@/lib/api"
+import {
+  forgetPermissions,
+  PermissionsProvider,
+  receiveMe,
+  usePermissions,
+} from "@/lib/permissions"
 import { EmptyState } from "@/components/ui/empty-state"
 
 /**
  * Who is signed in, for the whole app.
  *
- * FRONTEND_RULES.md section 26: permissions in the interface are
- * appearance — the real check is on the server, which is where the
- * `ModuleAccess` / `ModuleRole` guards live.
- * This exists so a control the user cannot use is never shown, not so
- * that it is enforced.
+ * WHO, never WHAT THEY MAY DO. Permissions are asked through
+ * lib/permissions.ts (kit 26.3) and nowhere else: this file no longer
+ * carries a `can`, a level or an admin flag. It does read `/auth/me`
+ * as soon as the token is read and hands the `access` it carries to
+ * the permissions store, so one request serves both (access plan 3.3,
+ * the first-paint exception).
+ *
+ * Kit 26: permissions in the interface are appearance. The real check is
+ * on the server.
  */
 type SessionState =
   | { status: "loading"; user: null }
@@ -37,87 +48,9 @@ type SessionState =
   | { status: "unreachable"; user: null; message: string }
   | { status: "in"; user: AuthUser }
 
-/**
- * What the signed-in user may open, read straight off `user.modules`
- * (CONTRACT §4). Every screen gates on this, never on a role name.
- * All null / false while the session is resolving or signed out.
- */
-export interface SessionCan {
-  budget: "admin" | "staff" | null
-  complaints: "admin" | "member" | null
-  platformAdmin: boolean
-}
-
-const CAN_NOTHING: SessionCan = {
-  budget: null,
-  complaints: null,
-  platformAdmin: false,
-}
-
-export function canFrom(user: AuthUser | null): SessionCan {
-  if (!user) return CAN_NOTHING
-  return {
-    budget: user.modules?.budget ?? null,
-    complaints: user.modules?.complaints ?? null,
-    platformAdmin: user.modules?.platform === "admin",
-  }
-}
-
-/**
- * The first module this user can open (CONTRACT §4: `/` goes there).
- * Budget first, because it is the older module and its dashboard is
- * where everyone who has it already lands. `/` itself means "none":
- * app/page.tsx shows the no-access state there.
- */
-export function homeHref(can: SessionCan): string {
-  if (can.budget) return "/dashboard"
-  if (can.complaints) return "/complaints"
-  if (can.platformAdmin) return "/settings/people"
-  return "/"
-}
-
-/**
- * The Settings sections and who may open each (CONTRACT §4). Defined
- * here, next to `can`, so the settings menu, the settings layout's
- * guard and the sidebar's Settings entry all read ONE list: the
- * sidebar shows Settings exactly when `settingsSections(can)` is not
- * empty, and a section the user may not open is not in the menu.
- */
-export interface SettingsSection {
-  label: string
-  href: string
-}
-
-export function settingsSections(can: SessionCan): SettingsSection[] {
-  const sections: SettingsSection[] = []
-  if (can.platformAdmin) {
-    sections.push(
-      { label: "People", href: "/settings/people" },
-      { label: "Designations", href: "/settings/designations" },
-      { label: "Locations", href: "/settings/locations" },
-    )
-  }
-  if (can.budget === "admin") {
-    sections.push({ label: "Cost heads", href: "/settings/cost-heads" })
-  }
-  if (can.complaints === "admin") {
-    sections.push({
-      label: "Complaint categories",
-      href: "/settings/complaint-categories",
-    })
-  }
-  return sections
-}
-
 interface SessionValue {
   status: SessionState["status"]
   user: AuthUser | null
-  can: SessionCan
-  /**
-   * Kept for the budget screens: means `can.budget === "admin"`, not
-   * "administrator of everything".
-   */
-  isAdmin: boolean
   /** Set only while `status` is "unreachable". */
   message: string | null
   /** `login` is an email or a phone number (CONTRACT §1). */
@@ -156,11 +89,15 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
      * immediately renders again.
      */
     Promise.resolve()
-      .then(() => (getToken() ? api.get<AuthUser>("/auth/me") : null))
-      .then((user) => {
+      .then(() => (getToken() ? api.get<Me>("/auth/me") : null))
+      .then((me) => {
         if (cancelled) return
-        if (user) setState({ status: "in", user })
-        else setState({ status: "out", user: null })
+        if (me) {
+          receiveMe(me)
+          setState({ status: "in", user: me })
+        } else {
+          setState({ status: "out", user: null })
+        }
       })
       .catch((error: unknown) => {
         if (cancelled) return
@@ -195,33 +132,46 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     }
   }, [attempt])
 
+  /**
+   * The login answer carries the person but not their access, so `/me`
+   * is read straight after it: the screen the user lands on is drawn
+   * from their permissions, never from a guess. If that read fails they
+   * are still signed in, and the shell shows the failed-permissions
+   * banner with its "Try again" (kit 26.1 rule 5).
+   */
   const signIn = React.useCallback(async (identifier: string, password: string) => {
     const result = await login({ login: identifier, password })
     setToken(result.token)
-    setState({ status: "in", user: result.user })
+    forgetPermissions()
+    const me = await api.get<Me>("/auth/me").catch(() => null)
+    receiveMe(me ?? {})
+    setState({ status: "in", user: me ?? result.user })
   }, [])
 
   const signOut = React.useCallback(() => {
     setToken(null)
+    forgetPermissions()
     setState({ status: "out", user: null })
     router.replace("/login")
   }, [router])
 
-  const value = React.useMemo<SessionValue>(() => {
-    const can = canFrom(state.user)
-    return {
+  const value = React.useMemo<SessionValue>(
+    () => ({
       status: state.status,
       user: state.user,
-      can,
-      isAdmin: can.budget === "admin",
       message: state.status === "unreachable" ? state.message : null,
       signIn,
       signOut,
       retry: () => setAttempt((a) => a + 1),
-    }
-  }, [state, signIn, signOut])
+    }),
+    [state, signIn, signOut],
+  )
 
-  return <SessionContext value={value}>{children}</SessionContext>
+  return (
+    <SessionContext value={value}>
+      <PermissionsProvider initial={null}>{children}</PermissionsProvider>
+    </SessionContext>
+  )
 }
 
 export function useSession(): SessionValue {
@@ -238,9 +188,17 @@ export function useSession(): SessionValue {
  * It renders nothing while the session is resolving rather than
  * flashing the shell and then replacing it — section 14's point about
  * the layout arriving before the data, applied to the whole frame.
+ *
+ * And nothing until the permissions have landed either (access plan
+ * 3.3 item 1, the declared first-paint exception): the sidebar, the
+ * module switcher and every gated control then render with their final
+ * answer, and nothing is drawn as "not known yet" only to be hidden
+ * (kit 12.1, 26.1 rule 4). A failed load is not waited out: the shell
+ * renders with controls disabled and the failed banner (26.1 rule 5).
  */
 export function RequireSession({ children }: { children: React.ReactNode }) {
   const { status, message, retry } = useSession()
+  const permissions = usePermissions()
   const router = useRouter()
   const pathname = usePathname()
 
@@ -273,7 +231,7 @@ export function RequireSession({ children }: { children: React.ReactNode }) {
     )
   }
 
-  if (status !== "in") return null
+  if (status !== "in" || permissions.status === "loading") return null
   return <>{children}</>
 }
 

@@ -2,7 +2,8 @@
 
 import { usePathname } from "next/navigation"
 
-import { settingsSections, useSession } from "@/components/shell/session"
+import { usePermissions } from "@/lib/permissions"
+import { settingsSections } from "@/components/shell/nav"
 import {
   SettingsMenu,
   SettingsMenuItem,
@@ -14,12 +15,13 @@ import {
  * highlighted and does not move (section 12.1).
  *
  * Section 26 rule 1: a section the user cannot open is an AREA, so it
- * is hidden, not disabled. The list and its rules live in
- * `settingsSections` (session.tsx), shared with the layout's guard.
+ * is hidden, not disabled. The list and the permission that opens each
+ * section live in `SETTINGS_SECTIONS` (nav.ts), shared with the layout's
+ * guard and the sidebar.
  */
 export function SettingsNav() {
   const pathname = usePathname()
-  const { can } = useSession()
+  const { can } = usePermissions()
 
   return (
     <SettingsMenu>

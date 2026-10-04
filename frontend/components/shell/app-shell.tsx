@@ -2,8 +2,13 @@
 
 import * as React from "react"
 import { usePathname } from "next/navigation"
+import { OctagonXIcon } from "lucide-react"
 
+import { usePageGuard, usePermissions } from "@/lib/permissions"
+import { Banner, BannerAction, BannerDescription } from "@/components/ui/banner"
+import { Button } from "@/components/ui/button"
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet"
+import { areaPermission } from "@/components/shell/nav"
 import { CONTENT_ID, SkipToContent } from "@/components/shell/content-area"
 import { ProgressBar, ProgressProvider } from "@/components/shell/progress-bar"
 import { SidebarBody } from "@/components/shell/sidebar"
@@ -40,7 +45,43 @@ import {
  * a list page then scrolls its data area and a detail page scrolls
  * itself. Either way there is exactly one scrolling container, never
  * one inside another.
+ *
+ * Two permission duties sit here, once for every page (kit 26):
+ *
+ *   The failed state of kit 26.1 rule 5. If what this person may do
+ *   could not be loaded, every gated control stays disabled without a
+ *   reason, and this danger banner says so and offers "Try again".
+ *
+ *   Kit 26.6's page check, in the browser (access plan 3.3 item 3). An
+ *   address whose area the user holds nothing in renders the 11.8 "No
+ *   access" page inside the shell, never a redirect. The area is the
+ *   sidebar item that owns the address (nav.ts `areaPermission`), so a
+ *   typed link is refused by the same rule that hides its item.
  */
+function PermissionsFailedBanner() {
+  const { status, refresh } = usePermissions()
+  if (status !== "failed") return null
+  return (
+    <div className="no-print shrink-0 px-6 pt-4">
+      <Banner variant="danger">
+        <OctagonXIcon />
+        <BannerDescription>We could not load what you can do here. Try again.</BannerDescription>
+        <BannerAction>
+          <Button variant="secondary" size="sm" onClick={refresh}>
+            Try again
+          </Button>
+        </BannerAction>
+      </Banner>
+    </div>
+  )
+}
+
+function AreaGuard({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname()
+  const denied = usePageGuard(areaPermission(pathname))
+  return <>{denied ?? children}</>
+}
+
 function AppShell({ children }: { children: React.ReactNode }) {
   const { collapsed, toggle } = useSidebarMode()
   const isDesktop = useIsDesktop()
@@ -113,6 +154,7 @@ function AppShell({ children }: { children: React.ReactNode }) {
         <TopBar onToggle={handleToggle} toggleLabel={toggleLabel}>
           <ProgressBar />
         </TopBar>
+        <PermissionsFailedBanner />
         {/* The skip link's target: focusable by script, not a tab stop,
             and no ring because it is not a control. */}
         <main
@@ -120,7 +162,7 @@ function AppShell({ children }: { children: React.ReactNode }) {
           tabIndex={-1}
           className="min-h-0 flex-1 overflow-hidden outline-none"
         >
-          {children}
+          <AreaGuard>{children}</AreaGuard>
         </main>
       </div>
     </div>

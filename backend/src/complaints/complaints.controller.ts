@@ -4,6 +4,8 @@ import {
 } from '@nestjs/common';
 import { FilesInterceptor } from '@nestjs/platform-express';
 
+import { type AccessContext, CurrentAccess } from '../access/access-context';
+import { Can } from '../access/decorators';
 import { CurrentUser, type AuthUser } from '../common/current-user';
 import { ListQueryDto } from '../common/list-query.dto';
 import type { ListResult, MatchInfo } from '../common/list-query';
@@ -21,6 +23,19 @@ import {
  * who may do what to one complaint is decided by `permissions.ts`,
  * inside the service, after the row is locked. A complaint the caller
  * can't see is a 404 everywhere, so its existence never leaks.
+ *
+ * Access plan P2b: each handler also carries its new declaration
+ * (`@Can`), checked in shadow beside `@ModuleAccess` until P9. The key
+ * says only that the person may do this KIND of thing; who is the
+ * supervisor or the approver on THIS complaint stays in permissions.ts
+ * (the workflow layer, plan 6.2). RESOLUTIONS C1: `approve` covers
+ * approve and send back; `work` covers start and resolve.
+ *
+ * Access plan P3b: which complaints a caller reaches is decided in the
+ * data query by the shared scope filter (`@CurrentAccess()` into the
+ * service): `complaints.complaints.view` for every read, and each
+ * action's own key on its write (404 outside view, 403 outside the
+ * action). The workflow layer then decides as before.
  */
 @Controller('complaints')
 @ModuleAccess('complaints')
@@ -28,8 +43,9 @@ export class ComplaintsController {
   constructor(private readonly complaints: ComplaintsService) {}
 
   @Get()
+  @Can('complaints.complaints.view')
   list(
-    @CurrentUser() user: AuthUser,
+    @CurrentAccess() access: AccessContext,
     @Query() query: ListQueryDto,
     @Query('tab') tab?: string,
     @Query('status') status?: string,
@@ -37,7 +53,7 @@ export class ComplaintsController {
     @Query('locationId') locationId?: string,
     @Query('categoryId') categoryId?: string,
   ): Promise<ListResult<ComplaintRow & MatchInfo>> {
-    return this.complaints.list(user, query, tab, { status, siteId, locationId, categoryId });
+    return this.complaints.list(access, query, tab, { status, siteId, locationId, categoryId });
   }
 
   /**
@@ -46,110 +62,130 @@ export class ComplaintsController {
    * Declared before `:id` so "sites" is never read as an id.
    */
   @Get('sites')
-  sites(): Promise<{ data: ComplaintSite[] }> {
-    return this.complaints.sites();
+  @Can('complaints.complaints.raise')
+  sites(@CurrentAccess() access: AccessContext): Promise<{ data: ComplaintSite[] }> {
+    return this.complaints.sites(access);
   }
 
   @Get('counts')
-  counts(@CurrentUser() user: AuthUser): Promise<Record<Tab, number>> {
-    return this.complaints.counts(user);
+  @Can('complaints.complaints.view')
+  counts(@CurrentAccess() access: AccessContext): Promise<Record<Tab, number>> {
+    return this.complaints.counts(access);
   }
 
   @Get('summary')
-  summary(@CurrentUser() user: AuthUser): Promise<ComplaintSummary> {
-    return this.complaints.summary(user);
+  @Can('complaints.complaints.view')
+  summary(@CurrentAccess() access: AccessContext): Promise<ComplaintSummary> {
+    return this.complaints.summary(access);
   }
 
   @Post()
+  @Can('complaints.complaints.raise')
   @UseInterceptors(FilesInterceptor('photos', MAX_PHOTOS + 1, PHOTO_MULTER_OPTIONS))
   @UseFilters(PhotoUploadErrorFilter)
   raise(
     @CurrentUser() user: AuthUser,
+    @CurrentAccess() access: AccessContext,
     @Body() body: RaiseComplaintDto,
     @UploadedFiles() files?: UploadedPhoto[],
   ): Promise<ComplaintDetail> {
-    return this.complaints.raise(user, body, files);
+    return this.complaints.raise(user, access, body, files);
   }
 
   @Get(':id')
+  @Can('complaints.complaints.view')
   detail(
     @CurrentUser() user: AuthUser,
+    @CurrentAccess() access: AccessContext,
     @Param('id', new ParseUUIDPipe()) id: string,
   ): Promise<ComplaintDetail> {
-    return this.complaints.detail(user, id);
+    return this.complaints.detail(user, access, id);
   }
 
   /** Needs the bearer token, so the UI fetches it into a blob URL. */
   @Get(':id/photos/:photoId')
+  @Can('complaints.complaints.view')
   @Header('Cache-Control', 'private, max-age=3600')
   async photo(
-    @CurrentUser() user: AuthUser,
+    @CurrentAccess() access: AccessContext,
     @Param('id', new ParseUUIDPipe()) id: string,
     @Param('photoId', new ParseUUIDPipe()) photoId: string,
   ): Promise<StreamableFile> {
-    const { stream, contentType, bytes } = await this.complaints.photo(user, id, photoId);
+    const { stream, contentType, bytes } = await this.complaints.photo(access, id, photoId);
     return new StreamableFile(stream, { type: contentType, length: bytes });
   }
 
   @Post(':id/start')
+  @Can('complaints.complaints.work')
   @HttpCode(200)
   start(
     @CurrentUser() user: AuthUser,
+    @CurrentAccess() access: AccessContext,
     @Param('id', new ParseUUIDPipe()) id: string,
   ): Promise<ComplaintDetail> {
-    return this.complaints.start(user, id);
+    return this.complaints.start(user, access, id);
   }
 
   @Post(':id/resolve')
+  @Can('complaints.complaints.work')
   @HttpCode(200)
   @UseInterceptors(FilesInterceptor('photos', MAX_PHOTOS + 1, PHOTO_MULTER_OPTIONS))
   @UseFilters(PhotoUploadErrorFilter)
   resolve(
     @CurrentUser() user: AuthUser,
+    @CurrentAccess() access: AccessContext,
     @Param('id', new ParseUUIDPipe()) id: string,
     @Body() body: ResolveDto,
     @UploadedFiles() files?: UploadedPhoto[],
   ): Promise<ComplaintDetail> {
-    return this.complaints.resolve(user, id, body.resolutionNote, files);
+    return this.complaints.resolve(user, access, id, body.resolutionNote, files);
   }
 
   @Post(':id/approve')
+  @Can('complaints.complaints.approve')
   @HttpCode(200)
   approve(
     @CurrentUser() user: AuthUser,
+    @CurrentAccess() access: AccessContext,
     @Param('id', new ParseUUIDPipe()) id: string,
     @Body() body: NoteDto,
   ): Promise<ComplaintDetail> {
-    return this.complaints.approve(user, id, body.note);
+    return this.complaints.approve(user, access, id, body.note);
   }
 
   @Post(':id/send-back')
+  @Can('complaints.complaints.approve')
   @HttpCode(200)
   sendBack(
     @CurrentUser() user: AuthUser,
+    @CurrentAccess() access: AccessContext,
     @Param('id', new ParseUUIDPipe()) id: string,
     @Body() body: NoteDto,
   ): Promise<ComplaintDetail> {
-    return this.complaints.sendBack(user, id, body.note);
+    return this.complaints.sendBack(user, access, id, body.note);
   }
 
   @Post(':id/reassign')
+  @Can('complaints.complaints.reassign')
   @HttpCode(200)
   reassign(
     @CurrentUser() user: AuthUser,
+    @CurrentAccess() access: AccessContext,
     @Param('id', new ParseUUIDPipe()) id: string,
     @Body() body: ReassignDto,
   ): Promise<ComplaintDetail> {
-    return this.complaints.reassign(user, id, body);
+    return this.complaints.reassign(user, access, id, body);
   }
 
   @Post(':id/comments')
+  @Can('complaints.complaints.comment')
   @HttpCode(200)
   comment(
     @CurrentUser() user: AuthUser,
+    @CurrentAccess() access: AccessContext,
     @Param('id', new ParseUUIDPipe()) id: string,
     @Body() body: NoteDto,
   ): Promise<ComplaintDetail> {
-    return this.complaints.comment(user, id, body.note);
+    return this.complaints.comment(user, access, id, body.note);
   }
 }

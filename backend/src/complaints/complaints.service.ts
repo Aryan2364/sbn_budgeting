@@ -6,6 +6,13 @@ import {
 } from '@nestjs/common';
 import type { Pool, PoolClient } from 'pg';
 
+import { can as holds, type AccessContext } from '../access/access-context';
+import { blocked } from '../access/approval';
+import type { PermissionKey } from '../access/catalogue';
+import { reasonFor } from '../access/permission.guard';
+import {
+  assertRecordAccess, canSelect, createSiteWhere, scopeWhere, type Param, type RecordCan,
+} from '../access/scope';
 import type { AuthUser } from '../common/current-user';
 import type { ListQueryDto } from '../common/list-query.dto';
 import { runListQuery, type ListResult, type MatchInfo } from '../common/list-query';
@@ -13,8 +20,8 @@ import { PG_POOL } from '../db/db.module';
 import { notify } from '../notifications/notify';
 import type { RaiseComplaintDto, ReassignDto } from './complaints.dto';
 import {
-  allActions, canSee, checkAction, type ActionCheck, type ActionName, type ComplaintStatus,
-  type PermissionSubject, type PersonRef, type Viewer,
+  ACTION_NAMES, PERMISSION_ACTIONS, allActions, checkAction, type ActionCheck, type ActionName,
+  type ComplaintStatus, type PermissionAction, type PermissionSubject, type PersonRef, type Viewer,
 } from './permissions';
 import {
   checkPhotos, MAX_PHOTOS, openStored, type PhotoPlace, type PhotoStage, removeStored,
@@ -47,6 +54,18 @@ export interface ComplaintRow {
   supervisor: PersonRef;
   ageDays: number;
   photoCount: number;
+  /**
+   * On a list row: the permission layer's answer per permission action
+   * (`comment`, `work`, `approve`, `reassign`; plan 6.1.4 item 6, kit
+   * 8.3), for the keys the caller holds at some scope, computed in the
+   * same query as the row: `{ reassign: true, comment: 'You can ...' }`.
+   * A row does not carry the people the workflow reads, so it answers
+   * "may you, at this complaint's scope", not "are you its supervisor".
+   *
+   * On the detail it is the full answer per workflow action instead:
+   * see `ComplaintDetail.can`.
+   */
+  can: RecordCan;
 }
 
 export interface ComplaintDetail extends ComplaintRow {
@@ -71,6 +90,21 @@ export interface ComplaintDetail extends ComplaintRow {
     id: string; kind: string; actor: PersonRef | null; note: string | null;
     fromStatus: string | null; toStatus: string | null; payload: unknown; at: string;
   }>;
+  /**
+   * The per-record answers (plan 6.1.4 item 6, 6.2; kit 8.3), per
+   * workflow action, for the actions whose key the caller holds at some
+   * scope: `true`, or the reason, from the permission layer or the
+   * workflow layer (`permissions.ts`, the same function every action
+   * route runs): `{ start: true, approve: 'You raised this complaint, so
+   * someone else must approve it.' }`.
+   */
+  can: Partial<Record<ActionName, true | string>>;
+  /**
+   * Compatibility alias of `can` until the screens read `can` (P7), in
+   * the old shape and with all six actions: an action whose key the
+   * caller does not hold reads `allowed: false` with that permission's
+   * sentence. Same answers as `can`, never computed apart from it.
+   */
   actions: Record<ActionName, { allowed: boolean; reason: string | null }>;
 }
 
@@ -92,17 +126,21 @@ export interface ComplaintSummary {
   closedLast7Days: number;
 }
 
-/** The row's core plus the ids the permission function reads. */
-type DetailCore = Omit<ComplaintDetail, 'photos' | 'events' | 'actions'>;
+/**
+ * One complaint as loaded through the view scope: the detail's core plus
+ * `may`, the permission layer's answers for this complaint (canSelect),
+ * which the workflow layer is then given (Viewer.may).
+ */
+type DetailCore = Omit<ComplaintDetail, 'photos' | 'events' | 'actions' | 'can'> & { may: RecordCan };
 
 /** One entry of the raise form's site picker (GET /complaints/sites). */
 export interface ComplaintSite {
   id: string;
   name: string;
   location: PersonRef | null;
-  /** Who routing would pick: the site's supervisor, only if they can sign in. */
+  /** Who routing would pick: the site's supervisor, only if they can receive (active and can sign in). */
   supervisor: PersonRef | null;
-  /** Who routing would copy: the site's manager if they can sign in, else the supervisor's reports_to. */
+  /** Who routing would copy: the site's manager if they can receive, else the supervisor's reports_to. */
   manager: PersonRef | null;
   canReceive: boolean;
   reason: string | null;
@@ -173,31 +211,67 @@ const DETAIL_SELECT = `${ROW_SELECT},
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+// ---------------------------------------------------------------------
+// Access (plan 6.1.4, 6.2). Visibility is `complaints.complaints.view`
+// through the shared scope filter: Own = raised by me or named on the
+// snapshot (supervisor, manager, HOD, CEO, approver), which is today's
+// member rule word for word; All = every complaint, today's admin rule.
+// A site-less legacy complaint is reached by Own and All only (O10 Q9).
+// Who may do what to ONE complaint is still decided by the workflow
+// layer, permissions.ts (decision 27), after these checks.
+// ---------------------------------------------------------------------
+
+const VIEW: PermissionKey = 'complaints.complaints.view';
+const RAISE: PermissionKey = 'complaints.complaints.raise';
+/** Choosing the new supervisor on reassign (the reassign key needs this Pick at All). */
+const PEOPLE_PICK: PermissionKey = 'platform.people.pick';
+
+/** The permission actions' keys: a row's `can`, and the workflow's `Viewer.may`. */
+const CAN_ACTIONS: Readonly<Record<PermissionAction, PermissionKey>> = {
+  comment: 'complaints.complaints.comment',
+  work: 'complaints.complaints.work',
+  approve: 'complaints.complaints.approve',
+  reassign: 'complaints.complaints.reassign',
+};
+
+/** The key each action route carries (plan 6.2 layer 2; RESOLUTIONS C1). */
+const ACTION_KEY: Record<ActionName, PermissionKey> = {
+  start: 'complaints.complaints.work',
+  resolve: 'complaints.complaints.work',
+  approve: 'complaints.complaints.approve',
+  sendBack: 'complaints.complaints.approve',
+  reassign: 'complaints.complaints.reassign',
+  comment: 'complaints.complaints.comment',
+};
+
+/** A fresh parameter list and its `param`, for one statement. */
+function params(initial: unknown[] = []): { values: unknown[]; param: Param } {
+  const values = [...initial];
+  return {
+    values,
+    param: (v) => {
+      values.push(v);
+      return `$${values.length}`;
+    },
+  };
+}
+
+/** The caller's id as a parameter, added only when first used (an unused one is an error in Postgres). */
+function lazyMe(param: Param, userId: string): () => string {
+  let placeholder: string | undefined;
+  return () => (placeholder ??= `${param(userId)}::uuid`);
+}
+
 /**
- * Visibility (CONTRACT section 3) as a WHERE fragment over `c`. The id
- * is inlined because runListQuery's baseWhere takes no parameters; it
- * is the signed-in user's own id from the database, and is checked to
- * be a uuid anyway so nothing else can ever reach the SQL.
+ * The tab's own condition, on top of visibility: "my work" filters, so
+ * they stay workflow (plan 6.2), not scope. `counts` uses the same text.
+ * The id goes in as a parameter.
  */
-function meSql(viewer: Viewer): string {
-  if (!UUID_RE.test(viewer.id)) throw new Error('viewer id is not a uuid');
-  return `'${viewer.id}'::uuid`;
-}
-
-function visibleSql(viewer: Viewer): string {
-  if (viewer.isComplaintsAdmin) return 'true';
-  const me = meSql(viewer);
-  return `(c.raised_by = ${me} or c.supervisor_id = ${me} or c.manager_id = ${me}
-           or c.hod_id = ${me} or c.ceo_id = ${me} or c.approver_id = ${me})`;
-}
-
-/** The tab's own condition, on top of visibility. `counts` uses the same text. */
-function tabSql(tab: Tab, viewer: Viewer): string {
-  const me = meSql(viewer);
+function tabSql(tab: Tab, me: () => string): string {
   switch (tab) {
-    case 'assigned': return `c.supervisor_id = ${me} and c.status in ('open', 'in_progress')`;
-    case 'approval': return `c.approver_id = ${me} and c.status = 'awaiting_approval'`;
-    case 'raised': return `c.raised_by = ${me}`;
+    case 'assigned': return `c.supervisor_id = ${me()} and c.status in ('open', 'in_progress')`;
+    case 'approval': return `c.approver_id = ${me()} and c.status = 'awaiting_approval'`;
+    case 'raised': return `c.raised_by = ${me()}`;
     case 'all': return 'true';
   }
 }
@@ -213,8 +287,38 @@ const EVENT_VERB: Record<string, string> = {
   closed: 'closed',
 };
 
-export function toViewer(user: AuthUser): Viewer {
-  return { id: user.id, isComplaintsAdmin: user.modules.complaints === 'admin' };
+/**
+ * The workflow's viewer: who is asking, and the permission layer's
+ * answer for THIS complaint per permission action. A key not held at
+ * any scope is absent from `may` (canSelect leaves it out) and reads as
+ * that permission's sentence. Never a role or a level (plan 6.2).
+ */
+function viewerOf(access: AccessContext, c: DetailCore): Viewer {
+  const may = {} as Record<PermissionAction, true | string>;
+  for (const action of PERMISSION_ACTIONS) {
+    const answer = c.may[action];
+    may[action] = answer === true ? true : (answer ?? reasonFor(CAN_ACTIONS[action]));
+  }
+  return { id: access.userId, may };
+}
+
+/**
+ * The detail's `can` (only the actions whose key is held, kit 8.3) and
+ * its `actions` alias (all six, the old shape), from ONE workflow run.
+ */
+function answersFor(
+  access: AccessContext,
+  c: DetailCore,
+): Pick<ComplaintDetail, 'can' | 'actions'> {
+  const checks = allActions(viewerOf(access, c), c);
+  const can: ComplaintDetail['can'] = {};
+  const actions = {} as ComplaintDetail['actions'];
+  for (const name of ACTION_NAMES) {
+    const { allowed, reason } = checks[name];
+    actions[name] = { allowed, reason };
+    if (holds(access, ACTION_KEY[name])) can[name] = allowed ? true : (reason ?? reasonFor(ACTION_KEY[name]));
+  }
+  return { can, actions };
 }
 
 function short(text: string, max = 160): string {
@@ -237,7 +341,7 @@ export class ComplaintsService {
   // -------------------------------------------------------------------
 
   list(
-    user: AuthUser,
+    access: AccessContext,
     query: ListQueryDto,
     tabRaw: string | undefined,
     filters: { status?: string; siteId?: string; locationId?: string; categoryId?: string },
@@ -246,10 +350,11 @@ export class ComplaintsService {
     if (!TABS.includes(tab)) {
       throw new BadRequestException(`Unknown tab "${tabRaw}". Use one of: ${TABS.join(', ')}.`);
     }
-    const viewer = toViewer(user);
     return runListQuery<ComplaintRow>(
       this.pool,
       {
+        scope: { key: VIEW, record: 'complaint', alias: 'c' },
+        can: CAN_ACTIONS,
         from: ROW_FROM,
         select: ROW_SELECT,
         titleField: { sql: REFERENCE_SQL, label: 'Reference' },
@@ -294,46 +399,55 @@ export class ComplaintsService {
           locationId: (value, param) => `l.id = ${param(uuidOr400(value, 'locationId'))}::uuid`,
           categoryId: (value, param) => `c.category_id = ${param(uuidOr400(value, 'categoryId'))}::uuid`,
         },
-        baseWhere: `${visibleSql(viewer)} and ${tabSql(tab, viewer)}`,
+        baseWhere: (param) => tabSql(tab, lazyMe(param, access.userId)),
       },
       { ...query, filters },
+      access,
     );
   }
 
-  async counts(user: AuthUser): Promise<Record<Tab, number>> {
-    const viewer = toViewer(user);
+  async counts(access: AccessContext): Promise<Record<Tab, number>> {
+    const { values, param } = params();
+    const me = lazyMe(param, access.userId);
     const { rows } = await this.pool.query<Record<Tab, number>>(
       `select
-         count(*) filter (where ${tabSql('assigned', viewer)})::int as assigned,
-         count(*) filter (where ${tabSql('approval', viewer)})::int as approval,
-         count(*) filter (where ${tabSql('raised', viewer)})::int as raised,
+         count(*) filter (where ${tabSql('assigned', me)})::int as assigned,
+         count(*) filter (where ${tabSql('approval', me)})::int as approval,
+         count(*) filter (where ${tabSql('raised', me)})::int as raised,
          count(*)::int as "all"
        from complaints c
-       where ${visibleSql(viewer)}`,
+       where ${scopeWhere(access, VIEW, 'complaint', 'c', param)}`,
+      values,
     );
     return rows[0]!;
   }
 
-  async summary(user: AuthUser): Promise<ComplaintSummary> {
-    const visible = visibleSql(toViewer(user));
+  async summary(access: AccessContext): Promise<ComplaintSummary> {
+    /** One statement over the visible complaints; each gets its own parameters. */
+    const visibleQuery = <R extends object>(build: (visible: string, param: Param) => string) => {
+      const { values, param } = params();
+      const visible = scopeWhere(access, VIEW, 'complaint', 'c', param);
+      return this.pool.query<R>(build(visible, param), values);
+    };
     const [status, bySite, byCategory, ageing] = await Promise.all([
-      this.pool.query<{ status: ComplaintStatus; n: number }>(
-        `select c.status, count(*)::int as n from complaints c where ${visible} group by c.status`,
+      visibleQuery<{ status: ComplaintStatus; n: number }>(
+        (visible) => `select c.status, count(*)::int as n from complaints c where ${visible} group by c.status`,
       ),
       // Older, location-only complaints fall into one "No site" bucket
       // (id null), listed last, so the buckets still add up to byStatus.
-      this.pool.query<{ site: SiteBucket; open: number; closed: number }>(
-        `select json_build_object('id', st.id, 'name', coalesce(st.name, $1::text)) as site,
+      visibleQuery<{ site: SiteBucket; open: number; closed: number }>(
+        (visible, param) =>
+          `select json_build_object('id', st.id, 'name', coalesce(st.name, ${param(NO_SITE_NAME)}::text)) as site,
                 count(*) filter (where c.status <> 'closed')::int as open,
                 count(*) filter (where c.status = 'closed')::int as closed
          from complaints c left join sites st on st.id = c.site_id
          where ${visible}
          group by st.id, st.name
          order by (st.id is null), open desc, st.name`,
-        [NO_SITE_NAME],
       ),
-      this.pool.query<{ category: PersonRef; open: number; closed: number }>(
-        `select json_build_object('id', cc.id, 'name', cc.name) as category,
+      visibleQuery<{ category: PersonRef; open: number; closed: number }>(
+        (visible) =>
+          `select json_build_object('id', cc.id, 'name', cc.name) as category,
                 count(*) filter (where c.status <> 'closed')::int as open,
                 count(*) filter (where c.status = 'closed')::int as closed
          from complaints c join complaint_categories cc on cc.id = c.category_id
@@ -341,8 +455,9 @@ export class ComplaintsService {
          group by cc.id, cc.name
          order by open desc, cc.name`,
       ),
-      this.pool.query<ComplaintSummary['openAgeing'] & { closedLast7Days: number }>(
-        `select
+      visibleQuery<ComplaintSummary['openAgeing'] & { closedLast7Days: number }>(
+        (visible) =>
+          `select
            count(*) filter (where c.status <> 'closed' and ${AGE_DAYS_SQL} <= 2)::int as d0_2,
            count(*) filter (where c.status <> 'closed' and ${AGE_DAYS_SQL} between 3 and 7)::int as d3_7,
            count(*) filter (where c.status <> 'closed' and ${AGE_DAYS_SQL} between 8 and 14)::int as d8_14,
@@ -371,39 +486,53 @@ export class ComplaintsService {
    * people who raise complaints have no budget access, and /sites does.
    * `supervisor`/`manager` are who routing would pick today, and
    * `reason` is the same sentence the raise 422 gives.
+   *
+   * The sites are those the caller may raise on: raise declares
+   * `createSiteFrom: 'pick'` with the sites Pick at All (O5), so anyone
+   * who may raise sees every site. The people joined are the site's
+   * named supervisor and manager, shown on the site's own line.
    */
-  async sites(): Promise<{ data: ComplaintSite[] }> {
+  async sites(access: AccessContext): Promise<{ data: ComplaintSite[] }> {
+    const { values, param } = params();
     const { rows } = await this.pool.query<Omit<ComplaintSite, 'reason'>>(
       `select s.id, s.name,
               ${personOrNull('l')} as location,
-              case when sv.can_login then ${person('sv')} else null end as supervisor,
-              case when mg.can_login then ${person('mg')}
-                   when up.can_login then ${person('up')}
+              case when sv.active and sv.can_login then ${person('sv')} else null end as supervisor,
+              case when mg.active and mg.can_login then ${person('mg')}
+                   when up.active and up.can_login then ${person('up')}
                    else null end as manager,
-              coalesce(sv.can_login, false) as "canReceive"
+              coalesce(sv.active and sv.can_login, false) as "canReceive"
        from sites s
        left join locations l on l.id = s.location_id
        left join users sv on sv.id = s.supervisor_id
        left join users mg on mg.id = s.manager_id
        left join users up on up.id = sv.reports_to
+       where ${createSiteWhere(access, RAISE, 's.id', param)}
        order by s.name, s.id
        limit ${SITE_PICKER_LIMIT}`,
+      values,
     );
     return {
       data: rows.map((r) => ({ ...r, reason: r.canReceive ? null : noSupervisorReason(r.name) })),
     };
   }
 
-  async detail(user: AuthUser, id: string): Promise<ComplaintDetail> {
-    const viewer = toViewer(user);
-    const core = await this.loadCore(this.pool, id);
-    if (!core || !canSee(viewer, core)) throw new NotFoundException(NOT_FOUND);
+  /**
+   * One complaint, through the view scope: outside it is the same 404
+   * as a complaint that does not exist (R7), so its existence never
+   * leaks. Photos and events follow that scoped read.
+   */
+  async detail(_user: AuthUser, access: AccessContext, id: string): Promise<ComplaintDetail> {
+    const loaded = await this.loadCore(this.pool, access, id);
+    if (!loaded) throw new NotFoundException(NOT_FOUND);
+    const { may: _may, ...core } = loaded;
 
     const [photos, events] = await Promise.all([
       this.pool.query<ComplaintDetail['photos'][number]>(
         `select p.id, p.stage, p.content_type as "contentType", p.uploaded_at as "uploadedAt",
                 ${person('u')} as "uploadedBy"
          from complaint_photos p join users u on u.id = p.uploaded_by
+         /*scope-exempt: the photos of one complaint, after its scoped read (loadCore); uploader names only*/
          where p.complaint_id = $1
          order by p.uploaded_at, p.stage, p.storage_key`,
         [id],
@@ -412,26 +541,30 @@ export class ComplaintsService {
         `select e.id, e.kind, ${personOrNull('a')} as actor, e.note,
                 e.from_status as "fromStatus", e.to_status as "toStatus", e.payload, e.at
          from complaint_events e left join users a on a.id = e.actor_id
+         /*scope-exempt: the timeline of one complaint, after its scoped read (loadCore); actor names only*/
          where e.complaint_id = $1
          order by e.at, e.id`,
         [id],
       ),
     ]);
 
-    return { ...core, photos: photos.rows, events: events.rows, actions: allActions(viewer, core) };
+    return { ...core, photos: photos.rows, events: events.rows, ...answersFor(access, loaded) };
   }
 
   /** Visibility first, then the photo; either missing is the same 404. */
   async photo(
-    user: AuthUser,
+    access: AccessContext,
     id: string,
     photoId: string,
   ): Promise<{ stream: Readable; contentType: string; bytes: number | undefined }> {
-    const core = await this.loadCore(this.pool, id);
-    if (!core || !canSee(toViewer(user), core)) throw new NotFoundException(NOT_FOUND);
+    await assertRecordAccess(this.pool, access, {
+      table: 'complaints', alias: 'c', record: 'complaint', id, view: VIEW, notFound: NOT_FOUND,
+    });
 
     const { rows } = await this.pool.query<{ storage_key: string; content_type: string }>(
-      `select storage_key, content_type from complaint_photos where id = $1 and complaint_id = $2`,
+      `select storage_key, content_type from complaint_photos
+       /*scope-exempt: one photo of one complaint, after assertRecordAccess on that complaint*/
+       where id = $1 and complaint_id = $2`,
       [photoId, id],
     );
     const row = rows[0];
@@ -448,6 +581,7 @@ export class ComplaintsService {
 
   async raise(
     user: AuthUser,
+    access: AccessContext,
     body: RaiseComplaintDto,
     files: UploadedPhoto[] | undefined,
   ): Promise<ComplaintDetail> {
@@ -462,14 +596,24 @@ export class ComplaintsService {
     let id: string;
     try {
       id = await this.inTransaction(async (client) => {
-        const { rows: siteRows } = await client.query<{ id: string; name: string }>(
-          `select id, name from sites where id = $1`,
-          [body.siteId],
+        // The site must be one the caller may raise on (O5): raise checks
+        // it against the sites Pick it declares at All, so any site.
+        const siteParams = params([body.siteId]);
+        const { rows: siteRows } = await client.query<{ id: string; name: string; allowed: boolean }>(
+          `select s.id, s.name,
+                  coalesce(${createSiteWhere(access, RAISE, 's.id', siteParams.param)}, false) as allowed
+           from sites s where s.id = $1`,
+          siteParams.values,
         );
-        const site = siteRows[0];
-        if (!site) {
+        const found = siteRows[0];
+        if (!found) {
           throw new UnprocessableEntityException('That site no longer exists. Choose another one.');
         }
+        if (!found.allowed) {
+          const reason = `You can raise complaints only on sites you can choose from, and ${found.name} is not one of them. Choose another site.`;
+          throw new ForbiddenException({ error: 'forbidden', permission: RAISE, reason, message: reason });
+        }
+        const site = { id: found.id, name: found.name };
         const { rows: catRows } = await client.query<{
           id: string; name: string; is_active: boolean; requires_approval: boolean;
           approver_designation_id: string | null;
@@ -490,6 +634,8 @@ export class ComplaintsService {
 
         const routing = await resolveRouting(client, {
           site,
+          // The raiser is never chosen as the approver (O10 Q11, D6).
+          raisedBy: user.id,
           category: {
             id: category.id,
             name: category.name,
@@ -546,7 +692,7 @@ export class ComplaintsService {
       await removeStored(stored);
       throw error;
     }
-    return this.detail(user, id);
+    return this.detail(user, access, id);
   }
 
   // -------------------------------------------------------------------
@@ -554,11 +700,11 @@ export class ComplaintsService {
   // change, event, notifications — in one transaction.
   // -------------------------------------------------------------------
 
-  start(user: AuthUser, id: string): Promise<ComplaintDetail> {
-    return this.act(user, id, 'start', async (client, c) => {
+  start(user: AuthUser, access: AccessContext, id: string): Promise<ComplaintDetail> {
+    return this.act(user, access, id, 'start', async (client, c) => {
       await client.query(
-        `update complaints set status = 'in_progress', started_at = coalesce(started_at, now()),
-                updated_at = now()
+        `update complaints /*scope-exempt: follows the scoped, locked read of this complaint (act)*/
+         set status = 'in_progress', started_at = coalesce(started_at, now()), updated_at = now()
          where id = $1`,
         [id],
       );
@@ -568,13 +714,14 @@ export class ComplaintsService {
 
   async resolve(
     user: AuthUser,
+    access: AccessContext,
     id: string,
     resolutionNote: string | undefined,
     files: UploadedPhoto[] | undefined,
   ): Promise<ComplaintDetail> {
     let stored: StoredPhoto[] = [];
     return this.act(
-      user, id, 'resolve',
+      user, access, id, 'resolve',
       async (client, c) => {
         const note = requireNote(
           resolutionNote,
@@ -584,7 +731,7 @@ export class ComplaintsService {
         const to: ComplaintStatus = c.requiresApproval ? 'awaiting_approval' : 'closed';
 
         await client.query(
-          `update complaints
+          `update complaints /*scope-exempt: follows the scoped, locked read of this complaint (act)*/
            set status = $2, resolution_note = $3, resolved_at = now(), resolved_by = $4,
                closed_at = case when $2 = 'closed' then now() else null end,
                closed_by = case when $2 = 'closed' then $4::uuid else null end,
@@ -612,11 +759,12 @@ export class ComplaintsService {
     );
   }
 
-  approve(user: AuthUser, id: string, noteRaw: string | undefined): Promise<ComplaintDetail> {
-    return this.act(user, id, 'approve', async (client, c) => {
+  approve(user: AuthUser, access: AccessContext, id: string, noteRaw: string | undefined): Promise<ComplaintDetail> {
+    return this.act(user, access, id, 'approve', async (client, c) => {
       const note = noteRaw?.trim() || null;
       await client.query(
-        `update complaints set status = 'closed', closed_at = now(), closed_by = $2, updated_at = now()
+        `update complaints /*scope-exempt: follows the scoped, locked read of this complaint (act)*/
+         set status = 'closed', closed_at = now(), closed_by = $2, updated_at = now()
          where id = $1`,
         [id, user.id],
       );
@@ -628,8 +776,8 @@ export class ComplaintsService {
     });
   }
 
-  sendBack(user: AuthUser, id: string, noteRaw: string | undefined): Promise<ComplaintDetail> {
-    return this.act(user, id, 'sendBack', async (client, c) => {
+  sendBack(user: AuthUser, access: AccessContext, id: string, noteRaw: string | undefined): Promise<ComplaintDetail> {
+    return this.act(user, access, id, 'sendBack', async (client, c) => {
       const note = requireNote(
         noteRaw,
         'Add a note saying what still needs to be done. Sending back needs a note.',
@@ -637,7 +785,7 @@ export class ComplaintsService {
       // The previous resolution stays in the timeline (its event and
       // photos); the row goes back to "being worked on".
       await client.query(
-        `update complaints
+        `update complaints /*scope-exempt: follows the scoped, locked read of this complaint (act)*/
          set status = 'in_progress', resolution_note = null, resolved_at = null, resolved_by = null,
              updated_at = now()
          where id = $1`,
@@ -650,19 +798,22 @@ export class ComplaintsService {
     });
   }
 
-  reassign(user: AuthUser, id: string, body: ReassignDto): Promise<ComplaintDetail> {
-    return this.act(user, id, 'reassign', async (client, c) => {
+  reassign(user: AuthUser, access: AccessContext, id: string, body: ReassignDto): Promise<ComplaintDetail> {
+    return this.act(user, access, id, 'reassign', async (client, c) => {
       const note = requireNote(
         body.note,
         'Add a note saying why it is being reassigned. Reassigning needs a note.',
       );
+      // The new supervisor is chosen through the people Pick, which the
+      // reassign key needs at All: anyone the caller may pick.
+      const targetQuery = params([body.supervisorId]);
       const { rows } = await client.query<{
-        id: string; name: string; can_login: boolean; seed_key: string | null;
+        id: string; name: string; can_receive: boolean; seed_key: string | null;
       }>(
-        `select u.id, u.name, u.can_login, d.seed_key
+        `select u.id, u.name, (u.active and u.can_login) as can_receive, d.seed_key
          from users u left join designations d on d.id = u.designation_id
-         where u.id = $1`,
-        [body.supervisorId],
+         where u.id = $1 and ${scopeWhere(access, PEOPLE_PICK, 'person', 'u', targetQuery.param)}`,
+        targetQuery.values,
       );
       const target = rows[0];
       if (!target) {
@@ -673,7 +824,7 @@ export class ComplaintsService {
           `${target.name} doesn't hold the Supervisor designation, so they can't take complaints. Choose a supervisor.`,
         );
       }
-      if (!target.can_login) {
+      if (!target.can_receive) {
         throw new UnprocessableEntityException(
           `${target.name} can't sign in, so they couldn't work on this complaint. Choose another supervisor, or give them a login first.`,
         );
@@ -683,7 +834,8 @@ export class ComplaintsService {
       }
 
       await client.query(
-        `update complaints set supervisor_id = $2, updated_at = now() where id = $1`,
+        `update complaints /*scope-exempt: follows the scoped, locked read of this complaint (act)*/
+         set supervisor_id = $2, updated_at = now() where id = $1`,
         [id, target.id],
       );
       const to = { id: target.id, name: target.name };
@@ -698,8 +850,8 @@ export class ComplaintsService {
     });
   }
 
-  comment(user: AuthUser, id: string, noteRaw: string | undefined): Promise<ComplaintDetail> {
-    return this.act(user, id, 'comment', async (client) => {
+  comment(user: AuthUser, access: AccessContext, id: string, noteRaw: string | undefined): Promise<ComplaintDetail> {
+    return this.act(user, access, id, 'comment', async (client) => {
       const note = requireNote(noteRaw, 'Type a comment before sending it.');
       await this.event(client, id, 'comment', user.id, note, null, null);
     });
@@ -716,6 +868,7 @@ export class ComplaintsService {
    */
   private async act(
     user: AuthUser,
+    access: AccessContext,
     id: string,
     action: ActionName,
     run: (client: PoolClient, c: DetailCore) => Promise<void>,
@@ -729,11 +882,24 @@ export class ComplaintsService {
     };
     try {
       await this.inTransaction(async (client) => {
-        const viewer = toViewer(user);
-        const c = await this.loadCore(client, id, true);
-        if (!c || !canSee(viewer, c)) throw new NotFoundException(NOT_FOUND);
+        // 1. Visibility (404) and 2. permission (403), in one locked read
+        // (plan 6.1.4 item 4, 6.2): outside the view scope is the same
+        // 404 as a missing complaint; visible but outside the action's
+        // scope (reassign at Own: not its manager or HOD) is 403.
+        await assertRecordAccess(client, access, {
+          table: 'complaints', alias: 'c', record: 'complaint', id,
+          view: VIEW, action: ACTION_KEY[action], notFound: NOT_FOUND, forUpdate: true,
+        });
+        const c = await this.loadCore(client, access, id, true);
+        if (!c) throw new NotFoundException(NOT_FOUND);
+        // 3. The workflow (permissions.ts, decision 27), on the permission
+        // layer's answers for this complaint: is this person the
+        // supervisor or the approver on THIS complaint, not its raiser or
+        // resolver when approving, and does its status allow it. The
+        // same function the detail's `can` comes from.
+        const viewer = viewerOf(access, c);
         const check = checkAction(action, viewer, c);
-        if (!check.allowed) throw await this.refusal(client, id, viewer, check);
+        if (!check.allowed) throw await this.refusal(client, id, action, viewer, check);
         try {
           await run(client, c);
         } catch (error) {
@@ -745,7 +911,7 @@ export class ComplaintsService {
       await undo();
       throw error;
     }
-    return this.detail(user, id);
+    return this.detail(user, access, id);
   }
 
   /**
@@ -762,7 +928,8 @@ export class ComplaintsService {
       `select ${RAISED_YEAR_SQL} as year, ${REFERENCE_SQL} as reference,
               array(select p.storage_key from complaint_photos p
                     where p.complaint_id = c.id and p.stage = $2) as keys
-       from complaints c where c.id = $1`,
+       from complaints c /*scope-exempt: the complaint act() has already read through its scope and locked*/
+       where c.id = $1`,
       [complaintId, stage],
     );
     const row = rows[0];
@@ -771,25 +938,34 @@ export class ComplaintsService {
   }
 
   /**
-   * The route's answer when the permission function says no:
-   *   person        403 with the same sentence the disabled button shows;
-   *   notApplicable 422;
+   * The route's answer when the workflow function says no (plan 6.1.10):
+   *   permission    403 naming the key (the scoped read normally said so first);
+   *   person        403 with the same sentence the disabled button shows (L1 until P11);
+   *   self          409 blocked: the approver raised or resolved it (D6, R7);
+   *   notApplicable 422 (L2 until P11);
    *   status        409, naming who moved it, because the caller's
    *                 screen was stale.
    */
   private async refusal(
     client: PoolClient,
     id: string,
+    action: ActionName,
     viewer: Viewer,
     check: ActionCheck,
   ): Promise<Error> {
     const reason = check.reason ?? 'That action is not available.';
+    if (check.failure === 'permission') {
+      const permission = ACTION_KEY[action];
+      return new ForbiddenException({ error: 'forbidden', permission, reason, message: reason });
+    }
     if (check.failure === 'person') return new ForbiddenException(reason);
+    if (check.failure === 'self') return blocked(reason);
     if (check.failure === 'notApplicable') return new UnprocessableEntityException(reason);
 
     const { rows } = await client.query<{ kind: string; actor_id: string | null; name: string | null }>(
       `select e.kind, e.actor_id, a.name
        from complaint_events e left join users a on a.id = e.actor_id
+       /*scope-exempt: the last move of the complaint act() has already read through its scope*/
        where e.complaint_id = $1 and e.to_status is not null
        order by e.at desc, e.id desc
        limit 1`,
@@ -808,14 +984,27 @@ export class ComplaintsService {
     );
   }
 
+  /**
+   * One complaint through the view scope, with the permission layer's
+   * answers for it (`may`), in one query. Null when it does not exist OR
+   * is outside the caller's view scope: the caller answers both with the
+   * same 404.
+   */
   private async loadCore(
     db: Pool | PoolClient,
+    access: AccessContext,
     id: string,
     lock = false,
   ): Promise<(DetailCore & PermissionSubject) | null> {
+    const { values, param } = params([id]);
+    const visible = scopeWhere(access, VIEW, 'complaint', 'c', param);
+    const may = canSelect(access, CAN_ACTIONS, 'complaint', 'c', param);
     const { rows } = await db.query<DetailCore>(
-      `select ${DETAIL_SELECT} from ${DETAIL_FROM} where c.id = $1 ${lock ? 'for update of c' : ''}`,
-      [id],
+      `select ${DETAIL_SELECT}, ${may} as "may"
+       from ${DETAIL_FROM}
+       where c.id = $1 and coalesce(${visible}, false)
+       ${lock ? 'for update of c' : ''}`,
+      values,
     );
     return rows[0] ?? null;
   }

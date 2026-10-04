@@ -65,7 +65,7 @@ async function seedFirstAdmin(): Promise<void> {
   }
 
   const pool = getPool();
-  const existing = await pool.query('select 1 from users where lower(email) = lower($1)', [
+  const existing = await pool.query('select 1 from users /*scope-exempt: seed script, run by hand on a local database, never by a request*/ where lower(email) = lower($1)', [
     email,
   ]);
   if ((existing.rowCount ?? 0) > 0) {

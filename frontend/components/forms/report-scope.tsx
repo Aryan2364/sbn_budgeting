@@ -2,14 +2,7 @@
 
 import * as React from "react"
 
-import {
-  api,
-  query,
-  type ListResponse,
-  type Matchable,
-  type Project,
-  type Site,
-} from "@/lib/api"
+import { pick, type SitePick } from "@/lib/api"
 import { Label } from "@/components/ui/label"
 import { SearchableSelect } from "@/components/ui/searchable-select"
 
@@ -73,7 +66,7 @@ export function useReportScope(): {
   retry: () => void
 } {
   const [projects, setProjects] = React.useState<Record<string, string>>({})
-  const [allSites, setAllSites] = React.useState<Site[]>([])
+  const [allSites, setAllSites] = React.useState<SitePick[]>([])
   const [projectId, setProjectIdState] = React.useState("")
   const [siteId, setSiteIdState] = React.useState("")
   const [loading, setLoading] = React.useState(true)
@@ -82,14 +75,9 @@ export function useReportScope(): {
 
   React.useEffect(() => {
     let cancelled = false
-    Promise.all([
-      api.get<ListResponse<Project & Matchable>>(
-        `/projects${query({ pageSize: 100, sort: "name", direction: "asc" })}`,
-      ),
-      api.get<ListResponse<Site & Matchable>>(
-        `/sites${query({ pageSize: 100, sort: "name", direction: "asc" })}`,
-      ),
-    ])
+    // Choosing a scope is picking (access plan P7 inventory 7): the
+    // project and site Picks, which a report's permission brings with it.
+    Promise.all([pick.projects(), pick.sites()])
       .then(([projectList, siteList]) => {
         if (cancelled) return
         // "No project" leads, before the names. It is a scope in its
@@ -103,9 +91,9 @@ export function useReportScope(): {
           // control and the figures have to agree at first paint.
           "": "All",
           [NO_PROJECT]: "No project",
-          ...Object.fromEntries(projectList.data.map((p) => [p.id, p.name])),
+          ...Object.fromEntries(projectList.map((p) => [p.id, p.name])),
         })
-        setAllSites(siteList.data)
+        setAllSites(siteList)
         // No default to set: the initial "" IS the scope, and it means
         // every site. Seeding the first project here is what the change
         // above removed.

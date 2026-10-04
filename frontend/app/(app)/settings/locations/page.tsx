@@ -4,7 +4,8 @@ import * as React from "react"
 
 import { api, query, type ListResponse, type Location, type Matchable } from "@/lib/api"
 import { formatNumber } from "@/lib/format"
-import { errorMessage, useSession } from "@/components/shell/session"
+import { reasonFor, useCan } from "@/lib/permissions"
+import { errorMessage } from "@/components/shell/session"
 import { toast } from "@/components/ui/sonner"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -41,8 +42,7 @@ import {
  */
 
 export default function LocationsSettingsPage() {
-  const { can } = useSession()
-  const canEdit = can.platformAdmin
+  const canEdit = useCan("platform.locations.manage")
 
   const load = React.useCallback(
     (page: number) =>
@@ -82,7 +82,7 @@ export default function LocationsSettingsPage() {
         description="The places where sites are."
         createLabel="Add location"
         canEdit={canEdit}
-        cannotEditReason="Only a platform administrator can change locations"
+        cannotEditReason={reasonFor("platform.locations.manage")}
         rows={rows}
         loading={loading}
         error={error}

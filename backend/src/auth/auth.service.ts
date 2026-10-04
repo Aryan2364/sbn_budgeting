@@ -6,7 +6,15 @@ import type { Pool } from 'pg';
 import type { AuthUser } from '../common/current-user';
 import { PHONE_SQL, phoneDigits } from '../common/phone';
 import { PG_POOL } from '../db/db.module';
-import { AUTH_USER_SELECT, type AuthUserDbRow, toAuthUser } from './auth-user.sql';
+import { AUTH_USER_SELECT, type AuthUserDbRow, mayUseApp, toAuthUser } from './auth-user.sql';
+
+/** What the per-request query gives the auth guard: the person, plus what access needs. */
+export interface ActiveUser {
+  user: AuthUser;
+  /** Sorted role ids. Turned into permissions by the role map, never shown. */
+  roleIds: string[];
+  accessVersion: number;
+}
 
 const LOGIN_FAILED = 'Email/phone or password is incorrect';
 
@@ -58,7 +66,7 @@ export class AuthService {
     const hash = user?.password_hash ?? DUMMY_HASH;
     const passwordMatches = await compare(password, hash);
 
-    if (!user || !user.can_login || !user.password_hash || !passwordMatches) {
+    if (!user || !mayUseApp(user) || !user.password_hash || !passwordMatches) {
       throw new UnauthorizedException(LOGIN_FAILED);
     }
 
@@ -70,16 +78,36 @@ export class AuthService {
   /**
    * Re-read on every request rather than trusting the token's copy.
    * A module-access change or a revoked login has to take effect before
-   * the token expires, not after.
+   * the token expires, not after. Deactivating a person ends their
+   * access on their next request (decision 17): null here is a 401.
+   *
+   * This is the one access query per request (access plan 6.1.1).
    */
-  async findActive(id: string): Promise<AuthUser | null> {
+  async findActive(id: string): Promise<ActiveUser | null> {
     const { rows } = await this.pool.query<AuthUserDbRow>(
       `${AUTH_USER_SELECT} where u.id = $1`,
       [id],
     );
     const user = rows[0];
-    if (!user || !user.can_login) return null;
-    return toAuthUser(user);
+    if (!user || !mayUseApp(user)) return null;
+    return {
+      user: toAuthUser(user),
+      roleIds: [...(user.role_ids ?? [])].sort(),
+      accessVersion: Number(user.access_version),
+    };
+  }
+
+  /**
+   * The site ids Selected sites reaches for this person: ticked on them,
+   * plus the sites they lead (O4). For the `units` of /auth/me only.
+   */
+  async myUnitIds(userId: string): Promise<string[]> {
+    const { rows } = await this.pool.query<{ id: string }>(
+      `select u.id::text as id /*scope-exempt: the caller's own ticked and led sites, for /auth/me*/
+       from access_my_unit_ids($1) as u(id) order by 1`,
+      [userId],
+    );
+    return rows.map((r) => r.id);
   }
 }
 

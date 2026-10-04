@@ -2,33 +2,33 @@
 
 import * as React from "react"
 
-import {
-  categoriesApi,
-  complaintsApi,
-  fetchAllPages,
-  type ComplaintCategory,
-  type ComplaintSiteOption,
-} from "@/lib/complaints-api"
+import { pick, type CategoryPick } from "@/lib/api"
+import { complaintsApi, type ComplaintSiteOption } from "@/lib/complaints-api"
 import { errorMessage } from "@/components/shell/session"
 
 /**
  * The two masters every complaint screen picks from: sites and
- * categories. Loaded whole (every page, never a silent first 100) and
- * once per screen.
+ * categories. Loaded whole and once per screen.
  *
  * Sites come from `GET /complaints/sites` (CONTRACT §10), which every
  * complaints user may read, with who each one would route to. Sites
  * have no active flag, so the list is the same everywhere.
  *
+ * Categories come from the categories Pick (access plan P7 inventory 9),
+ * which every signed-in person holds: the full list is Settings ›
+ * Complaint categories, under manage (D3). The Pick carries `isActive`,
+ * `requiresApproval` and `approverDesignation`, the fields the raise
+ * form shows.
+ *
  * `activeOnly` is for the raise form, which must not offer a category
  * that has been retired (15.2). The list's filter wants every one,
  * because an old complaint still carries a retired category and has to
- * stay findable.
+ * stay findable: the Pick's `includeInactive`.
  */
 export function useComplaintMasters({ activeOnly }: { activeOnly: boolean }) {
   const [state, setState] = React.useState<{
     sites: ComplaintSiteOption[] | null
-    categories: ComplaintCategory[] | null
+    categories: CategoryPick[] | null
     error: string | null
     attempt: number
   }>({ sites: null, categories: null, error: null, attempt: -1 })
@@ -38,15 +38,7 @@ export function useComplaintMasters({ activeOnly }: { activeOnly: boolean }) {
     let cancelled = false
     Promise.all([
       complaintsApi.sites(),
-      fetchAllPages((page) =>
-        categoriesApi.list({
-          page,
-          pageSize: 100,
-          sort: "name",
-          direction: "asc",
-          isActive: activeOnly ? true : undefined,
-        }),
-      ),
+      pick.categories({ includeInactive: !activeOnly }),
     ])
       .then(([sites, categories]) => {
         if (!cancelled) setState({ sites: sites.data, categories, error: null, attempt })

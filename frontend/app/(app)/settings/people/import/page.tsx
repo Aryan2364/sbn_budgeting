@@ -12,7 +12,8 @@ import {
   type ImportRowStatus,
 } from "@/lib/api"
 import { formatNumber } from "@/lib/format"
-import { errorMessage, useSession } from "@/components/shell/session"
+import { reasonFor, useCan } from "@/lib/permissions"
+import { errorMessage } from "@/components/shell/session"
 import { toast } from "@/components/ui/sonner"
 import { Badge } from "@/components/ui/badge"
 import { Banner, BannerDescription, BannerTitle } from "@/components/ui/banner"
@@ -104,7 +105,8 @@ type Step =
   | { kind: "done"; sheet: ParsedSheet; result: ImportResult }
 
 export default function ImportPeoplePage() {
-  const { can } = useSession()
+  // Plan 5.3.3: adding people, the import included, is Settings › People › Add.
+  const canImport = useCan("platform.people.create")
   const [files, setFiles] = React.useState<FileUploadItem[]>([])
   const [step, setStep] = React.useState<Step>({ kind: "empty" })
   const [committing, setCommitting] = React.useState(false)
@@ -278,7 +280,7 @@ export default function ImportPeoplePage() {
         <PreviewCard
           sheet={sheet}
           preview={step.preview}
-          canCommit={can.platformAdmin}
+          canCommit={canImport}
           committing={committing}
           commitError={commitError}
           onCommit={() => commit(sheet)}
@@ -338,7 +340,7 @@ function PreviewCard({
 }: {
   sheet: ParsedSheet
   preview: ImportPreview
-  canCommit: boolean
+  canCommit: boolean | undefined
   committing: boolean
   commitError: string | null
   onCommit: () => void
@@ -346,13 +348,17 @@ function PreviewCard({
   const { summary } = preview
   const changing = summary.new + summary.update
 
-  const denial = !canCommit
-    ? "Only a platform administrator can import people"
-    : summary.error > 0
-      ? `${plural(summary.error, "row has an error", "rows have errors")}. Fix ${
-          summary.error === 1 ? "it" : "them"
-        } in the spreadsheet, then choose the file again.`
-      : null
+  // undefined: not known yet, so disabled with no reason (kit 26.1).
+  const denial: string | null | undefined =
+    canCommit === undefined
+      ? undefined
+      : canCommit === false
+        ? reasonFor("platform.people.create")
+        : summary.error > 0
+          ? `${plural(summary.error, "row has an error", "rows have errors")}. Fix ${
+              summary.error === 1 ? "it" : "them"
+            } in the spreadsheet, then choose the file again.`
+          : null
 
   const rowFor = (index: number): ImportRow | undefined => sheet.rows[index]
 
@@ -473,7 +479,7 @@ function PreviewCard({
       </CardContent>
 
       <CardFooter className="justify-end">
-        <PermissionTooltip allowed={denial === null} reason={denial ?? ""}>
+        <PermissionTooltip allowed={denial === undefined ? undefined : denial === null} reason={denial ?? ""}>
           <Button onClick={onCommit} disabled={denial !== null || committing}>
             {committing
               ? "Importing"

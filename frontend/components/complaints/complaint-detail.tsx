@@ -20,6 +20,7 @@ import {
   type ComplaintStatus,
   type PersonRef,
 } from "@/lib/complaints-api"
+import { recordAnswer, usePermissions, type PermissionKey } from "@/lib/permissions"
 import { errorMessage } from "@/components/shell/session"
 import { Banner, BannerAction, BannerDescription, BannerTitle } from "@/components/ui/banner"
 import { Button } from "@/components/ui/button"
@@ -81,6 +82,23 @@ const PRIMARY: Record<ComplaintStatus, ActionName | null> = {
   closed: null,
 }
 
+/**
+ * The permission each action belongs to (plan 5.3.2, RESOLUTIONS C1).
+ * Kit 26.5 rule 2: a record action is enabled only when the person holds
+ * its key AND the complaint's own answer is yes. The complaint's answer
+ * is still its `actions` map until P5 merges it into `can`; whether this
+ * person is the supervisor or the approver here is the workflow's call,
+ * never the browser's.
+ */
+const ACTION_KEY: Record<ActionName, PermissionKey> = {
+  start: "complaints.complaints.work",
+  resolve: "complaints.complaints.work",
+  approve: "complaints.complaints.approve",
+  sendBack: "complaints.complaints.approve",
+  reassign: "complaints.complaints.reassign",
+  comment: "complaints.complaints.comment",
+}
+
 const LABEL: Record<ActionName, string> = {
   start: "Start work",
   resolve: "Resolve",
@@ -137,6 +155,7 @@ export function ComplaintDetailPage({ id }: { id: string }) {
 
   const [dialog, setDialog] = React.useState<DialogName | null>(null)
   const [pending, setPending] = React.useState<ActionName | null>(null)
+  const { can } = usePermissions()
   const [stale, setStale] = React.useState<string | null>(null)
   const [actionError, setActionError] = React.useState<string | null>(null)
 
@@ -245,14 +264,19 @@ export function ComplaintDetailPage({ id }: { id: string }) {
   const actionButtons = (fullWidth: boolean) =>
     steps.map((name) => {
       const action = detail.actions[name]
+      const answer = recordAnswer(
+        can(ACTION_KEY[name]),
+        ACTION_KEY[name],
+        action.allowed ? true : (action.reason ?? undefined),
+      )
       const primary = PRIMARY[detail.status] === name
       return (
-        <PermissionTooltip key={name} allowed={action.allowed} reason={action.reason ?? ""}>
+        <PermissionTooltip key={name} allowed={answer.allowed} reason={answer.reason}>
           <Button
             type="button"
             variant={primary ? "primary" : "secondary"}
             size={fullWidth ? "lg" : "default"}
-            disabled={!action.allowed || pending !== null}
+            disabled={answer.allowed !== true || pending !== null}
             onClick={() => open(name)}
             className={fullWidth ? "w-full" : undefined}
           >

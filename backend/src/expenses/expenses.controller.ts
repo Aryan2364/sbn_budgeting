@@ -24,11 +24,16 @@ import {
 } from 'class-validator';
 import type { Pool } from 'pg';
 
-import { buildUpdate, findOneOrFail } from '../common/crud';
+import { buildUpdate } from '../common/crud';
 import { CurrentUser, type AuthUser } from '../common/current-user';
 import { ListQueryDto } from '../common/list-query.dto';
-import { runListQuery, type ListResult, type MatchInfo } from '../common/list-query';
+import { runListQuery, type ListResult, type MatchInfo, type WithCan } from '../common/list-query';
 import { ModuleAccess, ModuleRole } from '../common/module-access.decorator';
+import { type AccessContext, CurrentAccess } from '../access/access-context';
+import type { PermissionKey } from '../access/catalogue';
+import { Can } from '../access/decorators';
+import { assertRecordAccess, canSelect, scopeWhere } from '../access/scope';
+import { assertSiteCreatable, inTransaction, notFound, params } from '../sites/budget-access';
 import { PG_POOL } from '../db/db.module';
 
 export class ExpenseDto {
@@ -107,14 +112,34 @@ export interface ExpenseRow {
   approvedBy: string | null;
   description: string | null;
   createdAt: string;
+  /**
+   * Who entered it. Null on rows from before this was recorded (the
+   * seed and imports), which match no Own scope, so only someone who
+   * edits expenses at a wider scope can edit them. The row's `can.edit`
+   * says so before the click.
+   */
+  createdById: string | null;
 }
+
+/** The existing not-found wording (R7: an expense outside your scope reads exactly the same). */
+const NOT_FOUND = 'That expense no longer exists. It may have been deleted.';
+
+/**
+ * The expense's per-record answers (plan 6.1.4 item 6). The form reads
+ * `can.edit` to disable Save, with the reason, before the click: the
+ * same SQL the PATCH below checks.
+ */
+const EXPENSE_CAN = {
+  edit: 'budget.expenses.edit',
+  delete: 'budget.expenses.delete',
+} as const satisfies Record<string, PermissionKey>;
 
 const SELECT = `
   e.id, e.site_id as "siteId", s.name as "siteName",
   e.cost_head_id as "costHeadId", ch.name as "costHeadName",
   e.spent_on as "spentOn", e.period, e.amount_paise as "amountPaise",
   e.bill_number as "billNumber", e.approved_by as "approvedBy",
-  e.description, e.created_at as "createdAt"`;
+  e.description, e.created_at as "createdAt", e.created_by as "createdById"`;
 
 const FROM = `
   expenses e
@@ -127,16 +152,20 @@ export class ExpensesController {
   constructor(@Inject(PG_POOL) private readonly pool: Pool) {}
 
   @Get()
+  @Can('budget.expenses.view')
   list(
     @Query() query: ListQueryDto,
+    @CurrentAccess() access: AccessContext,
     @Query('siteId') siteId?: string,
     @Query('costHeadId') costHeadId?: string,
     @Query('period') period?: string,
     @Query() rangeFilters?: ExpenseFilterQueryDto,
-  ): Promise<ListResult<ExpenseRow & MatchInfo>> {
-    return runListQuery<ExpenseRow>(
+  ): Promise<ListResult<ExpenseRow & MatchInfo & WithCan>> {
+    return runListQuery<ExpenseRow & WithCan>(
       this.pool,
       {
+        scope: { key: 'budget.expenses.view', record: 'expense', alias: 'e' },
+        can: EXPENSE_CAN,
         from: FROM,
         select: SELECT,
         titleField: { sql: 's.name', label: 'Site' },
@@ -170,6 +199,8 @@ export class ExpensesController {
           amountMax: (v, param) => `e.amount_paise <= ${param(v)}`,
         },
         aggregates: { amountPaise: 'sum(e.amount_paise)' },
+        // See amounts (plan 6.1.6): refused or dropped without budget.amounts.see.
+        amountKeys: ['amountPaise', 'amountMin', 'amountMax'],
       },
       {
         ...query,
@@ -183,22 +214,43 @@ export class ExpensesController {
           amountMax: rangeFilters?.amountMax,
         },
       },
+      access,
     );
   }
 
+  /** One expense in the caller's view scope, with its `can`. Outside it: 404, as if missing (R7). */
   @Get(':id')
-  get(@Param('id', new ParseUUIDPipe()) id: string): Promise<ExpenseRow> {
-    return findOneOrFail<ExpenseRow>(
-      this.pool,
-      `select ${SELECT} from ${FROM} where e.id = $1`,
-      [id],
-      'expense',
-    );
+  @Can('budget.expenses.view')
+  get(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @CurrentAccess() access: AccessContext,
+  ): Promise<ExpenseRow & WithCan> {
+    return this.read(access, id);
   }
 
+  private async read(access: AccessContext, id: string): Promise<ExpenseRow & WithCan> {
+    const { values, param } = params();
+    const idParam = param(id);
+    const { rows } = await this.pool.query<ExpenseRow & WithCan>(
+      `select ${SELECT}, ${canSelect(access, EXPENSE_CAN, 'expense', 'e', param)} as "can"
+       from ${FROM}
+       where e.id = ${idParam}::uuid and ${scopeWhere(access, 'budget.expenses.view', 'expense', 'e', param)}`,
+      values,
+    );
+    if (!rows[0]) throw notFound('expense');
+    return rows[0];
+  }
+
+  /** O5: the site must be within the reach of the caller's create scope. */
   @Post()
-  async create(@Body() body: ExpenseDto, @CurrentUser() user: AuthUser): Promise<ExpenseRow> {
-    const { rows } = await this.pool.query(
+  @Can('budget.expenses.create')
+  async create(
+    @Body() body: ExpenseDto,
+    @CurrentUser() user: AuthUser,
+    @CurrentAccess() access: AccessContext,
+  ): Promise<ExpenseRow & WithCan> {
+    await assertSiteCreatable(this.pool, access, 'budget.expenses.create', body.siteId);
+    const { rows } = await this.pool.query<{ id: string }>(
       `insert into expenses
          (site_id, cost_head_id, spent_on, period, amount_paise,
           bill_number, approved_by, description, created_by)
@@ -215,42 +267,81 @@ export class ExpensesController {
         user.id,
       ],
     );
-    return this.get(rows[0].id);
+    return this.read(access, rows[0]!.id);
   }
 
+  /**
+   * Which expenses the caller may edit is decided by the record, in the
+   * same SQL as the row's `can.edit`: budget staff hold edit at Own, so
+   * only what they entered themselves (security fix 3, plan 3.4.8); a
+   * legacy row with no creator matches no Own. Moving the expense to
+   * another site checks the new site as a create would (O5).
+   */
   @Patch(':id')
+  @Can('budget.expenses.edit')
   async update(
     @Param('id', new ParseUUIDPipe()) id: string,
     @Body() body: ExpenseDto,
-  ): Promise<ExpenseRow> {
-    const { clause, values } = buildUpdate({
-      site_id: body.siteId,
-      cost_head_id: body.costHeadId,
-      spent_on: body.spentOn,
-      period: body.period,
-      amount_paise: body.amountPaise,
-      bill_number: body.billNumber ?? null,
-      approved_by: body.approvedBy ?? null,
-      description: body.description ?? null,
+    @CurrentAccess() access: AccessContext,
+  ): Promise<ExpenseRow & WithCan> {
+    await inTransaction(this.pool, async (client) => {
+      await assertRecordAccess(client, access, {
+        table: 'expenses',
+        alias: 'e',
+        record: 'expense',
+        id,
+        view: 'budget.expenses.view',
+        action: 'budget.expenses.edit',
+        notFound: NOT_FOUND,
+        forUpdate: true,
+      });
+      const { rows } = await client.query<{ siteId: string }>(
+        `select site_id as "siteId" from expenses /*scope-exempt: follows the scoped read of this row*/ where id = $1`,
+        [id],
+      );
+      if (rows[0] && body.siteId && body.siteId.toLowerCase() !== rows[0].siteId.toLowerCase()) {
+        await assertSiteCreatable(client, access, 'budget.expenses.create', body.siteId);
+      }
+
+      const { clause, values } = buildUpdate({
+        site_id: body.siteId,
+        cost_head_id: body.costHeadId,
+        spent_on: body.spentOn,
+        period: body.period,
+        amount_paise: body.amountPaise,
+        bill_number: body.billNumber ?? null,
+        approved_by: body.approvedBy ?? null,
+        description: body.description ?? null,
+      });
+      await client.query(
+        `update expenses set ${clause} /*scope-exempt: follows the scoped read of this row*/
+         where id = $${values.length + 1}`,
+        [...values, id],
+      );
     });
-    await findOneOrFail(
-      this.pool,
-      `update expenses set ${clause} where id = $${values.length + 1} returning id`,
-      [...values, id],
-      'expense',
-    );
-    return this.get(id);
+    return this.read(access, id);
   }
 
   @Delete(':id')
   @ModuleRole('budget', 'admin')
+  @Can('budget.expenses.delete')
   @HttpCode(204)
-  async remove(@Param('id', new ParseUUIDPipe()) id: string): Promise<void> {
-    await findOneOrFail(
-      this.pool,
-      'delete from expenses where id = $1 returning id',
-      [id],
-      'expense',
-    );
+  async remove(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @CurrentAccess() access: AccessContext,
+  ): Promise<void> {
+    await inTransaction(this.pool, async (client) => {
+      await assertRecordAccess(client, access, {
+        table: 'expenses',
+        alias: 'e',
+        record: 'expense',
+        id,
+        view: 'budget.expenses.view',
+        action: 'budget.expenses.delete',
+        notFound: NOT_FOUND,
+        forUpdate: true,
+      });
+      await client.query('delete from expenses /*scope-exempt: follows the scoped read of this row*/ where id = $1', [id]);
+    });
   }
 }

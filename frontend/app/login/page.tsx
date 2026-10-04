@@ -6,7 +6,9 @@ import { TreePineIcon } from "lucide-react"
 
 import { ApiError } from "@/lib/api"
 import { SignInPage, type SignInResult } from "@/components/templates/sign-in-page"
-import { errorMessage, homeHref, useSession } from "@/components/shell/session"
+import { usePermissions } from "@/lib/permissions"
+import { errorMessage, useSession } from "@/components/shell/session"
+import { useHomeHref } from "@/components/shell/use-module"
 
 /**
  * Sign in (FRONTEND_RULES.md section 11.7), by email OR phone
@@ -24,17 +26,19 @@ function safeNext(next: string | null): string | null {
 }
 
 function LoginForm() {
-  const { signIn, status, can } = useSession()
+  const { signIn, status } = useSession()
+  const permissions = usePermissions()
+  const home = useHomeHref()
   const router = useRouter()
   const params = useSearchParams()
 
   // Signed in (just now, or already): go where they meant, or to the
-  // first module they can open.
+  // first place their permissions open. Not before the permissions have
+  // landed, or "first place" would be a guess.
+  const settled = status === "in" && permissions.status !== "loading"
   React.useEffect(() => {
-    if (status === "in") {
-      router.replace(safeNext(params.get("next")) ?? homeHref(can))
-    }
-  }, [status, can, router, params])
+    if (settled) router.replace(safeNext(params.get("next")) ?? home)
+  }, [settled, home, router, params])
 
   async function submit({ login, password }: { login: string; password: string }): Promise<SignInResult> {
     try {

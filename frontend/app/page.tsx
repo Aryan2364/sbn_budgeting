@@ -5,11 +5,13 @@ import { useRouter } from "next/navigation"
 import { TreePineIcon } from "lucide-react"
 
 import { EmptyState } from "@/components/ui/empty-state"
-import { homeHref, RequireSession, useSession } from "@/components/shell/session"
+import { usePermissions } from "@/lib/permissions"
+import { RequireSession, useSession } from "@/components/shell/session"
+import { useHomeHref } from "@/components/shell/use-module"
 
 /**
- * `/` goes to the first module the user can open (CONTRACT §4). There
- * is no landing screen of its own.
+ * `/` goes to the first place the user's permissions open (CONTRACT §4,
+ * nav.ts `homeHref`). There is no landing screen of its own.
  *
  * A user with no module at all gets the no-access state here, with the
  * one way forward that can work: sign out (and back in as someone
@@ -18,15 +20,33 @@ import { homeHref, RequireSession, useSession } from "@/components/shell/session
  * so the no-access state carries Sign out as its one action instead.
  */
 function Home() {
-  const { can, user, signOut } = useSession()
+  const { user, signOut } = useSession()
+  const permissions = usePermissions()
   const router = useRouter()
-  const target = homeHref(can)
+  const target = useHomeHref()
 
   React.useEffect(() => {
     if (target !== "/") router.replace(target)
   }, [target, router])
 
   if (target !== "/") return null
+
+  // Kit 26.1 rule 5: not knowing what someone may do is not the same as
+  // them having nothing. Say what failed and offer the way forward.
+  if (permissions.status === "failed") {
+    return (
+      <main className="flex min-h-dvh flex-1 flex-col items-center justify-center gap-6 bg-surface px-4 py-12">
+        <EmptyState
+          variant="failed"
+          heading="We could not load what you can do here"
+          actionLabel="Try again"
+          onAction={permissions.refresh}
+        >
+          You are still signed in. Try again in a moment.
+        </EmptyState>
+      </main>
+    )
+  }
 
   return (
     <main className="flex min-h-dvh flex-1 flex-col items-center justify-center gap-6 bg-surface px-4 py-12">

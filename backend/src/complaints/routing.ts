@@ -18,9 +18,21 @@ import type { PoolClient } from 'pg';
  * tested against a fake, and so it runs inside the raise transaction
  * when given a transaction client.
  *
- * "Active" means the person can sign in (`users.can_login`). Someone
- * who cannot sign in can never act on a complaint, so routing to them
- * is routing to nobody.
+ * "Can receive" means the person is current AND can sign in
+ * (`users.active and users.can_login`, access plan 6.2 and 3.4.9).
+ * Someone who cannot sign in can never act on a complaint, so routing to
+ * them is routing to nobody.
+ *
+ * The approver is never the complaint's raiser (O10 Q11, DECISIONS 19,
+ * plan 6.2, D6): a raiser may not approve their own complaint, and
+ * because the approver is fixed here, choosing them would leave the
+ * complaint waiting for an approval nobody may give. So the search skips
+ * the raiser and keeps walking up the chain for the same designation;
+ * if nobody is left, the raise is refused (L3).
+ *
+ * Designation seed keys (`supervisor`, `hod`, `ceo`) are read here to
+ * find WHO handles a complaint. That is business data, the workflow, not
+ * access: no permission is decided from them (plan 6.2).
  */
 
 /** A pool or a transaction client; a test passes a fake with the same `query`. */
@@ -33,6 +45,8 @@ export interface Person {
 
 export interface RoutingInput {
   site: { id: string; name: string };
+  /** The raiser's user id: never chosen as the approver. */
+  raisedBy: string;
   category: {
     id: string;
     name: string;
@@ -66,7 +80,9 @@ interface ChainRow {
 async function chainFrom(db: Queryable, startId: string): Promise<ChainRow[]> {
   const { rows } = await db.query<ChainRow>(
     `with recursive chain (id, depth, path) as (
-       select u.id, 0, array[u.id] from users u where u.id = $1
+       select u.id, 0, array[u.id] from users u
+       /*scope-exempt: routing walks the reports_to chain to find who receives a complaint; business data, never returned to the caller as a list*/
+       where u.id = $1
        union all
        select u.reports_to, c.depth + 1, c.path || u.reports_to
        from chain c join users u on u.id = c.id
@@ -78,7 +94,7 @@ async function chainFrom(db: Queryable, startId: string): Promise<ChainRow[]> {
      from chain c
      join users u on u.id = c.id
      left join designations d on d.id = u.designation_id
-     where u.can_login
+     where u.active and u.can_login
      order by c.depth`,
     [startId],
   );
@@ -97,6 +113,7 @@ export function noSupervisorReason(siteName: string): string {
 interface SitePeopleRow {
   supervisor_id: string | null;
   supervisor_name: string | null;
+  /** Can receive: active and can sign in (the column keeps its old name). */
   supervisor_can_login: boolean | null;
   supervisor_reports_to: string | null;
   manager_id: string | null;
@@ -108,11 +125,12 @@ interface SitePeopleRow {
 async function sitePeople(db: Queryable, siteId: string): Promise<SitePeopleRow> {
   const { rows } = await db.query<SitePeopleRow>(
     `select sv.id as supervisor_id, sv.name as supervisor_name,
-            sv.can_login as supervisor_can_login, sv.reports_to as supervisor_reports_to,
-            mg.id as manager_id, mg.name as manager_name, mg.can_login as manager_can_login
+            (sv.active and sv.can_login) as supervisor_can_login, sv.reports_to as supervisor_reports_to,
+            mg.id as manager_id, mg.name as manager_name, (mg.active and mg.can_login) as manager_can_login
      from sites s
      left join users sv on sv.id = s.supervisor_id
      left join users mg on mg.id = s.manager_id
+     /*scope-exempt: routing reads the people the raise site names, after raise checked that site against its scope*/
      where s.id = $1`,
     [siteId],
   );
@@ -124,13 +142,12 @@ async function sitePeople(db: Queryable, siteId: string): Promise<SitePeopleRow>
 
 export async function resolveRouting(
   db: Queryable,
-  { site, category }: RoutingInput,
+  { site, category, raisedBy }: RoutingInput,
 ): Promise<RoutingSnapshot> {
   const people = await sitePeople(db, site.id);
 
   // 1. supervisor: the site's own -----------------------------------
-  // "Active" is can_login (see the header). A supervisor who can't sign
-  // in counts as no supervisor.
+  // A supervisor who can't receive (see the header) counts as no supervisor.
   if (!people.supervisor_id || !people.supervisor_can_login) {
     throw new UnprocessableEntityException(noSupervisorReason(site.name));
   }
@@ -156,9 +173,9 @@ export async function resolveRouting(
   const { rows: ceoRows } = await db.query<Person>(
     `select u.id, u.name
      from users u join designations d on d.id = u.designation_id
-     where d.seed_key = 'ceo' and u.can_login
-     order by u.name, u.id
-     limit 1`,
+     /*scope-exempt: routing copies the CEO on every complaint; business data, not a list for the caller*/
+     where d.seed_key = 'ceo' and u.active and u.can_login
+     order by u.name, u.id`,
   );
   const ceo: Person | null = ceoRows[0] ?? null;
 
@@ -173,22 +190,29 @@ export async function resolveRouting(
     );
     const designation = designationRows[0];
 
+    // Everyone who would otherwise be chosen, in order; the raiser is
+    // skipped and the search goes on to the next of the same designation.
+    let candidates: Person[] = [];
     if (designation?.seed_key === 'ceo') {
-      approver = ceo;
+      candidates = ceoRows;
     } else if (designation) {
       // depth > 0: the supervisor resolves the complaint, so they can
       // never be the one who approves the closure — that would let a
       // category whose approver designation is "Supervisor" sign off
       // its own work. The search starts at their reports_to.
       const chain = await chainFrom(db, supervisor.id);
-      const row = chain.find((r) => r.depth > 0 && r.designation_id === designation.id);
-      approver = row ? { id: row.id, name: row.name } : null;
+      candidates = chain
+        .filter((r) => r.depth > 0 && r.designation_id === designation.id)
+        .map((r) => ({ id: r.id, name: r.name }));
     }
+    approver = candidates.find((p) => p.id !== raisedBy) ?? null;
 
     if (!approver) {
       const needs = designation ? `it needs ${article(designation.name)} ${designation.name}` : 'it has no approver designation';
       throw new UnprocessableEntityException(
-        `Nobody at ${site.name} can approve ${category.name} complaints (${needs}). Ask an admin to set one up.`,
+        candidates.length > 0
+          ? `Nobody at ${site.name} but you can approve ${category.name} complaints (${needs}), and you can't approve a complaint you raised. Ask someone else to raise it.`
+          : `Nobody at ${site.name} can approve ${category.name} complaints (${needs}). Ask an admin to set one up.`,
       );
     }
   }

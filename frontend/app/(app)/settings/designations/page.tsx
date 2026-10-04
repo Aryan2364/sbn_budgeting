@@ -4,7 +4,8 @@ import * as React from "react"
 
 import { api, query, type Designation, type ListResponse, type Matchable } from "@/lib/api"
 import { formatNumber } from "@/lib/format"
-import { errorMessage, useSession } from "@/components/shell/session"
+import { reasonFor, useCan } from "@/lib/permissions"
+import { errorMessage } from "@/components/shell/session"
 import { toast } from "@/components/ui/sonner"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -43,8 +44,7 @@ import {
  * no position of their own, and nobody sets one.
  */
 export default function DesignationsSettingsPage() {
-  const { can } = useSession()
-  const canEdit = can.platformAdmin
+  const canEdit = useCan("platform.designations.manage")
 
   const load = React.useCallback(
     (page: number) =>
@@ -84,7 +84,7 @@ export default function DesignationsSettingsPage() {
         description="What each person is: Supervisor, Manager, HOD, CEO and any others. Complaints are routed by the first four."
         createLabel="Add designation"
         canEdit={canEdit}
-        cannotEditReason="Only a platform administrator can change designations"
+        cannotEditReason={reasonFor("platform.designations.manage")}
         rows={rows}
         loading={loading}
         error={error}

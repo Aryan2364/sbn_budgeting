@@ -3,7 +3,7 @@
 import * as React from "react"
 
 import { cn } from "@/lib/utils"
-import { SearchableSelect } from "@/components/ui/searchable-select"
+import { SearchableSelect, type SearchOption } from "@/components/ui/searchable-select"
 import {
   Select,
   SelectContent,
@@ -25,6 +25,10 @@ export interface ChoiceOption {
  * so the choice is made from the data, not guessed per screen.
  *
  * Not a new control: it renders one of the two existing ones.
+ *
+ * With `search`, the options come from the server as the user types
+ * (access plan P8: people outgrow one Pick answer), so it is always the
+ * searchable list, and `options` are only rows that lead it.
  */
 export function Choice({
   id,
@@ -38,6 +42,7 @@ export function Choice({
   invalid,
   className,
   onBlur,
+  search,
 }: {
   id?: string
   options: ChoiceOption[]
@@ -46,7 +51,9 @@ export function Choice({
   placeholder: string
   searchPlaceholder?: string
   /** What the search box says when nothing matches (searchable list only). */
-  emptyMessage?: string
+  emptyMessage?: string | ((query: string) => string)
+  /** Server search (searchable-select's `search`). */
+  search?: (query: string) => Promise<SearchOption[]>
   disabled?: boolean
   invalid?: boolean
   className?: string
@@ -57,7 +64,7 @@ export function Choice({
     [options],
   )
 
-  if (options.length > 6) {
+  if (search || options.length > 6) {
     return (
       <div
         className={cn("w-full max-w-field-max min-w-0", className)}
@@ -74,6 +81,7 @@ export function Choice({
           placeholder={placeholder}
           searchPlaceholder={searchPlaceholder}
           emptyMessage={emptyMessage}
+          search={search}
           disabled={disabled}
           className={cn(invalid && "border-danger", "max-sm:text-base")}
         />

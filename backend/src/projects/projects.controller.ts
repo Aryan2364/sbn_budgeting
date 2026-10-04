@@ -16,16 +16,16 @@ import { Transform } from 'class-transformer';
 import { IsInt, IsOptional, IsString, Min, MinLength } from 'class-validator';
 import type { Pool } from 'pg';
 
-import {
-  findOneOrFail,
-  isPgError,
-  PG_FOREIGN_KEY_VIOLATION,
-  buildUpdate,
-} from '../common/crud';
+import { isPgError, PG_FOREIGN_KEY_VIOLATION, buildUpdate } from '../common/crud';
 import { CurrentUser, type AuthUser } from '../common/current-user';
 import { ListQueryDto } from '../common/list-query.dto';
-import { runListQuery, type ListResult, type MatchInfo } from '../common/list-query';
+import { runListQuery, type ListResult, type MatchInfo, type WithCan } from '../common/list-query';
 import { ModuleAccess, ModuleRole } from '../common/module-access.decorator';
+import { type AccessContext, CurrentAccess } from '../access/access-context';
+import type { PermissionKey } from '../access/catalogue';
+import { Can } from '../access/decorators';
+import { type Param as SqlParam, assertRecordAccess, canSelect, scopeWhere } from '../access/scope';
+import { inTransaction, notFound, params } from '../sites/budget-access';
 import { PG_POOL } from '../db/db.module';
 
 export class ProjectDto {
@@ -53,36 +53,62 @@ export interface ProjectRow {
   createdAt: string;
 }
 
+/** The existing not-found wording (R7: a project outside your scope reads exactly the same). */
+const NOT_FOUND = 'That project no longer exists. It may have been deleted.';
+
+/** The project's per-record answers (plan 6.1.4 item 6). */
+const PROJECT_CAN = {
+  edit: 'budget.projects.edit',
+  delete: 'budget.projects.delete',
+} as const satisfies Record<string, PermissionKey>;
+
+const PROJECT_SELECT = `p.id, p.name, p.donor_name as "donorName",
+  p.planned_trees as "plannedTrees",
+  a.site_count as "siteCount",
+  a.allocated_trees as "allocatedTrees",
+  p.created_at as "createdAt"`;
+
 /**
  * Section 5 of the plan. A project is a donor, a name and a tree count.
  *
  * `allocatedTrees` and `siteCount` are computed in SQL beside the row
  * rather than fetched per project, because the list shows them and N+1
  * on a 25-row page is 26 queries.
+ *
+ * A project is visible if any of its sites is, or its creator is you
+ * (decision 26, plan 6.1.4). Its totals are sums of the sites the
+ * caller can see (plan 6.1.4 item 2): at All, as every role mapped from
+ * today holds it, that is every site.
  */
 @ModuleAccess('budget')
 @Controller('projects')
 export class ProjectsController {
   constructor(@Inject(PG_POOL) private readonly pool: Pool) {}
 
-  private static readonly ALLOCATION = `
+  /** `projects p` plus its totals over the caller's visible sites. */
+  private static from(access: AccessContext, param: SqlParam): string {
+    return `projects p
     left join lateral (
       select count(*)::int as site_count,
              coalesce(sum(s.planned_trees), 0)::int as allocated_trees
-      from sites s where s.project_id = p.id
+      from sites s
+      where s.project_id = p.id and ${scopeWhere(access, 'budget.sites.view', 'site', 's', param)}
     ) a on true`;
+  }
 
   @Get()
-  list(@Query() query: ListQueryDto): Promise<ListResult<ProjectRow & MatchInfo>> {
-    return runListQuery<ProjectRow>(
+  @Can('budget.projects.view')
+  list(
+    @Query() query: ListQueryDto,
+    @CurrentAccess() access: AccessContext,
+  ): Promise<ListResult<ProjectRow & MatchInfo & WithCan>> {
+    return runListQuery<ProjectRow & WithCan>(
       this.pool,
       {
-        from: `projects p ${ProjectsController.ALLOCATION}`,
-        select: `p.id, p.name, p.donor_name as "donorName",
-                 p.planned_trees as "plannedTrees",
-                 a.site_count as "siteCount",
-                 a.allocated_trees as "allocatedTrees",
-                 p.created_at as "createdAt"`,
+        scope: { key: 'budget.projects.view', record: 'project', alias: 'p' },
+        can: PROJECT_CAN,
+        from: (param) => ProjectsController.from(access, param),
+        select: PROJECT_SELECT,
         titleField: { sql: 'p.name', label: 'Project' },
         // Section 27.1: every meaningful text field. A project has two.
         searchFields: [{ sql: 'p.donor_name', label: 'Donor' }],
@@ -96,53 +122,80 @@ export class ProjectsController {
         defaultSort: { key: 'createdAt', direction: 'desc' },
       },
       query,
+      access,
     );
   }
 
+  /** One project in the caller's view scope, with its `can`. Outside it: 404, as if missing (R7). */
   @Get(':id')
-  get(@Param('id', new ParseUUIDPipe()) id: string): Promise<ProjectRow> {
-    return findOneOrFail<ProjectRow>(
-      this.pool,
-      `select p.id, p.name, p.donor_name as "donorName",
-              p.planned_trees as "plannedTrees",
-              a.site_count as "siteCount",
-              a.allocated_trees as "allocatedTrees",
-              p.created_at as "createdAt"
-       from projects p ${ProjectsController.ALLOCATION}
-       where p.id = $1`,
-      [id],
-      'project',
-    );
+  @Can('budget.projects.view')
+  get(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @CurrentAccess() access: AccessContext,
+  ): Promise<ProjectRow & WithCan> {
+    return this.read(access, id);
   }
 
-  @Post()
-  async create(@Body() body: ProjectDto, @CurrentUser() user: AuthUser): Promise<ProjectRow> {
-    void user;
-    const { rows } = await this.pool.query(
-      `insert into projects (donor_name, name, planned_trees)
-       values ($1, $2, $3) returning id`,
-      [body.donorName, body.name, body.plannedTrees],
+  private async read(access: AccessContext, id: string): Promise<ProjectRow & WithCan> {
+    const { values, param } = params();
+    const from = ProjectsController.from(access, param);
+    const idParam = param(id);
+    const { rows } = await this.pool.query<ProjectRow & WithCan>(
+      `select ${PROJECT_SELECT}, ${canSelect(access, PROJECT_CAN, 'project', 'p', param)} as "can"
+       from ${from}
+       where p.id = ${idParam}::uuid and ${scopeWhere(access, 'budget.projects.view', 'project', 'p', param)}`,
+      values,
     );
-    return this.get(rows[0].id);
+    if (!rows[0]) throw notFound('project');
+    return rows[0];
+  }
+
+  /** A new project has no sites yet; its created_by makes it the creator's own (decision 26). */
+  @Post()
+  @Can('budget.projects.create')
+  async create(
+    @Body() body: ProjectDto,
+    @CurrentUser() user: AuthUser,
+    @CurrentAccess() access: AccessContext,
+  ): Promise<ProjectRow & WithCan> {
+    const { rows } = await this.pool.query<{ id: string }>(
+      `insert into projects (donor_name, name, planned_trees, created_by)
+       values ($1, $2, $3, $4) returning id`,
+      [body.donorName, body.name, body.plannedTrees, user.id],
+    );
+    return this.read(access, rows[0]!.id);
   }
 
   @Patch(':id')
+  @Can('budget.projects.edit')
   async update(
     @Param('id', new ParseUUIDPipe()) id: string,
     @Body() body: ProjectDto,
-  ): Promise<ProjectRow> {
-    const { clause, values } = buildUpdate({
-      donor_name: body.donorName,
-      name: body.name,
-      planned_trees: body.plannedTrees,
+    @CurrentAccess() access: AccessContext,
+  ): Promise<ProjectRow & WithCan> {
+    await inTransaction(this.pool, async (client) => {
+      await assertRecordAccess(client, access, {
+        table: 'projects',
+        alias: 'p',
+        record: 'project',
+        id,
+        view: 'budget.projects.view',
+        action: 'budget.projects.edit',
+        notFound: NOT_FOUND,
+        forUpdate: true,
+      });
+      const { clause, values } = buildUpdate({
+        donor_name: body.donorName,
+        name: body.name,
+        planned_trees: body.plannedTrees,
+      });
+      await client.query(
+        `update projects set ${clause} /*scope-exempt: follows the scoped read of this row*/
+         where id = $${values.length + 1}`,
+        [...values, id],
+      );
     });
-    await findOneOrFail(
-      this.pool,
-      `update projects set ${clause} where id = $${values.length + 1} returning id`,
-      [...values, id],
-      'project',
-    );
-    return this.get(id);
+    return this.read(access, id);
   }
 
   /**
@@ -157,6 +210,11 @@ export class ProjectsController {
    * left some sites detached and the screen still showing them all.
    * One UPDATE cannot do either.
    *
+   * "Every" is every site within the reach of the caller's edit
+   * permission on this project (decision 26: the sites that make the
+   * project theirs). At All, as every role mapped from today holds it,
+   * that is every site of the project.
+   *
    * The count comes back because the caller states it: "4 sites are no
    * longer in this project" has to be what happened, not what a stale
    * `siteCount` predicted.
@@ -165,21 +223,37 @@ export class ProjectsController {
    * — the same change is already open to the same people there.
    */
   @Post(':id/unlink-sites')
+  @Can('budget.projects.edit')
   async unlinkSites(
     @Param('id', new ParseUUIDPipe()) id: string,
+    @CurrentAccess() access: AccessContext,
   ): Promise<{ unlinked: number }> {
-    // Proves the project exists, so a wrong id is a 404 rather than a
-    // cheerful "0 sites unlinked" that nothing went wrong in.
-    await findOneOrFail(this.pool, 'select id from projects where id = $1', [id], 'project');
-    const { rowCount } = await this.pool.query(
-      'update sites set project_id = null where project_id = $1',
-      [id],
-    );
-    return { unlinked: rowCount ?? 0 };
+    return inTransaction(this.pool, async (client) => {
+      // Proves the project exists and is the caller's to edit, so a wrong
+      // id is a 404 rather than a cheerful "0 sites unlinked".
+      await assertRecordAccess(client, access, {
+        table: 'projects',
+        alias: 'p',
+        record: 'project',
+        id,
+        view: 'budget.projects.view',
+        action: 'budget.projects.edit',
+        notFound: NOT_FOUND,
+        forUpdate: true,
+      });
+      const { values, param } = params();
+      const project = param(id);
+      const { rowCount } = await client.query(
+        `update sites s set project_id = null
+         where s.project_id = ${project}::uuid and ${scopeWhere(access, 'budget.projects.edit', 'site', 's', param)}`,
+        values,
+      );
+      return { unlinked: rowCount ?? 0 };
+    });
   }
 
   /**
-   * Admin only (section 26), and refused while sites still reference it.
+   * Refused while sites still reference it.
    *
    * Section 15 says a confirmation must state what else will be
    * affected. The dialog does that from `siteCount`; this is the server
@@ -188,15 +262,26 @@ export class ProjectsController {
    */
   @Delete(':id')
   @ModuleRole('budget', 'admin')
+  @Can('budget.projects.delete')
   @HttpCode(204)
-  async remove(@Param('id', new ParseUUIDPipe()) id: string): Promise<void> {
+  async remove(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @CurrentAccess() access: AccessContext,
+  ): Promise<void> {
     try {
-      await findOneOrFail(
-        this.pool,
-        'delete from projects where id = $1 returning id',
-        [id],
-        'project',
-      );
+      await inTransaction(this.pool, async (client) => {
+        await assertRecordAccess(client, access, {
+          table: 'projects',
+          alias: 'p',
+          record: 'project',
+          id,
+          view: 'budget.projects.view',
+          action: 'budget.projects.delete',
+          notFound: NOT_FOUND,
+          forUpdate: true,
+        });
+        await client.query('delete from projects /*scope-exempt: follows the scoped read of this row*/ where id = $1', [id]);
+      });
     } catch (error) {
       if (isPgError(error, PG_FOREIGN_KEY_VIOLATION)) {
         throw new ConflictException(

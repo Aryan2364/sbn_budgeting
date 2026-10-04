@@ -5,6 +5,7 @@ import {
 import { IsBoolean, IsOptional, IsString, MinLength } from 'class-validator';
 import type { Pool } from 'pg';
 
+import { Can } from '../access/decorators';
 import {
   buildUpdate, findOneOrFail, isPgError, PG_FOREIGN_KEY_VIOLATION, PG_UNIQUE_VIOLATION,
 } from '../common/crud';
@@ -38,8 +39,11 @@ export interface LocationRow {
  * Served at /locations and at /site-locations, the old path, so the
  * budget screens keep working through the rename.
  *
- * Readable by anyone signed in (pickers need it); writes are platform
- * admin only.
+ * The full list (with usage counts) is the Settings screen, behind
+ * platform.locations.manage (D3, decided by the old guard until P9:
+ * anyone signed in). A screen that only CHOOSES a location uses the
+ * Pick, GET /pick/platform/locations, which everyone holds. Writes are
+ * platform admin only.
  *
  * A location has no people (removed 1 Oct 2026, user decision): routing
  * is per site (sites.supervisor_id / manager_id), so the old supervisor,
@@ -53,6 +57,7 @@ export class LocationsController {
   private static readonly FROM = `
     locations l
     left join lateral (
+      /*scope-exempt: usage counts for the master list behind its manage key and the delete check; counts, no record's details*/
       select
         (select count(*)::int from sites s where s.location_id = l.id) as site_count,
         -- Older complaints name the location; since 1 Oct 2026 they name
@@ -67,6 +72,8 @@ export class LocationsController {
     l.id, l.name, l.is_active as "isActive",
     a.site_count as "siteCount", a.complaint_count as "complaintCount"`;
 
+  // The full master list, with usage counts, is the Settings screen (D3).
+  @Can('platform.locations.manage')
   @Get()
   list(
     @Query() query: ListQueryDto,
@@ -75,6 +82,7 @@ export class LocationsController {
     return runListQuery<LocationRow>(
       this.pool,
       {
+        scope: { unscoped: 'master', why: 'The full location list; its route needs platform.locations.manage (All only). Choosing one uses the Pick.' },
         from: LocationsController.FROM,
         select: LocationsController.SELECT,
         titleField: { sql: 'l.name', label: 'Location' },
@@ -92,6 +100,7 @@ export class LocationsController {
     );
   }
 
+  @Can('platform.locations.manage')
   @Get(':id')
   get(@Param('id', new ParseUUIDPipe()) id: string): Promise<LocationRow> {
     return findOneOrFail<LocationRow>(
@@ -105,6 +114,7 @@ export class LocationsController {
 
   @Post()
   @ModuleRole('platform', 'admin')
+  @Can('platform.locations.manage')
   async create(@Body() body: LocationDto): Promise<LocationRow> {
     await this.assertNameFree(body.name, null);
     try {
@@ -120,6 +130,7 @@ export class LocationsController {
 
   @Patch(':id')
   @ModuleRole('platform', 'admin')
+  @Can('platform.locations.manage')
   async update(
     @Param('id', new ParseUUIDPipe()) id: string,
     @Body() body: LocationDto,
@@ -141,6 +152,7 @@ export class LocationsController {
 
   @Delete(':id')
   @ModuleRole('platform', 'admin')
+  @Can('platform.locations.manage')
   @HttpCode(204)
   async remove(@Param('id', new ParseUUIDPipe()) id: string): Promise<void> {
     const row = await this.get(id);

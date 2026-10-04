@@ -69,8 +69,25 @@ export function getPool(): Pool {
       statement_timeout: 15_000,
       query_timeout: 15_000,
     });
+    runTestPoolHooks(pool);
   }
   return pool;
+}
+
+/**
+ * TEST ONLY (access plan 6.1.4, R11.6): under NODE_ENV=test, hooks that
+ * test code registered on a global run once on the new pool. This is
+ * how the test-time query guard (test/support/query-guard.ts) wraps the
+ * pool without anything in src/ importing test code. In any other
+ * environment nothing is read and nothing runs.
+ */
+export const TEST_POOL_HOOKS = Symbol.for('sadbhavna.testPoolHooks');
+
+function runTestPoolHooks(created: Pool): void {
+  if (process.env.NODE_ENV !== 'test') return;
+  const hooks = (globalThis as Record<symbol, unknown>)[TEST_POOL_HOOKS];
+  if (!Array.isArray(hooks)) return;
+  for (const hook of hooks) (hook as (p: Pool) => void)(created);
 }
 
 export async function closePool(): Promise<void> {

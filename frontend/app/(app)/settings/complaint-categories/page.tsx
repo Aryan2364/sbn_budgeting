@@ -2,16 +2,16 @@
 
 import * as React from "react"
 
-import { api, query, type Designation, type ListResponse, type Matchable } from "@/lib/api"
+import { pick, type DesignationPick, type Matchable } from "@/lib/api"
 import { formatNumber } from "@/lib/format"
 import {
   categoriesApi,
-  fetchAllPages,
   type ComplaintCategory,
   type ComplaintCategoryBody,
 } from "@/lib/complaints-api"
 import type { ExportColumn } from "@/lib/pdf-export"
-import { errorMessage, useSession } from "@/components/shell/session"
+import { reasonFor, useCan } from "@/lib/permissions"
+import { errorMessage } from "@/components/shell/session"
 import { toast } from "@/components/ui/sonner"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -54,8 +54,7 @@ import { Choice } from "@/components/complaints/choice"
  * position of their own, and nobody sets one.
  */
 export default function ComplaintCategoriesSettingsPage() {
-  const { can } = useSession()
-  const canEdit = can.complaints === "admin"
+  const canEdit = useCan("complaints.categories.manage")
 
   const load = React.useCallback(
     (page: number) =>
@@ -91,7 +90,7 @@ export default function ComplaintCategoriesSettingsPage() {
         description="Every complaint is raised in a category. The category decides whether closing it needs someone's approval."
         createLabel="Add category"
         canEdit={canEdit}
-        cannotEditReason="Only a complaints administrator can change complaint categories"
+        cannotEditReason={reasonFor("complaints.categories.manage")}
         rows={rows}
         loading={loading}
         error={error}
@@ -211,7 +210,7 @@ function CategoryDialog({
     [category],
   )
   const [values, setValues] = React.useState(saved)
-  const [designations, setDesignations] = React.useState<Designation[] | null>(null)
+  const [designations, setDesignations] = React.useState<DesignationPick[] | null>(null)
   const [saving, setSaving] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
   const [nameError, setNameError] = React.useState<string | null>(null)
@@ -220,11 +219,13 @@ function CategoryDialog({
 
   React.useEffect(() => {
     let cancelled = false
-    fetchAllPages((page) =>
-      api.get<ListResponse<Designation>>(
-        `/designations${query({ page, pageSize: 100, sort: "name", direction: "asc" })}`,
-      ),
-    )
+    // Choosing, not listing: the designations Pick (access plan P7
+    // inventory 10), which every signed-in person holds. The full list
+    // is Settings › Designations, under manage (D3).
+    // Retired ones too, so a category whose approver was retired still
+    // reads it; the options below offer active ones plus that one.
+    pick
+      .designations({ includeInactive: true })
       .then((rows) => {
         if (!cancelled) setDesignations(rows)
       })

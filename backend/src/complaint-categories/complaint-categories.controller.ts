@@ -7,6 +7,7 @@ import {
 } from 'class-validator';
 import type { Pool, PoolClient } from 'pg';
 
+import { Can } from '../access/decorators';
 import {
   findOneOrFail, isPgError, PG_FOREIGN_KEY_VIOLATION, PG_UNIQUE_VIOLATION,
 } from '../common/crud';
@@ -54,6 +55,14 @@ export interface ComplaintCategoryRow {
  * Complaint categories: the cost-heads master pattern (plan 3.5).
  * Reading is open to every complaints member (the raise form's picker);
  * writing is complaints-admin only.
+ *
+ * Access plan P2b: each handler also carries the new declaration, Can
+ * `complaints.categories.manage`, checked in shadow beside the old
+ * module decorators until P9 (plan 5.3.2). The two GETs need `manage`
+ * too: from P9 everyone else reads categories through
+ * `/pick/complaints/categories` (intended difference D3), so until
+ * the screens switch to the Pick the shadow log reports complaints
+ * members reading these two routes.
  */
 @Controller('complaint-categories')
 @ModuleAccess('complaints')
@@ -64,7 +73,9 @@ export class ComplaintCategoriesController {
     complaint_categories cc
     left join designations ad on ad.id = cc.approver_designation_id
     left join lateral (
-      select count(*)::int as complaint_count from complaints c where c.category_id = cc.id
+      select count(*)::int as complaint_count from complaints c
+      /*scope-exempt: a master's usage count on the full category list (complaints.categories.manage, All only; D3 until P9); no complaint is returned*/
+      where c.category_id = cc.id
     ) u on true`;
 
   private static readonly SELECT = `
@@ -75,6 +86,7 @@ export class ComplaintCategoriesController {
     u.complaint_count as "complaintCount"`;
 
   @Get()
+  @Can('complaints.categories.manage')
   list(
     @Query() query: ListQueryDto,
     @Query('isActive') isActive?: string,
@@ -83,6 +95,7 @@ export class ComplaintCategoriesController {
     return runListQuery<ComplaintCategoryRow>(
       this.pool,
       {
+        scope: { unscoped: 'master', why: 'The full category list; its route needs complaints.categories.manage (All only). Choosing a category uses the Pick.' },
         from: S.FROM,
         select: S.SELECT,
         titleField: { sql: 'cc.name', label: 'Name' },
@@ -105,6 +118,7 @@ export class ComplaintCategoriesController {
   }
 
   @Get(':id')
+  @Can('complaints.categories.manage')
   get(@Param('id', new ParseUUIDPipe()) id: string): Promise<ComplaintCategoryRow> {
     const S = ComplaintCategoriesController;
     return findOneOrFail<ComplaintCategoryRow>(
@@ -117,6 +131,7 @@ export class ComplaintCategoriesController {
 
   @Post()
   @ModuleRole('complaints', 'admin')
+  @Can('complaints.categories.manage')
   async create(@Body() body: ComplaintCategoryDto): Promise<ComplaintCategoryRow> {
     const approverId = body.approverDesignationId ?? (await this.hodDesignationId(this.pool));
     const id = await this.translate(body, async () => {
@@ -139,6 +154,7 @@ export class ComplaintCategoriesController {
    */
   @Patch(':id')
   @ModuleRole('complaints', 'admin')
+  @Can('complaints.categories.manage')
   async update(
     @Param('id', new ParseUUIDPipe()) id: string,
     @Body() body: ComplaintCategoryDto,
@@ -169,6 +185,7 @@ export class ComplaintCategoriesController {
   /** A category that has been used is deactivated, never deleted (plan 3.5). */
   @Delete(':id')
   @ModuleRole('complaints', 'admin')
+  @Can('complaints.categories.manage')
   @HttpCode(204)
   async remove(@Param('id', new ParseUUIDPipe()) id: string): Promise<void> {
     const row = await this.get(id);

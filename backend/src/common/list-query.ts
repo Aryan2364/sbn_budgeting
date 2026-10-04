@@ -1,5 +1,9 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import type { Pool } from 'pg';
+
+import { type AccessContext, can } from '../access/access-context';
+import type { PermissionKey, RecordType } from '../access/catalogue';
+import { type RecordCan, canSelect, scopeWhere } from '../access/scope';
 
 /**
  * The shared list convention. Written once, used by every list endpoint.
@@ -31,7 +35,30 @@ export interface SearchField {
   sql: string;
   /** What the user sees when a row matched here: "Email", "Phone". */
   label: string;
+  /** Names the field in `amountKeys` when it is an amount. Defaults to `label`. */
+  key?: string;
 }
+
+/**
+ * Which records a list may return (access plan 6.1.4 item 1). REQUIRED,
+ * so a list without one does not compile.
+ *
+ * - `{ key, record, alias }`: scoped. runListQuery calls scopeWhere for
+ *   the caller's scopes of `key` over `alias` and ANDs it with every
+ *   other condition, so the page, `total` and `aggregates` all cover the
+ *   scoped set only.
+ * - `{ unscoped: 'master' | 'own-data', why }`: stated, never silent.
+ *   'master' = a master list behind its `manage` key (All only);
+ *   'own-data' = only the caller's own rows, by construction.
+ * - `{ unscoped: 'legacy-until-p9', why }`: a caller the OLD route guard
+ *   still lets in but the new one will refuse at P9 (an intended
+ *   difference, e.g. D4), answered exactly as before roles until then.
+ *   Pair it with a reviewed exemption marker in `baseWhere`. P9
+ *   deletes every one: the new guard then refuses these callers first.
+ */
+export type ListScope =
+  | { key: PermissionKey; record: RecordType; alias: string }
+  | { unscoped: 'master' | 'own-data' | 'legacy-until-p9'; why: string };
 
 export type FilterBuilder = (
   value: string,
@@ -39,8 +66,13 @@ export type FilterBuilder = (
 ) => string;
 
 export interface ListSpec {
-  /** `cost_heads ch` — table plus alias, and any joins. */
-  from: string;
+  /**
+   * `cost_heads ch` — table plus alias, and any joins. A function when a
+   * join needs a parameter (a scoped lateral, e.g. a project's totals over
+   * its visible sites only, plan 6.1.4 item 2); it gets the list's own
+   * `param`, before any other condition.
+   */
+  from: string | ((param: (value: unknown) => string) => string);
   /** The row's own columns. Do not put aggregates here. */
   select: string;
   /**
@@ -59,8 +91,12 @@ export interface ListSpec {
   sortable: Record<string, string>;
   defaultSort: { key: string; direction: SortDirection };
   filters?: Record<string, FilterBuilder>;
-  /** Always-on restriction, e.g. a soft-delete or a scope. */
-  baseWhere?: string;
+  /**
+   * Always-on restriction, e.g. a soft-delete. A function receives
+   * `param`, so a value (the caller's id in a "my work" tab) goes in as
+   * a parameter, never inlined into the SQL (plan 6.1.4).
+   */
+  baseWhere?: string | ((param: (value: unknown) => string) => string);
   /**
    * Optional grand totals over EVERY row matching the current
    * search/filters, not just the page. Each value is a bare SQL
@@ -70,6 +106,32 @@ export interface ListSpec {
    * over the identical WHERE clause as the page and the total count.
    */
   aggregates?: Record<string, string>;
+  /** Required: which records the caller may see. See ListScope. */
+  scope: ListScope;
+  /**
+   * Per-record answers (plan 6.1.4 item 6): action name -> its key, e.g.
+   * `{ edit: 'budget.expenses.edit' }`. Each row then carries
+   * `can: { edit: true | '<reason>' }` for the actions the caller holds
+   * at some scope, computed in the same query. Needs a scoped `scope`.
+   */
+  can?: Record<string, PermissionKey>;
+  /**
+   * Sort keys, filter keys, search fields (by `key ?? label`) and
+   * aggregate keys that are amounts (plan 6.1.6, R10). Without
+   * `<module>.amounts.see`:
+   *   - a sort or filter on one is refused (403), or the order or the
+   *     matches of the rows would leak the hidden values;
+   *   - a search skips them (searching is over every text field at once,
+   *     so the box keeps working on the rest);
+   *   - an aggregate on one is not computed, and `aggregates` is absent
+   *     when nothing is left in it;
+   *   - a default sort on one falls back to the first other sortable key.
+   * The module is the scope key's. On a scoped list, any sort, filter,
+   * search or aggregate whose SQL reads a `*_paise` column counts as an
+   * amount even if it is not declared here, so a forgotten declaration
+   * fails closed (see `amountKeysOf`).
+   */
+  amountKeys?: string[];
 }
 
 export interface ListParams {
@@ -100,16 +162,66 @@ export interface ListResult<T> {
   aggregates?: Record<string, string>;
 }
 
+/** A row of a list whose spec declares `can`. */
+export interface WithCan {
+  can: RecordCan;
+}
+
 /** Rows come back carrying where the search hit, when it was not the title. */
 export interface MatchInfo {
   matchedField: string | null;
   matchedValue: string | null;
 }
 
+/** A column holding money (bigint paise, as everywhere in this product). */
+const AMOUNT_SQL = /_paise/i;
+
+/**
+ * The spec's amount keys: those declared in `amountKeys`, plus, on a
+ * scoped list, every sort, filter, search field and aggregate whose SQL
+ * reads a `*_paise` column. A filter's SQL is found by building it with
+ * a probe value; builders are pure string functions.
+ */
+export function amountKeysOf(spec: ListSpec): Set<string> {
+  const keys = new Set(spec.amountKeys ?? []);
+  if (!('key' in spec.scope)) return keys;
+  for (const [key, sql] of Object.entries(spec.sortable)) if (AMOUNT_SQL.test(sql)) keys.add(key);
+  for (const [key, expr] of Object.entries(spec.aggregates ?? {})) if (AMOUNT_SQL.test(expr)) keys.add(key);
+  for (const f of spec.searchFields ?? []) if (AMOUNT_SQL.test(f.sql)) keys.add(f.key ?? f.label);
+  for (const [key, build] of Object.entries(spec.filters ?? {})) {
+    try {
+      if (AMOUNT_SQL.test(build('0', () => '$0'))) keys.add(key);
+    } catch {
+      // A builder that validates its value (a status list, a uuid) refuses
+      // the probe; it is not an amount filter, or it would take digits.
+    }
+  }
+  return keys;
+}
+
+/** `<module>.amounts.see` for the scope key's module. */
+function amountsKeyOf(spec: ListSpec): PermissionKey {
+  if (!('key' in spec.scope)) {
+    throw new Error('runListQuery: amountKeys needs a scoped list (its module names the see-amounts key).');
+  }
+  return `${spec.scope.key.split('.')[0]}.amounts.see` as PermissionKey;
+}
+
+const SEE_AMOUNTS_REASON = {
+  sort: 'Sorting by amount needs see amounts.',
+  filter: 'Filtering by amount needs see amounts.',
+} as const;
+
+/**
+ * One page of a list. `access` is the caller's access context
+ * (`@CurrentAccess()`); a scoped spec, `can` or `amountKeys` refuses to
+ * run without it, so a list can never fall back to unscoped.
+ */
 export async function runListQuery<T>(
   pool: Pool,
   spec: ListSpec,
   params: ListParams,
+  access?: AccessContext,
 ): Promise<ListResult<T & MatchInfo>> {
   const values: unknown[] = [];
   const param = (value: unknown): string => {
@@ -117,12 +229,33 @@ export async function runListQuery<T>(
     return `$${values.length}`;
   };
 
+  // First, so its values sit inside the WHERE's (the empty-page fallback reuses them).
+  const from = typeof spec.from === 'function' ? spec.from(param) : spec.from;
+  const scoped = 'key' in spec.scope ? spec.scope : null;
+  if ((scoped || spec.can || spec.amountKeys?.length) && !access) {
+    throw new Error('runListQuery: this list is scoped; pass the caller\'s access context.');
+  }
+  if (spec.can && !scoped) throw new Error('runListQuery: `can` needs a scoped list.');
+
+  // ---- see amounts (plan 6.1.6): refuse a sort or filter on an amount --
+  const amountKeys = amountKeysOf(spec);
+  const seesAmounts = amountKeys.size === 0 || can(access!, amountsKeyOf(spec));
+  const refuseAmounts = (reason: string): never => {
+    const permission = amountsKeyOf(spec);
+    throw new ForbiddenException({ error: 'forbidden', permission, reason, message: reason });
+  };
+
   const conditions: string[] = [];
-  if (spec.baseWhere) conditions.push(`(${spec.baseWhere})`);
+  // ---- scope (plan 6.1.4 item 1): first, always ANDed -----------------
+  if (scoped) conditions.push(scopeWhere(access!, scoped.key, scoped.record, scoped.alias, param));
+  const baseWhere = typeof spec.baseWhere === 'function' ? spec.baseWhere(param) : spec.baseWhere;
+  if (baseWhere) conditions.push(`(${baseWhere})`);
 
   // ---- search -------------------------------------------------------
   const search = params.search?.trim() ? params.search.trim() : null;
-  const searchFields = spec.searchFields ?? [];
+  const searchFields = (spec.searchFields ?? []).filter(
+    (f) => seesAmounts || !amountKeys.has(f.key ?? f.label),
+  );
   const allFields = [spec.titleField, ...searchFields];
 
   let matchSelect = `null::text as "matchedField", null::text as "matchedValue"`;
@@ -158,18 +291,25 @@ export async function runListQuery<T>(
     if (!builder) {
       throw new BadRequestException(`Unknown filter: ${key}`);
     }
+    if (!seesAmounts && amountKeys.has(key)) refuseAmounts(SEE_AMOUNTS_REASON.filter);
     conditions.push(`(${builder(raw, param)})`);
     appliedFilters[key] = raw;
   }
 
   // ---- sort ---------------------------------------------------------
-  const sortKey = params.sort ?? spec.defaultSort.key;
+  // A default sort on an amount would leak the order; fall back quietly.
+  const defaultSortKey =
+    seesAmounts || !amountKeys.has(spec.defaultSort.key)
+      ? spec.defaultSort.key
+      : Object.keys(spec.sortable).find((k) => !amountKeys.has(k)) ?? spec.defaultSort.key;
+  const sortKey = params.sort ?? defaultSortKey;
   const sortSql = spec.sortable[sortKey];
   if (!sortSql) {
     throw new BadRequestException(
       `Cannot sort by "${sortKey}". Sortable: ${Object.keys(spec.sortable).join(', ')}.`,
     );
   }
+  if (!seesAmounts && amountKeys.has(sortKey)) refuseAmounts(SEE_AMOUNTS_REASON.sort);
   const direction: SortDirection = params.direction ?? spec.defaultSort.direction;
   if (direction !== 'asc' && direction !== 'desc') {
     throw new BadRequestException('direction must be asc or desc');
@@ -189,13 +329,22 @@ export async function runListQuery<T>(
   const offset = (page - 1) * pageSize;
 
   const where = conditions.length > 0 ? `where ${conditions.join(' and ')}` : '';
+  // The WHERE clause's own values; the empty-page fallback reuses exactly these.
+  const whereValueCount = values.length;
+
+  // ---- per-record answers (plan 6.1.4 item 6): same query, same rows --
+  const canSql = spec.can && scoped ? `, ${canSelect(access!, spec.can, scoped.record, scoped.alias, param)} as "can"` : '';
+
   const limitParam = param(pageSize);
   const offsetParam = param(offset);
 
   // Each aggregate rides the same window as `totalCount`, so it covers
   // every row matching the current search/filters, not just the page,
   // and it costs nothing extra: one round trip, identical WHERE clause.
-  const aggregateEntries = Object.entries(spec.aggregates ?? {});
+  // An aggregate on an amount is not computed without see amounts (R10).
+  const aggregateEntries = Object.entries(spec.aggregates ?? {}).filter(
+    ([key]) => seesAmounts || !amountKeys.has(key),
+  );
   const aggregateSelect = aggregateEntries
     .map(([key, expr]) => `, coalesce((${expr} over ())::text, '0') as "agg_${key}"`)
     .join('');
@@ -205,8 +354,9 @@ export async function runListQuery<T>(
       ${spec.select},
       ${matchSelect},
       count(*) over () as "totalCount"
+      ${canSql}
       ${aggregateSelect}
-    from ${spec.from}
+    from ${from}
     ${where}
     order by ${orderBy}
     limit ${limitParam} offset ${offsetParam}
@@ -232,9 +382,9 @@ export async function runListQuery<T>(
     // records" from "no records on page 9".
     const fallback = await countAndAggregates(
       pool,
-      spec,
+      from,
       where,
-      values.slice(0, values.length - 2),
+      values.slice(0, whereValueCount),
       aggregateEntries,
     );
     total = fallback.total;
@@ -275,7 +425,7 @@ export async function runListQuery<T>(
  */
 async function countAndAggregates(
   pool: Pool,
-  spec: ListSpec,
+  from: string,
   where: string,
   values: unknown[],
   aggregateEntries: [string, string][],
@@ -284,7 +434,7 @@ async function countAndAggregates(
     .map(([key, expr]) => `, coalesce(${expr}::text, '0') as "agg_${key}"`)
     .join('');
   const { rows } = await pool.query<Record<string, string>>(
-    `select count(*)::text as count ${aggregateSelect} from ${spec.from} ${where}`,
+    `select count(*)::text as count ${aggregateSelect} from ${from} ${where}`,
     values,
   );
   const row = rows[0];

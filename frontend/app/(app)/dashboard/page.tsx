@@ -19,6 +19,7 @@ import {
   formatShortCurrency,
   formatShortNumber,
 } from "@/lib/format"
+import { usePageGuard } from "@/lib/permissions"
 import { Badge } from "@/components/ui/badge"
 import { CategoryBarChart } from "@/components/ui/bar-chart"
 import { Button } from "@/components/ui/button"
@@ -64,7 +65,20 @@ type Load =
   | { state: "failed"; message: string }
   | { state: "ready"; data: DashboardSummary }
 
+/**
+ * Kit 26.7 rule 2: a screen whose only purpose is the amounts is an
+ * AREA, so without see amounts it is the 11.8 "No access" page (inside
+ * the shell, no redirect), not a page of blanks. Its own key, reports
+ * view, already needs see amounts (plan O9); this holds the rule even
+ * for a role that somehow holds one without the other. Checked before
+ * the dashboard mounts, so nothing is asked of the server.
+ */
 export default function DashboardPage() {
+  const denied = usePageGuard("budget.amounts.see")
+  return denied ?? <Dashboard />
+}
+
+function Dashboard() {
   const router = useRouter()
   const [attempt, setAttempt] = React.useState(0)
   const [load, setLoad] = React.useState<Load>({ state: "loading" })
@@ -204,7 +218,10 @@ export default function DashboardPage() {
    * what happened.
    */
   const spendChange = (() => {
-    if (!data) return null
+    // Absent, not zero, when the server sent no amounts (kit 26.7).
+    if (!data || data.spendThisMonthPaise === undefined || data.spendLastMonthPaise === undefined) {
+      return null
+    }
     const now = BigInt(data.spendThisMonthPaise)
     const before = BigInt(data.spendLastMonthPaise)
     if (now === 0n) {
@@ -313,7 +330,7 @@ export default function DashboardPage() {
                   the card does not change height when it lands. */}
               <Skeleton className="mt-4 h-40 w-full" />
             </div>
-          ) : data.budgetPaise === null ? (
+          ) : data.budgetPaise === undefined ? null : data.budgetPaise === null ? (
             <div className="flex flex-col items-start gap-3">
               <p className="text-body text-text-secondary">
                 Budget not set. No site has a per-tree budget entered yet, so
@@ -353,7 +370,7 @@ export default function DashboardPage() {
                   </span>
                   {/* Section 7.2 rule 1 and the plan's locked ruling:
                       the direction is a WORD, never colour alone. */}
-                  {data.variancePaise !== null ? (
+                  {data.variancePaise != null ? (
                     <span className="text-label font-normal">
                       {BigInt(data.variancePaise) < 0n ? (
                         <Badge variant="danger">over</Badge>
@@ -378,7 +395,7 @@ export default function DashboardPage() {
             a number. Every figure a person reads beside a bar is
             formatted from the paise string it came as.
           */}
-          {data && data.budgetPaise !== null && chart && chart.length > 0 ? (
+          {data && data.budgetPaise != null && chart && chart.length > 0 ? (
             <CategoryBarChart
               className="mt-6"
               data={chart}
@@ -397,7 +414,8 @@ export default function DashboardPage() {
                 },
                 {
                   label: "Actual",
-                  value: (row) => Number(BigInt(row.actualPaise) / 100n),
+                  value: (row) =>
+                    row.actualPaise === undefined ? 0 : Number(BigInt(row.actualPaise) / 100n),
                   format: (row) => formatShortCurrency(row.actualPaise),
                 },
               ]}
@@ -472,7 +490,7 @@ export default function DashboardPage() {
                         ) : null}
                       </TableCell>
                       <TableCell numeric>
-                        {row.variancePaise === null ? (
+                        {row.variancePaise == null ? (
                           "—"
                         ) : (
                           <Truncate>

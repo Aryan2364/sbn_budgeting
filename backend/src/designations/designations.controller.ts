@@ -5,6 +5,7 @@ import {
 import { IsBoolean, IsOptional, IsString, MinLength } from 'class-validator';
 import type { Pool } from 'pg';
 
+import { Can } from '../access/decorators';
 import {
   buildUpdate, findOneOrFail, isPgError, PG_FOREIGN_KEY_VIOLATION, PG_UNIQUE_VIOLATION,
 } from '../common/crud';
@@ -42,8 +43,11 @@ export interface DesignationRow {
  * complaints routing reads, so a seeded row can be renamed or
  * deactivated but never deleted — the cost_heads pattern.
  *
- * Reads are open to anyone signed in, because the people form's picker
- * needs them. Writes are platform admin only.
+ * The full list (with usage counts) is the Settings screen, behind
+ * platform.designations.manage (D3, decided by the old guard until P9:
+ * anyone signed in). A screen that only CHOOSES a designation uses the
+ * Pick, GET /pick/platform/designations, which everyone holds.
+ * Writes are platform admin only.
  */
 @Controller('designations')
 export class DesignationsController {
@@ -52,6 +56,7 @@ export class DesignationsController {
   private static readonly FROM = `
     designations d
     left join lateral (
+      /*scope-exempt: how many people hold the designation, for the master list behind its manage key and the delete check; a count, no person's details*/
       select count(*)::int as user_count from users u where u.designation_id = d.id
     ) c on true`;
 
@@ -59,6 +64,8 @@ export class DesignationsController {
     d.id, d.name, d.seed_key as "seedKey", d.sort_order as "sortOrder",
     d.is_active as "isActive", c.user_count as "userCount"`;
 
+  // The full master list, with usage counts, is the Settings screen (D3).
+  @Can('platform.designations.manage')
   @Get()
   list(
     @Query() query: ListQueryDto,
@@ -67,6 +74,7 @@ export class DesignationsController {
     return runListQuery<DesignationRow>(
       this.pool,
       {
+        scope: { unscoped: 'master', why: 'The full designation list; its route needs platform.designations.manage (All only). Choosing one uses the Pick.' },
         from: DesignationsController.FROM,
         select: DesignationsController.SELECT,
         titleField: { sql: 'd.name', label: 'Designation' },
@@ -86,6 +94,7 @@ export class DesignationsController {
     );
   }
 
+  @Can('platform.designations.manage')
   @Get(':id')
   get(@Param('id', new ParseUUIDPipe()) id: string): Promise<DesignationRow> {
     return findOneOrFail<DesignationRow>(
@@ -99,6 +108,7 @@ export class DesignationsController {
 
   @Post()
   @ModuleRole('platform', 'admin')
+  @Can('platform.designations.manage')
   async create(@Body() body: DesignationDto): Promise<DesignationRow> {
     await this.assertNameFree(body.name, null);
     try {
@@ -117,6 +127,7 @@ export class DesignationsController {
 
   @Patch(':id')
   @ModuleRole('platform', 'admin')
+  @Can('platform.designations.manage')
   async update(
     @Param('id', new ParseUUIDPipe()) id: string,
     @Body() body: DesignationDto,
@@ -141,6 +152,7 @@ export class DesignationsController {
 
   @Delete(':id')
   @ModuleRole('platform', 'admin')
+  @Can('platform.designations.manage')
   @HttpCode(204)
   async remove(@Param('id', new ParseUUIDPipe()) id: string): Promise<void> {
     const row = await this.get(id);

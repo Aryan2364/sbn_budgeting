@@ -6,6 +6,7 @@ import { compare, hash } from 'bcryptjs';
 import { ArrayMaxSize, IsArray } from 'class-validator';
 import type { Pool, PoolClient } from 'pg';
 
+import { Can } from '../access/decorators';
 import { ModuleRole } from '../common/module-access.decorator';
 import { phoneDigits } from '../common/phone';
 import { PG_POOL } from '../db/db.module';
@@ -92,6 +93,7 @@ export class UsersImportController {
   @Post('preview')
   @HttpCode(200)
   @ModuleRole('platform', 'admin')
+  @Can('platform.people.create')
   async preview(@Body() body: ImportDto): Promise<PreviewResult> {
     const { result } = await analyse(this.pool, body.rows);
     return result;
@@ -100,6 +102,7 @@ export class UsersImportController {
   @Post('commit')
   @HttpCode(200)
   @ModuleRole('platform', 'admin')
+  @Can('platform.people.create')
   async commit(
     @Body() body: ImportDto,
   ): Promise<{ created: number; updated: number; unchanged: number }> {
@@ -150,7 +153,8 @@ export class UsersImportController {
         } else {
           id = plan.matched!.id;
           await client.query(
-            `update users set name = $2, phone = $3, email = $4, designation_id = $5,
+            `update users /*scope-exempt: the person this import matched by phone or email, as the preview showed*/
+                set name = $2, phone = $3, email = $4, designation_id = $5,
                     can_login = $6, password_hash = coalesce($7, password_hash)
              where id = $1`,
             [id, plan.name, plan.phone, plan.email, plan.designationId, plan.canLogin, passwordHash],
@@ -167,7 +171,10 @@ export class UsersImportController {
         const managerId = plan.reportsToKey
           ? (idByKey.get(plan.reportsToKey) ?? plan.reportsToKey)
           : null;
-        await client.query('update users set reports_to = $2 where id = $1', [id, managerId]);
+        await client.query(
+          'update users /*scope-exempt: a person this import created or matched*/ set reports_to = $2 where id = $1',
+          [id, managerId],
+        );
       }
 
       // Backstop: the analysis already refused loops, but the database
@@ -175,7 +182,7 @@ export class UsersImportController {
       for (const plan of touched) {
         const id = idByKey.get(plan.key)!;
         const { rows } = await client.query<{ reports_to: string | null }>(
-          'select reports_to from users where id = $1',
+          'select reports_to from users /*scope-exempt: a person this import created or matched*/ where id = $1',
           [id],
         );
         await assertNoCycle(client, id, rows[0]?.reports_to ?? null);
@@ -202,7 +209,7 @@ async function analyse(
     `select u.id, u.name, u.email, u.phone, u.designation_id as "designationId",
             u.reports_to as "reportsTo", u.can_login as "canLogin",
             u.password_hash as "passwordHash"
-     from users u`,
+     from users u /*scope-exempt: the import matches each row to EVERY person by phone or email, so it never creates a duplicate*/`,
   );
   const { rows: designations } = await db.query<{ id: string; name: string }>(
     'select id, name from designations',

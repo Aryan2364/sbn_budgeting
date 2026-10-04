@@ -5,11 +5,9 @@ import * as React from "react"
 import { cn } from "@/lib/utils"
 import {
   api,
-  query,
+  pick,
   type BudgetGrid as BudgetGridData,
-  type CostHead,
-  type ListResponse,
-  type Matchable,
+  type CostHeadPick,
 } from "@/lib/api"
 import { formatAmount, formatCurrency, formatNumber } from "@/lib/format"
 import {
@@ -65,7 +63,7 @@ export function BudgetGrid({
   plannedTrees: number
   siteName: string
 }) {
-  const [heads, setHeads] = React.useState<CostHead[] | null>(null)
+  const [heads, setHeads] = React.useState<CostHeadPick[] | null>(null)
   const [cells, setCells] = React.useState<CellMap>({})
   const [initial, setInitial] = React.useState<CellMap>({})
   const [errors, setErrors] = React.useState<Record<string, string>>({})
@@ -82,9 +80,9 @@ export function BudgetGrid({
   React.useEffect(() => {
     let cancelled = false
     Promise.all([
-      api.get<ListResponse<CostHead & Matchable>>(
-        `/cost-heads${query({ pageSize: 100, sort: "sortOrder", direction: "asc", isActive: "true" })}`,
-      ),
+      // The cost-heads Pick, not the list (access plan P7 inventory 3):
+      // the list is Settings, under manage (D3).
+      pick.costHeads(),
       api.get<BudgetGridData>(`/sites/${siteId}/budget`),
     ])
       .then(([headList, grid]) => {
@@ -95,7 +93,12 @@ export function BudgetGrid({
             cell.perTreePaise,
           )
         }
-        setHeads(headList.data)
+        // Active heads, in the spreadsheet's order, as the list gave them.
+        setHeads(
+          headList
+            .filter((head) => head.isActive !== false)
+            .sort((a, b) => a.sortOrder - b.sortOrder),
+        )
         setCells(loaded)
         setInitial(loaded)
       })

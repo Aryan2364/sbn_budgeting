@@ -7,6 +7,7 @@ import { api, query, type Expense, type ListResponse, type Matchable } from "@/l
 import { formatAmount, formatDate, formatNumber } from "@/lib/format"
 import { paiseToRupeeInput } from "@/lib/money"
 import { periodLabel } from "@/lib/periods"
+import { useCanSeeAmounts } from "@/lib/permissions"
 import { Truncate } from "@/components/ui/truncate"
 import type { ExportColumn, PdfTotalRow } from "@/lib/pdf-export"
 import {
@@ -21,7 +22,18 @@ import {
   type ExpenseFilterValues,
 } from "@/components/forms/expense-filter"
 
-/** Section 11.1. The list template, with data. */
+/**
+ * Section 11.1. The list template, with data.
+ *
+ * Kit 26.7: the Amount column, its sort, the amount filter, the total
+ * and the export's Amount column exist only for someone who may see
+ * amounts. Chosen once, before the table renders: the shell renders no
+ * page until the permissions have landed (access plan 3.3), so the
+ * answer is already in and the column never appears and vanishes.
+ */
+const AMOUNT_COLUMN_KEY = "amountPaise"
+const AMOUNT_FILTER_KEYS = ["amountMin", "amountMax"] as const
+
 const COLUMNS: RecordColumn<Expense>[] = [
   {
     key: "spentOn",
@@ -71,9 +83,11 @@ const COLUMNS: RecordColumn<Expense>[] = [
     numeric: true,
     sortKey: "amountPaise",
     width: "amount",
-    render: (row) => formatAmount(row.amountPaise),
+    render: (row) => (row.amountPaise === undefined ? null : formatAmount(row.amountPaise)),
   },
 ]
+
+const COLUMNS_WITHOUT_AMOUNTS = COLUMNS.filter((column) => column.key !== AMOUNT_COLUMN_KEY)
 
 /**
  * Mirrors COLUMNS above, same order, same headers, same formatted
@@ -122,11 +136,13 @@ const PDF_COLUMNS: ExportColumn<Expense>[] = [
     // conversion to a JS number, so no precision is lost beyond the
     // rounding any IEEE-754 spreadsheet cell already carries.
     excelValue: (row) => {
-      const text = paiseToRupeeInput(row.amountPaise)
+      const text = paiseToRupeeInput(row.amountPaise ?? null)
       return text === "" ? null : Number(text)
     },
   },
 ]
+
+const PDF_COLUMNS_WITHOUT_AMOUNTS = PDF_COLUMNS.filter((column) => column.header !== "Amount")
 
 /**
  * Section 27.3: "filters, search and sort persist when the user opens a
@@ -137,15 +153,20 @@ const PDF_COLUMNS: ExportColumn<Expense>[] = [
  */
 const FILTER_KEYS = ["spentOnFrom", "spentOnTo", "amountMin", "amountMax"] as const
 
-function readListStateFromParams(params: URLSearchParams): ListState {
+function readListStateFromParams(params: URLSearchParams, showAmounts: boolean): ListState {
   const filters: Record<string, string | undefined> = {}
   for (const key of FILTER_KEYS) {
+    if (!showAmounts && (AMOUNT_FILTER_KEYS as readonly string[]).includes(key)) continue
     const value = params.get(key)
     if (value) filters[key] = value
   }
+  // A saved link sorted by amount, opened by someone who cannot see
+  // amounts, falls back to the default sort rather than asking the
+  // server for an order it refuses (and that would leak the amounts).
+  const sort = params.get("sort")
   return {
     search: params.get("q") ?? "",
-    sort: params.get("sort") ?? "spentOn",
+    sort: sort && (showAmounts || sort !== AMOUNT_COLUMN_KEY) ? sort : "spentOn",
     direction: params.get("dir") === "asc" ? "asc" : "desc",
     page: Number(params.get("page") ?? "1") || 1,
     filters,
@@ -177,12 +198,13 @@ export default function ExpensesPage() {
 function ExpensesList() {
   const router = useRouter()
   const searchParams = useSearchParams()
+  const showAmounts = useCanSeeAmounts("budget") === true
 
   // Read once on mount — after that this component owns the state and
   // pushes IT to the URL, rather than re-reading the URL on every
   // render (which would fight the user's typing).
   const [listState, setListState] = React.useState<ListState>(() =>
-    readListStateFromParams(searchParams),
+    readListStateFromParams(searchParams, showAmounts),
   )
 
   React.useEffect(() => {
@@ -215,11 +237,11 @@ function ExpensesList() {
           pageSize,
           spentOnFrom: filters?.spentOnFrom,
           spentOnTo: filters?.spentOnTo,
-          amountMin: filters?.amountMin,
-          amountMax: filters?.amountMax,
+          amountMin: showAmounts ? filters?.amountMin : undefined,
+          amountMax: showAmounts ? filters?.amountMax : undefined,
         })}`,
       ),
-    [],
+    [showAmounts],
   )
 
   const filterValues: ExpenseFilterValues = listState.filters
@@ -240,6 +262,7 @@ function ExpensesList() {
         <ExpenseFilterButton
           filters={filterValues}
           onApply={(next) => setListState((s) => ({ ...s, filters: next, page: 1 }))}
+          showAmounts={showAmounts}
         />
       }
       renderFilterChips={(applied) =>
@@ -252,9 +275,9 @@ function ExpensesList() {
       describeFilters={expenseFilterLabels}
       exportPdf={{
         title: "Expenses",
-        columns: PDF_COLUMNS,
+        columns: showAmounts ? PDF_COLUMNS : PDF_COLUMNS_WITHOUT_AMOUNTS,
         buildTotalRow: (_rows, aggregates): PdfTotalRow | undefined =>
-          aggregates
+          showAmounts && aggregates?.amountPaise !== undefined
             ? {
                 cells: [
                   "",
@@ -269,12 +292,19 @@ function ExpensesList() {
             : undefined,
       }}
       printTitle="Expenses"
-      columns={COLUMNS}
+      columns={showAmounts ? COLUMNS : COLUMNS_WITHOUT_AMOUNTS}
       rowHref={(row) => `/expenses/${row.id}/edit`}
       load={load}
       emptyHeading="No expenses yet"
       emptyBody="An expense is booked against a site, a cost head and a budget period."
-      metaTotal={(aggregates) => `Total ${formatAmount(aggregates.amountPaise)}`}
+      metaTotal={
+        showAmounts
+          ? (aggregates) =>
+              aggregates.amountPaise === undefined
+                ? null
+                : `Total ${formatAmount(aggregates.amountPaise)}`
+          : undefined
+      }
     />
   )
 }

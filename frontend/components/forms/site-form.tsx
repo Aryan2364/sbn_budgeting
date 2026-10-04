@@ -6,21 +6,17 @@ import { useRouter, useSearchParams } from "next/navigation"
 
 import {
   api,
-  query,
+  pick,
   type AllocationWarning,
-  type ListResponse,
-  type Matchable,
-  type Person,
-  type Project,
   type Site,
-  type SiteLocation,
 } from "@/lib/api"
+import { reasonFor, useCan } from "@/lib/permissions"
 import { errorMessage } from "@/components/shell/session"
 import { toast } from "@/components/ui/sonner"
 import { Button } from "@/components/ui/button"
 import { DatePicker } from "@/components/ui/date-picker"
 import { Input } from "@/components/ui/input"
-import { SearchableSelect } from "@/components/ui/searchable-select"
+import { SearchableSelect, type SearchOption } from "@/components/ui/searchable-select"
 import { Skeleton } from "@/components/ui/skeleton"
 import { PageColumn, PageHeader } from "@/components/templates/page"
 import {
@@ -32,6 +28,22 @@ import {
 } from "@/components/templates/form-page"
 import { RecordBreadcrumb } from "@/components/forms/record-breadcrumb"
 import { FormError, FormLoadFailed } from "@/components/forms/form-error"
+import { PermissionTooltip } from "@/components/ui/permission-tooltip"
+
+/** Kit 26.2: named by the permission, never by a role. */
+const PEOPLE_DENIED = reasonFor("budget.sites.change_people")
+
+/**
+ * The people Pick as the picker's rows (access plan P8): searched on the
+ * server as the user types, at most 50 matches, never everyone at once.
+ * The designation rides along so two people of one name can be told
+ * apart (O10 Q7).
+ */
+function searchPeople(query: string): Promise<SearchOption[]> {
+  return pick
+    .people({ q: query })
+    .then((rows) => rows.map((p) => ({ value: p.id, label: p.name, detail: p.designationName })))
+}
 
 /** `Date` to the `YYYY-MM-DD` the API stores. Never through toISOString, which shifts by timezone. */
 function toIsoDate(date: Date): string {
@@ -51,14 +63,28 @@ function fromIsoDate(text: string | undefined): Date | undefined {
 /**
  * Add and Edit, in ONE component (section 4 rule 1).
  *
- * The manager and supervisor pickers read the whole people list.
+ * The manager and supervisor pickers search the whole people list.
  * There is no manager/supervisor axis on a user any more (question 3),
- * so they are not filtered subsets — they are the list.
+ * so they are not filtered subsets — they are the list. They choose
+ * through the people Pick (names only), never the full `/users`, and
+ * search it on the server as the user types (access plan P8): there are
+ * more people than one Pick answer holds.
+ *
+ * The manager and supervisor decide where a site's complaints go, so
+ * only someone allowed to change a site's people (`budget.sites
+ * .change_people`, plan O7) may set them. Everyone else sees both
+ * pickers disabled with the reason (kit 26) and edits everything else;
+ * they are never asked for the people list, and the disabled pickers
+ * show the site's own names (display is not picking).
+ *
+ * Project and location choose through their Picks too (access plan P7
+ * inventory 4 to 6): the locations list is Settings, under manage (D3).
  */
 export function SiteForm({ siteId }: { siteId?: string }) {
   const router = useRouter()
   const params = useSearchParams()
   const isEdit = siteId !== undefined
+  const canSetPeople = useCan("budget.sites.change_people")
 
   const [projectId, setProjectId] = React.useState(params.get("projectId") ?? "")
   const [name, setName] = React.useState("")
@@ -79,7 +105,12 @@ export function SiteForm({ siteId }: { siteId?: string }) {
    */
   const [projectDonors, setProjectDonors] = React.useState<Record<string, string>>({})
   const [locations, setLocations] = React.useState<Record<string, string>>({})
-  const [people, setPeople] = React.useState<Record<string, string>>({})
+  /**
+   * The names of the people the site already names, by the names the
+   * site carries, so each picker reads who they are whether or not the
+   * search has found them (display is not picking).
+   */
+  const [named, setNamed] = React.useState<Record<string, string>>({})
 
   const [loading, setLoading] = React.useState(true)
   const [saving, setSaving] = React.useState(false)
@@ -94,29 +125,31 @@ export function SiteForm({ siteId }: { siteId?: string }) {
 
   React.useEffect(() => {
     let cancelled = false
-    const lists = Promise.all([
-      api.get<ListResponse<Project & Matchable>>(
-        `/projects${query({ pageSize: 100, sort: "name", direction: "asc" })}`,
-      ),
-      api.get<ListResponse<SiteLocation & Matchable>>(
-        `/site-locations${query({ pageSize: 100, sort: "name", direction: "asc" })}`,
-      ),
-      // Every user, whether or not they can sign in. A person named on
-      // a site need never log in (question 3).
-      api.get<ListResponse<Person & Matchable>>(
-        `/users${query({ pageSize: 100, sort: "name", direction: "asc" })}`,
-      ),
-    ])
+    // Every location, retired ones included, as the list it replaces offered.
+    const lists = Promise.all([pick.projects(), pick.locations({ includeInactive: true })])
 
     Promise.all([lists, siteId ? api.get<Site>(`/sites/${siteId}`) : null])
-      .then(([[projectList, locationList, peopleList], site]) => {
+      .then(([[projectList, locationList], site]) => {
         if (cancelled) return
-        setProjects(Object.fromEntries(projectList.data.map((p) => [p.id, p.name])))
-        setProjectDonors(
-          Object.fromEntries(projectList.data.map((p) => [p.id, p.donorName])),
-        )
-        setLocations(Object.fromEntries(locationList.data.map((l) => [l.id, l.name])))
-        setPeople(Object.fromEntries(peopleList.data.map((p) => [p.id, p.name])))
+        const projectNames = Object.fromEntries(projectList.map((p) => [p.id, p.name]))
+        const locationNames = Object.fromEntries(locationList.map((l) => [l.id, l.name]))
+        // The site's own project and location, by the names the site
+        // carries, so they read correctly even outside the Pick's rows.
+        if (site?.projectId && site.projectName) projectNames[site.projectId] ??= site.projectName
+        if (site?.siteLocationId && site.locationName) {
+          locationNames[site.siteLocationId] ??= site.locationName
+        }
+        setProjects(projectNames)
+        setProjectDonors(Object.fromEntries(projectList.map((p) => [p.id, p.donorName])))
+        setLocations(locationNames)
+        // The people already on the site, by the names the site carries,
+        // so a picker reads who they are even when no search has found them.
+        const onSite: Record<string, string> = {}
+        if (site?.managerId && site.managerName) onSite[site.managerId] = site.managerName
+        if (site?.supervisorId && site.supervisorName) {
+          onSite[site.supervisorId] = site.supervisorName
+        }
+        setNamed(onSite)
         if (site) {
           setProjectId(site.projectId ?? "")
           setName(site.name)
@@ -143,6 +176,10 @@ export function SiteForm({ siteId }: { siteId?: string }) {
       cancelled = true
     }
   }, [siteId, reloadTick])
+
+  // Every person, whether or not they can sign in: someone named on a
+  // site need never log in (question 3). Searched only once someone who
+  // may set them opens a picker; nobody else is ever asked for people.
 
   /**
    * The donor most recently PREFILLED from a project, as opposed to
@@ -423,27 +460,35 @@ export function SiteForm({ siteId }: { siteId?: string }) {
               description="Anyone on the people list can be named here, whether or not they sign in."
             >
               <FormField span={6} label="Site manager" htmlFor="managerId">
-                <SearchableSelect
-                  id="managerId"
-                  options={people}
-                  value={managerId}
-                  onValueChange={setManagerId}
-                  disabled={loading}
-                  placeholder="Choose a person"
-                  searchPlaceholder="Search people"
-                />
+                <PermissionTooltip allowed={canSetPeople} reason={PEOPLE_DENIED}>
+                  <SearchableSelect
+                    id="managerId"
+                    search={searchPeople}
+                    selectedLabel={named[managerId]}
+                    value={managerId}
+                    onValueChange={setManagerId}
+                    disabled={loading || canSetPeople !== true}
+                    placeholder={canSetPeople === true ? "Choose a person" : "Not set"}
+                    searchPlaceholder="Search people"
+                    emptyMessage={(q) => `No people match '${q}'.`}
+                  />
+                </PermissionTooltip>
               </FormField>
 
               <FormField span={6} label="Site supervisor" htmlFor="supervisorId">
-                <SearchableSelect
-                  id="supervisorId"
-                  options={people}
-                  value={supervisorId}
-                  onValueChange={setSupervisorId}
-                  disabled={loading}
-                  placeholder="Choose a person"
-                  searchPlaceholder="Search people"
-                />
+                <PermissionTooltip allowed={canSetPeople} reason={PEOPLE_DENIED}>
+                  <SearchableSelect
+                    id="supervisorId"
+                    search={searchPeople}
+                    selectedLabel={named[supervisorId]}
+                    value={supervisorId}
+                    onValueChange={setSupervisorId}
+                    disabled={loading || canSetPeople !== true}
+                    placeholder={canSetPeople === true ? "Choose a person" : "Not set"}
+                    searchPlaceholder="Search people"
+                    emptyMessage={(q) => `No people match '${q}'.`}
+                  />
+                </PermissionTooltip>
               </FormField>
             </FormSection>
           </form>

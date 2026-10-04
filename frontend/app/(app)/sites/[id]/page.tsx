@@ -35,7 +35,8 @@ import {
   expenseFilterLabels,
   type ExpenseFilterValues,
 } from "@/components/forms/expense-filter"
-import { errorMessage, useSession } from "@/components/shell/session"
+import { reasonFor, useCan } from "@/lib/permissions"
+import { errorMessage } from "@/components/shell/session"
 import { Badge } from "@/components/ui/badge"
 import { Banner, BannerDescription, BannerTitle } from "@/components/ui/banner"
 import { Button } from "@/components/ui/button"
@@ -227,7 +228,11 @@ function SiteDetail({ params }: { params: Promise<{ id: string }> }) {
   const { id } = React.use(params)
   const router = useRouter()
   const searchParams = useSearchParams()
-  const { isAdmin } = useSession()
+  // Kit 26: each action asks for its own permission; none asks for a role.
+  const canEdit = useCan("budget.sites.edit")
+  const canDelete = useCan("budget.sites.delete")
+  const canEditBudget = useCan("budget.budgets.edit")
+  const canAddExpense = useCan("budget.expenses.create")
 
   /**
    * Which tab is open lives in the URL, not in component state.
@@ -447,10 +452,19 @@ function SiteDetail({ params }: { params: Promise<{ id: string }> }) {
         }
         actions={
           <>
-            <Button render={<Link href={`/sites/${id}/edit`} />}>
-              <PencilIcon />
-              Edit
-            </Button>
+            <PermissionTooltip allowed={canEdit} reason={reasonFor("budget.sites.edit")}>
+              {canEdit === true ? (
+                <Button render={<Link href={`/sites/${id}/edit`} />}>
+                  <PencilIcon />
+                  Edit
+                </Button>
+              ) : (
+                <Button disabled>
+                  <PencilIcon />
+                  Edit
+                </Button>
+              )}
+            </PermissionTooltip>
             <DropdownMenu>
                 <Tooltip>
                   <TooltipTrigger
@@ -474,12 +488,12 @@ function SiteDetail({ params }: { params: Promise<{ id: string }> }) {
                       whether it exists; greyed and explained, they do.
                     */}
                     <PermissionTooltip
-                      allowed={isAdmin}
-                      reason="Only a budget administrator can delete a site"
+                      allowed={canDelete}
+                      reason={reasonFor("budget.sites.delete")}
                     >
                       <DropdownMenuItem
                         variant="danger"
-                        disabled={!isAdmin}
+                        disabled={canDelete !== true}
                         onClick={() => setDeleting(true)}
                       >
                         <TrashIcon />
@@ -522,14 +536,23 @@ function SiteDetail({ params }: { params: Promise<{ id: string }> }) {
               <div className="min-w-0">
                 <CardTitle>Budget</CardTitle>
               </div>
-              <Button
-                variant="secondary"
-                size="sm"
-                render={<Link href={`/sites/${id}/budget`} />}
-              >
-                <PencilIcon />
-                Edit budget
-              </Button>
+              <PermissionTooltip allowed={canEditBudget} reason={reasonFor("budget.budgets.edit")}>
+                {canEditBudget === true ? (
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    render={<Link href={`/sites/${id}/budget`} />}
+                  >
+                    <PencilIcon />
+                    Edit budget
+                  </Button>
+                ) : (
+                  <Button variant="secondary" size="sm" disabled>
+                    <PencilIcon />
+                    Edit budget
+                  </Button>
+                )}
+              </PermissionTooltip>
             </CardHeader>
             <CardContent>
               {budget === null || site === null ? (
@@ -678,14 +701,23 @@ function SiteDetail({ params }: { params: Promise<{ id: string }> }) {
                   </p>
                 ) : null}
               </div>
-              <Button
-                variant="secondary"
-                size="sm"
-                render={<Link href={`/expenses/new?siteId=${id}`} />}
-              >
-                <PlusIcon />
-                New expense
-              </Button>
+              <PermissionTooltip allowed={canAddExpense} reason={reasonFor("budget.expenses.create")}>
+                {canAddExpense === true ? (
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    render={<Link href={`/expenses/new?siteId=${id}`} />}
+                  >
+                    <PlusIcon />
+                    New expense
+                  </Button>
+                ) : (
+                  <Button variant="secondary" size="sm" disabled>
+                    <PlusIcon />
+                    New expense
+                  </Button>
+                )}
+              </PermissionTooltip>
             </CardHeader>
             <CardContent className="p-4 pt-0">
               {/*
@@ -741,7 +773,7 @@ function SiteDetail({ params }: { params: Promise<{ id: string }> }) {
                 emptyHeading="No expenses yet"
                 emptyBody="Expenses are booked against a cost head and a budget period."
                 emptyActionLabel="New expense"
-                emptyActionHref={`/expenses/new?siteId=${id}`}
+                emptyActionHref={canAddExpense === true ? `/expenses/new?siteId=${id}` : undefined}
                 exportPdf={{
                   title: site ? `${site.name} — Expenses` : "Expenses",
                   columns: SITE_EXPENSE_PDF_COLUMNS,

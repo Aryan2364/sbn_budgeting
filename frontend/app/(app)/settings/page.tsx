@@ -3,7 +3,8 @@
 import * as React from "react"
 import { useRouter } from "next/navigation"
 
-import { settingsSections, useSession } from "@/components/shell/session"
+import { usePermissions } from "@/lib/permissions"
+import { settingsSections } from "@/components/shell/nav"
 
 /**
  * /settings opens the first section this user may see (the sidebar and
@@ -13,7 +14,7 @@ import { settingsSections, useSession } from "@/components/shell/session"
  */
 export default function SettingsPage() {
   const router = useRouter()
-  const { can } = useSession()
+  const { can } = usePermissions()
   const first = settingsSections(can)[0]?.href
 
   React.useEffect(() => {

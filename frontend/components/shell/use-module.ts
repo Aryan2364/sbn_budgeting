@@ -4,13 +4,16 @@ import * as React from "react"
 import { usePathname } from "next/navigation"
 
 import {
-  buildModules,
+  allowedModules,
+  homeHref,
   moduleForPath,
+  moduleHome,
+  MODULES,
   pathPinsModule,
   type ModuleDef,
   type ModuleKey,
 } from "@/components/shell/nav"
-import { settingsSections, useSession } from "@/components/shell/session"
+import { usePermissions } from "@/lib/permissions"
 
 /**
  * The active module (CONTRACT section 4). It comes from the path; only
@@ -49,18 +52,18 @@ function remember(key: ModuleKey) {
   for (const listener of listeners) listener()
 }
 
-const MODULES = buildModules((can) => settingsSections(can).length > 0)
-
 export function useModules(): {
   /** Every module this user has, in product order. */
   modules: ModuleDef[]
   active: ModuleDef
+  /** Where choosing a module in the switcher goes: its first item this user can use. */
+  homeOf: (mod: ModuleDef) => string
 } {
   const pathname = usePathname()
-  const { can } = useSession()
+  const { can } = usePermissions()
   const remembered = React.useSyncExternalStore(subscribe, readRemembered, () => null)
 
-  const modules = MODULES.filter((mod) => mod.allowed(can))
+  const modules = allowedModules(can)
   const key = moduleForPath(pathname, remembered, modules.map((mod) => mod.key))
 
   // Writing the pinned module to storage is a side effect on an external
@@ -71,5 +74,15 @@ export function useModules(): {
   }, [pinned])
 
   const active = MODULES.find((mod) => mod.key === key) ?? MODULES[0]
-  return { modules, active }
+  return { modules, active, homeOf: (mod) => moduleHome(mod, can) ?? homeHref(can) }
+}
+
+/**
+ * The first place this user can open (CONTRACT §4), from their
+ * permissions: `/` goes there, sign-in lands there, and the no-access
+ * page's "Go to dashboard" leads there.
+ */
+export function useHomeHref(): string {
+  const { can } = usePermissions()
+  return homeHref(can)
 }

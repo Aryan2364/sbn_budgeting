@@ -1,7 +1,10 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
-import { APP_GUARD } from '@nestjs/core';
+import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 
+import { AccessModule } from './access/access.module';
+import { AmountsInterceptor } from './access/amounts.interceptor';
+import { PermissionGuard } from './access/permission.guard';
 import { AuthModule } from './auth/auth.module';
 import { JwtAuthGuard } from './auth/jwt-auth.guard';
 import { ModuleAccessGuard } from './auth/module-access.guard';
@@ -14,6 +17,7 @@ import { DbModule } from './db/db.module';
 import { ExpensesModule } from './expenses/expenses.module';
 import { LocationsModule } from './locations/locations.module';
 import { NotificationsModule } from './notifications/notifications.module';
+import { PickModule } from './pick/pick.module';
 import { ProjectsModule } from './projects/projects.module';
 import { SitesModule } from './sites/sites.module';
 import { ReportsModule } from './reports/reports.module';
@@ -23,6 +27,7 @@ import { UsersModule } from './users/users.module';
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
     DbModule,
+    AccessModule,
     AuthModule,
     UsersModule,
     CostHeadsModule,
@@ -36,13 +41,22 @@ import { UsersModule } from './users/users.module';
     ComplaintCategoriesModule,
     ComplaintsModule,
     NotificationsModule,
+    PickModule,
   ],
   providers: [
     // Authentication is ON by default. A route opts out with @Public(),
     // never the other way round, so an endpoint nobody remembered to
     // guard is guarded.
     { provide: APP_GUARD, useClass: JwtAuthGuard },
+    // Access plan P2a-P9: the new route guard runs in SHADOW before the
+    // old one. It only logs disagreements on today's routes, and decides
+    // only the new-system routes (/pick, /access). The old guard still
+    // decides everything else until P9 removes it.
+    { provide: APP_GUARD, useClass: PermissionGuard },
     { provide: APP_GUARD, useClass: ModuleAccessGuard },
+    // Access plan P4 (6.1.6): without <module>.amounts.see, amount-only
+    // routes are refused and amounts are removed from every response.
+    { provide: APP_INTERCEPTOR, useClass: AmountsInterceptor },
   ],
 })
 export class AppModule {}

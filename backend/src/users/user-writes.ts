@@ -60,7 +60,8 @@ export async function assertNoCycle(
     );
   }
   const { rows } = await db.query<{ loops: boolean; manager: string; me: string }>(
-    `with recursive chain(id, depth) as (
+    `/*scope-exempt: walks the whole reporting chain to refuse a loop; returns only the two names the caller chose*/
+     with recursive chain(id, depth) as (
        select $2::uuid, 0
        union all
        select u.reports_to, c.depth + 1

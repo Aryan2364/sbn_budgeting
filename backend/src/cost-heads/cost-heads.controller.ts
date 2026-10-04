@@ -9,6 +9,7 @@ import {
   findOneOrFail, isPgError, PG_FOREIGN_KEY_VIOLATION, PG_UNIQUE_VIOLATION,
 } from '../common/crud';
 import { ModuleAccess, ModuleRole } from '../common/module-access.decorator';
+import { Can } from '../access/decorators';
 
 export class CostHeadDto {
   @IsString()
@@ -58,6 +59,7 @@ export class CostHeadsController {
    * data bounded by admin edits rather than by use.
    */
   private static readonly USAGE = `
+    /*scope-exempt: usage counts that decide whether a cost head can be deleted; the master screen's routes need budget.cost_heads.manage, held at All only*/
     left join lateral (
       select
         (select count(*)::int from site_budgets b where b.cost_head_id = ch.id)
@@ -80,6 +82,9 @@ export class CostHeadsController {
    * people who wrote the spreadsheet.
    */
   @Get()
+  // The full master list is the Settings screen: manage (plan 6.1.5, D3).
+  // Screens that only choose a cost head move to /pick/budget/cost_heads.
+  @Can('budget.cost_heads.manage')
   list(
     @Query() query: ListQueryDto,
     @Query('isActive') isActive?: string,
@@ -87,6 +92,7 @@ export class CostHeadsController {
     return runListQuery<CostHeadRow>(
       this.pool,
       {
+        scope: { unscoped: 'master', why: 'The full cost-head list; its route needs budget.cost_heads.manage (All only). Choosing a cost head uses the Pick.' },
         from: `cost_heads ch${CostHeadsController.USAGE}`,
         select: CostHeadsController.SELECT,
         titleField: { sql: 'ch.name', label: 'Name' },
@@ -108,6 +114,7 @@ export class CostHeadsController {
   }
 
   @Get(':id')
+  @Can('budget.cost_heads.manage')
   get(@Param('id', new ParseUUIDPipe()) id: string): Promise<CostHeadRow> {
     return findOneOrFail<CostHeadRow>(
       this.pool,
@@ -127,6 +134,7 @@ export class CostHeadsController {
    */
   @Patch(':id')
   @ModuleRole('budget', 'admin')
+  @Can('budget.cost_heads.manage')
   async update(
     @Param('id', new ParseUUIDPipe()) id: string,
     @Body() body: CostHeadDto,
@@ -152,6 +160,7 @@ export class CostHeadsController {
 
   @Post()
   @ModuleRole('budget', 'admin')
+  @Can('budget.cost_heads.manage')
   async create(@Body() body: CostHeadDto): Promise<CostHeadRow> {
     try {
       const { rows } = await this.pool.query(
@@ -176,6 +185,7 @@ export class CostHeadsController {
    */
   @Delete(':id')
   @ModuleRole('budget', 'admin')
+  @Can('budget.cost_heads.manage')
   @HttpCode(204)
   async remove(@Param('id', new ParseUUIDPipe()) id: string): Promise<void> {
     try {

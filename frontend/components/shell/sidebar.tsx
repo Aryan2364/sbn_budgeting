@@ -27,7 +27,7 @@ import {
   type ModuleDef,
 } from "@/components/shell/nav"
 import { ShellLink, useProgress } from "@/components/shell/progress-bar"
-import { useSession } from "@/components/shell/session"
+import { usePermissions } from "@/lib/permissions"
 import { useModules } from "@/components/shell/use-module"
 
 /**
@@ -89,8 +89,9 @@ function Mark() {
  * icon), quiet on the brand ground like every control there. It opens a
  * dropdown-menu (a menu of places, not a form value) holding a labelled
  * radio group of the user's modules with the active one ticked (16.2
- * selected look). Choosing a module navigates to its home (Budget:
- * /dashboard, Complaints: /complaints) through the progress bar. In the
+ * selected look). Choosing a module navigates to its home, the first item
+ * of it this user can use (Budget: /dashboard, Complaints: /complaints),
+ * through the progress bar. In the
  * icon rail only the mark shows, with a "Switch module" tooltip.
  */
 function ModuleSwitcher({
@@ -98,12 +99,14 @@ function ModuleSwitcher({
   collapsed,
   modules,
   active,
+  homeOf,
   onNavigate,
 }: {
   collapsible: boolean
   collapsed: boolean
   modules: ModuleDef[]
   active: ModuleDef
+  homeOf: (mod: ModuleDef) => string
   onNavigate?: () => void
 }) {
   const progress = useProgress()
@@ -148,7 +151,7 @@ function ModuleSwitcher({
               const next = modules.find((mod) => mod.key === value)
               if (!next || next.key === active.key) return
               onNavigate?.()
-              progress.navigate(next.home)
+              progress.navigate(homeOf(next))
             }}
           >
             {modules.map((mod) => {
@@ -179,7 +182,7 @@ function SidebarHeader({
   onNavigate?: () => void
   overlay?: boolean
 }) {
-  const { modules, active } = useModules()
+  const { modules, active, homeOf } = useModules()
 
   return (
     <div
@@ -196,6 +199,7 @@ function SidebarHeader({
           collapsed={collapsed}
           modules={modules}
           active={active}
+          homeOf={homeOf}
           onNavigate={onNavigate}
         />
       ) : (
@@ -275,7 +279,7 @@ function SidebarNav({
   onNavigate?: () => void
 }) {
   const pathname = usePathname()
-  const { can } = useSession()
+  const { can } = usePermissions()
   const { active } = useModules()
 
   const groups = visibleGroups(active, can)

@@ -3,12 +3,8 @@
 import * as React from "react"
 import { CircleAlertIcon, RefreshCwIcon } from "lucide-react"
 
-import { api, ApiError, query, type Designation, type ListResponse, type Person } from "@/lib/api"
-import {
-  complaintsApi,
-  fetchAllPages,
-  type ComplaintDetail,
-} from "@/lib/complaints-api"
+import { ApiError, pick } from "@/lib/api"
+import { complaintsApi, type ComplaintDetail } from "@/lib/complaints-api"
 import { errorMessage } from "@/components/shell/session"
 import { Banner, BannerAction, BannerDescription, BannerTitle } from "@/components/ui/banner"
 import { Button } from "@/components/ui/button"
@@ -426,7 +422,10 @@ export function SendBackDialog({ complaint, onClose, onDone, onRefresh }: Action
 // ---------------------------------------------------------------
 
 export function ReassignDialog({ complaint, onClose, onDone, onRefresh }: ActionDialogProps) {
-  const [people, setPeople] = React.useState<Person[] | null>(null)
+  /** The Supervisor designation's id, which narrows the people search. null until found. */
+  const [designationId, setDesignationId] = React.useState<string | null>(null)
+  /** Whether anyone else can take it over, from the first answer. null until known. */
+  const [anyoneElse, setAnyoneElse] = React.useState<boolean | null>(null)
   const [loadError, setLoadError] = React.useState<string | null>(null)
   const [attempt, setAttempt] = React.useState(0)
   const [supervisorId, setSupervisorId] = React.useState("")
@@ -435,27 +434,47 @@ export function ReassignDialog({ complaint, onClose, onDone, onRefresh }: Action
   const [saving, setSaving] = React.useState(false)
   const [failure, setFailure] = React.useState<Failure | null>(null)
 
+  /**
+   * The people Pick, searched on the server as the user types (access
+   * plan P8): Supervisors only, and only people who can receive a
+   * complaint, narrowed by the server. The one it is with now is left
+   * out; it cannot move to them.
+   */
+  const searchSupervisors = React.useCallback(
+    (query: string) =>
+      pick
+        .people({ q: query, designationId: designationId ?? undefined, canReceive: true })
+        .then((rows) =>
+          rows
+            .filter((p) => p.id !== complaint.supervisor.id)
+            .map((p) => ({ value: p.id, label: p.name, detail: p.designationName })),
+        ),
+    [designationId, complaint.supervisor.id],
+  )
+
   React.useEffect(() => {
     let cancelled = false
-    api
-      .get<ListResponse<Designation>>(`/designations${query({ pageSize: 100 })}`)
+    // Picks, not lists (access plan P7 inventory 8): the designations
+    // list is Settings, under manage (D3).
+    pick
+      .designations()
       .then(async (designations) => {
-        const supervisor = designations.data.find((d) => d.seedKey === "supervisor")
+        const supervisor = designations.find((d) => d.seedKey === "supervisor")
         if (!supervisor) {
           throw new ApiError(
             404,
             "There is no Supervisor designation to choose from. Ask an administrator to check Settings, Designations.",
           )
         }
-        return fetchAllPages((page) =>
-          api.get<ListResponse<Person>>(
-            `/users${query({ page, pageSize: 100, designationId: supervisor.id, sort: "name", direction: "asc" })}`,
-          ),
-        )
+        // One first answer (at most 50, never everyone) says whether
+        // there is anyone to choose at all; the picker searches the rest.
+        const first = await pick.people({ designationId: supervisor.id, canReceive: true })
+        return { id: supervisor.id, others: first.some((p) => p.id !== complaint.supervisor.id) }
       })
-      .then((rows) => {
+      .then(({ id, others }) => {
         if (!cancelled) {
-          setPeople(rows)
+          setDesignationId(id)
+          setAnyoneElse(others)
           setLoadError(null)
         }
       })
@@ -465,11 +484,7 @@ export function ReassignDialog({ complaint, onClose, onDone, onRefresh }: Action
     return () => {
       cancelled = true
     }
-  }, [attempt])
-
-  const options = (people ?? [])
-    .filter((p) => p.id !== complaint.supervisor.id && p.canLogin)
-    .map((p) => ({ value: p.id, label: p.name }))
+  }, [attempt, complaint.supervisor.id])
 
   const checkSupervisor = (id = supervisorId) => (id ? null : "Choose who takes this complaint over")
   const checkNote = (text = note) =>
@@ -500,7 +515,7 @@ export function ReassignDialog({ complaint, onClose, onDone, onRefresh }: Action
       submitLabel="Reassign complaint"
       savingLabel="Reassigning…"
       saving={saving}
-      submitDisabled={people === null}
+      submitDisabled={anyoneElse !== true}
       changed={supervisorId !== "" || note.trim() !== ""}
       onClose={onClose}
       onSubmit={submit}
@@ -522,9 +537,9 @@ export function ReassignDialog({ complaint, onClose, onDone, onRefresh }: Action
               </Button>
             </BannerAction>
           </Banner>
-        ) : people === null ? (
+        ) : anyoneElse === null ? (
           <Skeleton className="h-control w-full max-w-field-max" />
-        ) : options.length === 0 ? (
+        ) : !anyoneElse ? (
           <p className="text-body text-text-secondary">
             There is no other supervisor who can sign in. Add one in Settings, People, then
             reassign.
@@ -532,7 +547,9 @@ export function ReassignDialog({ complaint, onClose, onDone, onRefresh }: Action
         ) : (
           <Choice
             id="reassign-supervisor"
-            options={options}
+            options={[]}
+            search={searchSupervisors}
+            emptyMessage={(q) => `No supervisors match '${q}'.`}
             value={supervisorId}
             onValueChange={(v) => {
               setSupervisorId(v)

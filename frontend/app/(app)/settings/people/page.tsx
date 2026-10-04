@@ -7,14 +7,17 @@ import { FileSpreadsheetIcon, FunnelIcon } from "lucide-react"
 import {
   api,
   ApiError,
+  pick,
   query,
-  type Designation,
+  type DesignationPick,
   type ListResponse,
   type Matchable,
   type ModuleAccess,
   type Person,
+  type PersonPick,
   type PersonBody,
 } from "@/lib/api"
+import { reasonFor, useCan } from "@/lib/permissions"
 import { formatNumber } from "@/lib/format"
 import { errorMessage, useSession } from "@/components/shell/session"
 import { toast } from "@/components/ui/sonner"
@@ -54,7 +57,42 @@ import {
   MasterSection,
   useMasterRows,
 } from "@/components/forms/master-section"
-import { useOptions } from "../_shared/use-options"
+
+/**
+ * The rows of one Pick, for a picker on this screen (access plan P7
+ * inventory 11 and 12). `load` null means "not yet": nothing is asked
+ * and the rows stay null. A Pick answers whole, at most 50 rows, so
+ * there is no paging loop here.
+ */
+function usePickRows<T>(load: (() => Promise<T[]>) | null): {
+  rows: T[] | null
+  error: string | null
+} {
+  const [state, setState] = React.useState<{ rows: T[] | null; error: string | null }>({
+    rows: null,
+    error: null,
+  })
+  React.useEffect(() => {
+    if (!load) return
+    let cancelled = false
+    load()
+      .then((rows) => {
+        if (!cancelled) setState({ rows, error: null })
+      })
+      .catch((caught: unknown) => {
+        if (!cancelled) setState({ rows: null, error: errorMessage(caught) })
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [load])
+  return state
+}
+
+// Retired designations too: the filter finds people who still hold one,
+// and the form shows a person's current one (it offers active ones).
+const loadDesignations = () => pick.designations({ includeInactive: true })
+const loadPeople = () => pick.people()
 
 /**
  * The people master (CONTRACT §2), platform admin only.
@@ -95,14 +133,16 @@ interface PeopleFilters {
 const SIGN_IN_LABEL = { true: "Signs in", false: "Does not sign in" } as const
 
 export default function PeopleSettingsPage() {
-  const { can, user } = useSession()
-  const canEdit = can.platformAdmin
+  const { user } = useSession()
+  const canCreate = useCan("platform.people.create")
+  const canEdit = useCan("platform.people.edit")
+  const canDelete = useCan("platform.people.delete")
 
   const [searchInput, setSearchInput] = React.useState("")
   const [search, setSearch] = React.useState("")
   const [filters, setFilters] = React.useState<PeopleFilters>({})
 
-  const designations = useOptions<Designation>("/designations", { sort: "name", direction: "asc" })
+  const designations = usePickRows(loadDesignations)
 
   const load = React.useCallback(
     (page: number) =>
@@ -186,13 +226,13 @@ export default function PeopleSettingsPage() {
         ) : null}
         <div className="ml-auto">
           <PermissionTooltip
-            allowed={canEdit}
-            reason="Only a platform administrator can import people"
+            allowed={canCreate}
+            reason={reasonFor("platform.people.create")}
           >
             <Button
               variant="secondary"
               size="sm"
-              disabled={!canEdit}
+              disabled={canCreate !== true}
               nativeButton={false}
               render={<Link href="/settings/people/import" />}
             >
@@ -239,7 +279,11 @@ export default function PeopleSettingsPage() {
         description="Everyone in the organisation: what they are, who they report to and what they can open."
         createLabel="Add person"
         canEdit={canEdit}
-        cannotEditReason="Only a platform administrator can change people"
+        cannotEditReason={reasonFor("platform.people.edit")}
+        canCreate={canCreate}
+        cannotCreateReason={reasonFor("platform.people.create")}
+        canDelete={canDelete}
+        cannotDeleteReason={reasonFor("platform.people.delete")}
         rows={rows}
         loading={loading}
         error={error}
@@ -321,7 +365,7 @@ export default function PeopleSettingsPage() {
          */
         deleteBlocked={(row) => {
           if (row.id === user?.id) {
-            return "This is your own account. Another platform administrator has to remove it."
+            return "This is your own account. Someone else who can delete people has to remove it."
           }
           if (row.openComplaintCount > 0) {
             return `${row.name} has ${formatNumber(row.openComplaintCount)} open ${
@@ -389,7 +433,7 @@ function PeopleFilterButton({
 }: {
   filters: PeopleFilters
   onApply: (next: PeopleFilters) => void
-  designations: Designation[] | null
+  designations: DesignationPick[] | null
 }) {
   const [open, setOpen] = React.useState(false)
   const [draft, setDraft] = React.useState<PeopleFilters>(filters)
@@ -544,7 +588,7 @@ function PersonDialog({
 }: {
   person: Person | null
   selfId: string | null
-  designations: Designation[] | null
+  designations: DesignationPick[] | null
   onClose: () => void
   onSaved: () => void
 }) {
@@ -556,7 +600,8 @@ function PersonDialog({
   const [error, setError] = React.useState<string | null>(null)
   const [fieldErrors, setFieldErrors] = React.useState<Partial<Record<FieldKey, string | null>>>({})
 
-  const people = useOptions<Person>("/users", { sort: "name", direction: "asc" })
+  // Only id, name and designation are needed here, so the names-only picker.
+  const people = usePickRows<PersonPick>(loadPeople)
   const unsaved = useUnsavedChanges({ changed: isChanged(values, saved), noun: "person" })
 
   const set = <K extends keyof PersonValues>(key: K, value: PersonValues[K]) =>
@@ -673,7 +718,7 @@ function PersonDialog({
   if (person?.reportsTo) reportsToOptions[person.reportsTo.id] = person.reportsTo.name
   for (const p of people.rows ?? []) {
     if (p.id !== person?.id) {
-      reportsToOptions[p.id] = p.designation ? `${p.name} (${p.designation.name})` : p.name
+      reportsToOptions[p.id] = p.designationName ? `${p.name} (${p.designationName})` : p.name
     }
   }
 
@@ -824,7 +869,7 @@ function PersonDialog({
                       so the control says so before the click (§26). */}
                   <PermissionTooltip
                     allowed={!(isSelf && saved.access.platform === "admin")}
-                    reason="You can't remove your own platform admin. Another platform administrator has to."
+                    reason="This is your own access to Settings. Someone else who manages access has to change it."
                   >
                     <Select
                       items={{ [NONE]: "No access", admin: "Admin" }}

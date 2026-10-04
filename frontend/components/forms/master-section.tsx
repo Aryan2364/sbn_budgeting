@@ -78,6 +78,10 @@ export function MasterSection<T extends { id: string }>({
   onRetry,
   canEdit,
   cannotEditReason,
+  canCreate = canEdit,
+  cannotCreateReason = cannotEditReason,
+  canDelete = canEdit,
+  cannotDeleteReason = cannotEditReason,
   onCreate,
   onEdit,
   onDelete,
@@ -117,12 +121,20 @@ export function MasterSection<T extends { id: string }>({
   error: string | null
   onRetry: () => void
   /**
-   * Section 26: the user SEES the action and cannot use it. Disabled
-   * with a reason, never hidden and never failing after the click.
+   * Kit 26: the user SEES the action and cannot use it. Disabled with a
+   * reason, never hidden and never failing after the click. The answer
+   * from useCan: undefined while not known yet, which disables without
+   * a reason (kit 26.1). Only a definite yes enables.
    */
-  canEdit: boolean
-  /** Why, in §26's own shape: "Only an administrator can ...". */
+  canEdit: boolean | undefined
+  /** Why, from reasonFor(key) (kit 26.2): never a role name. */
   cannotEditReason: string
+  /** Add, where it is its own permission. Defaults to `canEdit`. */
+  canCreate?: boolean | undefined
+  cannotCreateReason?: string
+  /** Delete, where it is its own permission. Defaults to `canEdit`. */
+  canDelete?: boolean | undefined
+  cannotDeleteReason?: string
   onCreate: () => void
   onEdit: (row: T) => void
   onDelete: (row: T) => Promise<void>
@@ -246,11 +258,11 @@ export function MasterSection<T extends { id: string }>({
               fetchPage={exportList.fetchPage}
             />
           ) : null}
-          <PermissionTooltip allowed={canEdit} reason={cannotEditReason}>
+          <PermissionTooltip allowed={canCreate} reason={cannotCreateReason}>
             <Button
               variant="secondary"
               size="sm"
-              disabled={!canEdit}
+              disabled={canCreate !== true}
               onClick={onCreate}
             >
               <PlusIcon />
@@ -293,7 +305,7 @@ export function MasterSection<T extends { id: string }>({
             variant="nothing-yet"
             heading={emptyHeading}
             actionLabel={createLabel}
-            onAction={canEdit ? onCreate : undefined}
+            onAction={canCreate === true ? onCreate : undefined}
           >
             {emptyBody}
           </EmptyState>
@@ -336,11 +348,15 @@ export function MasterSection<T extends { id: string }>({
                 const blockedReason = deleteBlocked?.(row) ?? null
                 const hasAlternative =
                   blockedReason !== null && deleteAlternative?.(row) != null
-                const deleteDenial = !canEdit
-                  ? cannotEditReason
-                  : blockedReason !== null && !hasAlternative
-                    ? blockedReason
-                    : null
+                // Not known yet (kit 26.1): disabled, and no reason shown.
+                const deleteDenial: string | null | undefined =
+                  canDelete === undefined
+                    ? undefined
+                    : canDelete === false
+                      ? cannotDeleteReason
+                      : blockedReason !== null && !hasAlternative
+                        ? blockedReason
+                        : null
 
                 return (
                 <TableRow key={row.id}>
@@ -372,7 +388,7 @@ export function MasterSection<T extends { id: string }>({
                                   variant="ghost"
                                   size="icon-sm"
                                   aria-label={`Edit ${deleteName(row)}`}
-                                  disabled={!canEdit}
+                                  disabled={canEdit !== true}
                                   onClick={() => onEdit(row)}
                                 />
                               }
@@ -383,7 +399,7 @@ export function MasterSection<T extends { id: string }>({
                           </Tooltip>
                         </PermissionTooltip>
                         <PermissionTooltip
-                          allowed={deleteDenial === null}
+                          allowed={deleteDenial === undefined ? undefined : deleteDenial === null}
                           reason={deleteDenial ?? ""}
                         >
                           <Tooltip>

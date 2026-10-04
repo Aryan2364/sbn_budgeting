@@ -69,9 +69,16 @@ function countActive(filters: Record<string, string | undefined>): number {
 export function ExpenseFilterButton({
   filters,
   onApply,
+  showAmounts,
 }: {
   filters: ExpenseFilterValues
   onApply: (next: ExpenseFilterValues) => void
+  /**
+   * Kit 26.7: without see amounts the amount range is ABSENT, not
+   * disabled, and never sent (the server refuses filtering on an
+   * amount it does not show).
+   */
+  showAmounts: boolean
 }) {
   const [open, setOpen] = React.useState(false)
 
@@ -152,8 +159,8 @@ export function ExpenseFilterButton({
       setDateError(null)
     }
 
-    const minParsed = parseRupeesToPaise(minText)
-    const maxParsed = parseRupeesToPaise(maxText)
+    const minParsed = parseRupeesToPaise(showAmounts ? minText : "")
+    const maxParsed = parseRupeesToPaise(showAmounts ? maxText : "")
     let amountMin: string | null | undefined
     let amountMax: string | null | undefined
 
@@ -252,6 +259,7 @@ export function ExpenseFilterButton({
               <InlineFieldError>{dateError}</InlineFieldError>
             </section>
 
+            {showAmounts ? (
             <section className="flex flex-col gap-2">
               <Label>Amount (₹)</Label>
               <div className="flex flex-wrap gap-4">
@@ -292,6 +300,7 @@ export function ExpenseFilterButton({
               </div>
               <InlineFieldError>{amountError}</InlineFieldError>
             </section>
+            ) : null}
           </div>
         </DialogBody>
         <DialogFooter>

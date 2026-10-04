@@ -4,3 +4,5 @@ dist
 *.tsbuildinfo
 dist-*
 uploads
+# The access mapping report names real people (npm run access:map-levels).
+access-mapping-report.txt

@@ -7,7 +7,8 @@ import { MoreHorizontalIcon, PencilIcon, PlusIcon, TrashIcon } from "lucide-reac
 
 import { api, query, type ListResponse, type Matchable, type Project, type Site } from "@/lib/api"
 import { formatDate, formatNumber } from "@/lib/format"
-import { errorMessage, useSession } from "@/components/shell/session"
+import { reasonFor, useCan } from "@/lib/permissions"
+import { errorMessage } from "@/components/shell/session"
 import { toast } from "@/components/ui/sonner"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -81,7 +82,11 @@ export default function ProjectDetailPage({
 }) {
   const { id } = React.use(params)
   const router = useRouter()
-  const { isAdmin } = useSession()
+  // Kit 26: each action asks for its own permission; none asks for a role.
+  const canEdit = useCan("budget.projects.edit")
+  const canDelete = useCan("budget.projects.delete")
+  const canAddSite = useCan("budget.sites.create")
+  const canUnlink = useCan("budget.sites.edit")
 
   const [project, setProject] = React.useState<Project | null>(null)
   const [sites, setSites] = React.useState<Site[] | null>(null)
@@ -247,10 +252,19 @@ export default function ProjectDetailPage({
         }
         actions={
           <>
-            <Button render={<Link href={`/projects/${id}/edit`} />}>
-              <PencilIcon />
-              Edit
-            </Button>
+            <PermissionTooltip allowed={canEdit} reason={reasonFor("budget.projects.edit")}>
+              {canEdit === true ? (
+                <Button render={<Link href={`/projects/${id}/edit`} />}>
+                  <PencilIcon />
+                  Edit
+                </Button>
+              ) : (
+                <Button disabled>
+                  <PencilIcon />
+                  Edit
+                </Button>
+              )}
+            </PermissionTooltip>
             <DropdownMenu>
                 <Tooltip>
                   <TooltipTrigger
@@ -283,12 +297,12 @@ export default function ProjectDetailPage({
                       (client instruction, 23 Sep 2026).
                     */}
                     <PermissionTooltip
-                      allowed={isAdmin}
-                      reason="Only a budget administrator can delete a project"
+                      allowed={canDelete}
+                      reason={reasonFor("budget.projects.delete")}
                     >
                       <DropdownMenuItem
                         variant="danger"
-                        disabled={!isAdmin}
+                        disabled={canDelete !== true}
                         onClick={() => setDeleting(true)}
                       >
                         <TrashIcon />
@@ -379,14 +393,23 @@ export default function ProjectDetailPage({
                   columns={PROJECT_SITE_PDF_COLUMNS}
                   fetchPage={sitesFetchPage}
                 />
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  render={<Link href={`/sites/new?projectId=${id}`} />}
-                >
-                  <PlusIcon />
-                  New site
-                </Button>
+                <PermissionTooltip allowed={canAddSite} reason={reasonFor("budget.sites.create")}>
+                  {canAddSite === true ? (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      render={<Link href={`/sites/new?projectId=${id}`} />}
+                    >
+                      <PlusIcon />
+                      New site
+                    </Button>
+                  ) : (
+                    <Button variant="secondary" size="sm" disabled>
+                      <PlusIcon />
+                      New site
+                    </Button>
+                  )}
+                </PermissionTooltip>
               </div>
             </CardHeader>
             <CardContent className="p-0">
@@ -452,18 +475,30 @@ export default function ProjectDetailPage({
                             otherwise unlinking also navigates away and
                             the user never sees that it worked.
                           */}
-                          <Button
-                            variant="secondary"
-                            size="sm"
-                            disabled={unlinking !== null}
-                            onClick={(event) => {
-                              event.stopPropagation()
-                              void unlink(site)
-                            }}
+                          {/* The reason's own tap must not open the row either. */}
+                          <span
+                            className="inline-flex"
+                            onClick={(event) => event.stopPropagation()}
                             onKeyDown={(event) => event.stopPropagation()}
                           >
-                            {unlinking === site.id ? "Unlinking…" : "Unlink"}
-                          </Button>
+                          <PermissionTooltip
+                            allowed={canUnlink}
+                            reason={reasonFor("budget.sites.edit")}
+                          >
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              disabled={canUnlink !== true || unlinking !== null}
+                              onClick={(event) => {
+                                event.stopPropagation()
+                                void unlink(site)
+                              }}
+                              onKeyDown={(event) => event.stopPropagation()}
+                            >
+                              {unlinking === site.id ? "Unlinking…" : "Unlink"}
+                            </Button>
+                          </PermissionTooltip>
+                          </span>
                         </TableCell>
                       </TableRow>
                     ))}
