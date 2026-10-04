@@ -7,24 +7,26 @@ import type { AccessContext } from '../../src/access/access-context';
 import { checkRoutes, type RouteHandler } from '../../src/access/boot-guard';
 import { deriveRoleRows } from '../../src/access/catalogue';
 import { declarationsOf, type AccessDeclaration } from '../../src/access/decorators';
-import { decide, legacyAllows } from '../../src/access/permission.guard';
+import { decide } from '../../src/access/permission.guard';
 import { buildRoleMap, effectivePermissions } from '../../src/access/role-map.service';
 import { SEED_ROLES, type LegacyModule } from '../../src/access/seed-roles';
 import { AuthController } from '../../src/auth/auth.controller';
 import type { AuthUser } from '../../src/common/current-user';
-import { MODULE_ACCESS, type ModuleRequirement } from '../../src/common/module-access.decorator';
 import { IS_PUBLIC } from '../../src/common/public.decorator';
 import { DesignationsController } from '../../src/designations/designations.controller';
 import { LocationsController } from '../../src/locations/locations.controller';
 import { UsersImportController } from '../../src/users/users-import.controller';
 import { UsersController } from '../../src/users/users.controller';
+import { LEGACY_ROUTE_RULES, legacyAllows, type ModuleRequirement } from '../support/legacy-route-rules';
 
 /**
- * P2b, platform lane (access plan 5.3.3, 5.3.5, 6.1.3): every platform
- * handler carries its new declaration BESIDE the old one, and in shadow
- * the two agree for every one of today's level combinations, apart from
- * the intended differences D3 and D4 (plan 6.3.3), which take effect at
- * P9 and are listed here exactly so a new disagreement fails.
+ * P2b, platform lane (access plan 5.3.3, 5.3.5, 6.1.3), and P9: every
+ * platform handler carries its one declaration, which the permission
+ * guard decides, and it agrees with the old guard's rule (frozen in
+ * test/support/legacy-route-rules.ts since P9 deleted the old guard)
+ * for every one of today's level combinations, apart from the intended
+ * differences D3 and D4 (plan 6.3.3), which take effect at P9 and are
+ * listed here exactly so a new disagreement fails.
  */
 
 const METHODS = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'ALL', 'OPTIONS', 'HEAD'];
@@ -40,7 +42,6 @@ interface Handler {
 function handlersOf(controller: Ctor): Handler[] {
   const raw = Reflect.getMetadata(PATH_METADATA, controller) as string | string[];
   const base = (Array.isArray(raw) ? raw[0] : raw) ?? '';
-  const classReq = Reflect.getMetadata(MODULE_ACCESS, controller) as ModuleRequirement | undefined;
   const proto = controller.prototype as Record<string, unknown>;
   const out: Handler[] = [];
   for (const name of Object.getOwnPropertyNames(proto)) {
@@ -49,12 +50,13 @@ function handlersOf(controller: Ctor): Handler[] {
     const method = Reflect.getMetadata(METHOD_METADATA, fn) as number | undefined;
     const path = Reflect.getMetadata(PATH_METADATA, fn) as string | undefined;
     if (method === undefined || path === undefined) continue;
-    const req = Reflect.getMetadata(MODULE_ACCESS, fn) as ModuleRequirement | undefined;
+    const route = `${METHODS[method]} /${[base, path].map((p) => p.replace(/^\/+|\/+$/g, '')).filter(Boolean).join('/')}`;
+    assert.ok(Reflect.getMetadata('moduleAccess', fn) === undefined, `${route} still carries old module metadata`);
     out.push({
-      route: `${METHODS[method]} /${[base, path].map((p) => p.replace(/^\/+|\/+$/g, '')).filter(Boolean).join('/')}`,
+      route,
       isPublic: Reflect.getMetadata(IS_PUBLIC, fn) === true,
       declarations: declarationsOf(fn),
-      legacy: [classReq, req].filter((r): r is ModuleRequirement => Boolean(r)),
+      legacy: [...(LEGACY_ROUTE_RULES[route] ?? [])],
     });
   }
   return out;
@@ -140,7 +142,7 @@ describe('P2b platform lane: declarations', () => {
     assert.deepEqual(actual, EXPECTED);
   });
 
-  it('keeps the old @ModuleRole beside the new declaration until P9', () => {
+  it('the frozen old rule restricted exactly these routes (platform admin only)', () => {
     const before = HANDLERS.filter((h) => h.legacy.length > 0).map((h) => h.route).sort();
     assert.deepEqual(before, [
       'DELETE /designations/:id', 'DELETE /locations/:id', 'DELETE /users/:id',
@@ -163,7 +165,7 @@ describe('P2b platform lane: declarations', () => {
   });
 });
 
-describe('P2b platform lane: shadow agreement with the old guard', () => {
+describe('P9 platform lane: the permission guard agrees with the old rule', () => {
   it('agrees for every level combination except D3 and D4', () => {
     const disagreements: string[] = [];
     for (const [person, levels] of Object.entries(PEOPLE)) {

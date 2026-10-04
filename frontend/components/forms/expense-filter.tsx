@@ -2,21 +2,12 @@
 
 import * as React from "react"
 import { FilterIcon } from "lucide-react"
-import type { DateRange } from "react-day-picker"
 
-import { formatAmount, formatDate } from "@/lib/format"
+import { formatAmount } from "@/lib/format"
 import { parseRupeesToPaise, paiseToRupeeInput } from "@/lib/money"
-import {
-  DATE_RANGE_PRESETS,
-  fromApiDate,
-  matchingPreset,
-  toApiDate,
-  type DateRangePresetKey,
-} from "@/lib/date-range-presets"
 import { cn } from "@/lib/utils"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Calendar } from "@/components/ui/calendar"
 import {
   Dialog,
   DialogBody,
@@ -29,6 +20,7 @@ import {
 import { InlineFieldError } from "@/components/ui/inline-field-error"
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group"
 import { Label } from "@/components/ui/label"
+import { DateRangeField, dateRangeLabel } from "@/components/forms/date-range-field"
 
 /**
  * Sections 27.3 and 27.4: the expenses list's filter panel.
@@ -86,10 +78,9 @@ export function ExpenseFilterButton({
   // — so cancelling (Escape, backdrop, the close button) never leaks a
   // half-typed edit into the applied filters.
   const [draft, setDraft] = React.useState<ExpenseFilterValues>(filters)
-  const [range, setRange] = React.useState<DateRange>({
-    from: fromApiDate(filters.spentOnFrom ?? ""),
-    to: fromApiDate(filters.spentOnTo ?? ""),
-  })
+  // Bumped to start the date range field afresh (opening, Clear), so its
+  // half-picked calendar selection never outlives the draft it belonged to.
+  const [rangeKey, setRangeKey] = React.useState(0)
   const [minText, setMinText] = React.useState(paiseToRupeeInput(filters.amountMin ?? null))
   const [maxText, setMaxText] = React.useState(paiseToRupeeInput(filters.amountMax ?? null))
   const [dateError, setDateError] = React.useState<string | null>(null)
@@ -99,50 +90,13 @@ export function ExpenseFilterButton({
     setOpen(next)
     if (next) {
       setDraft(filters)
-      setRange({
-        from: fromApiDate(filters.spentOnFrom ?? ""),
-        to: fromApiDate(filters.spentOnTo ?? ""),
-      })
+      setRangeKey((k) => k + 1)
       setMinText(paiseToRupeeInput(filters.amountMin ?? null))
       setMaxText(paiseToRupeeInput(filters.amountMax ?? null))
       setDateError(null)
       setAmountError(null)
     }
   }
-
-  const activePreset = matchingPreset(draft.spentOnFrom, draft.spentOnTo)
-
-  function choosePreset(key: DateRangePresetKey) {
-    const preset = DATE_RANGE_PRESETS.find((p) => p.key === key)
-    if (!preset?.range) {
-      // "Custom range": leave whatever is already picked (or nothing)
-      // and let the calendar drive it from here.
-      return
-    }
-    const { from, to } = preset.range()
-    setRange({ from, to })
-    setDraft((d) => ({ ...d, spentOnFrom: toApiDate(from), spentOnTo: toApiDate(to) }))
-    setDateError(null)
-  }
-
-  function onCalendarSelect(selected: DateRange | undefined) {
-    setRange(selected ?? { from: undefined, to: undefined })
-    setDraft((d) => ({
-      ...d,
-      spentOnFrom: selected?.from ? toApiDate(selected.from) : undefined,
-      spentOnTo: selected?.to ? toApiDate(selected.to) : undefined,
-    }))
-    setDateError(null)
-  }
-
-  const rangeText =
-    draft.spentOnFrom && draft.spentOnTo
-      ? `${formatDate(draft.spentOnFrom)} to ${formatDate(draft.spentOnTo)}`
-      : draft.spentOnFrom
-        ? `From ${formatDate(draft.spentOnFrom)}`
-        : draft.spentOnTo
-          ? `Until ${formatDate(draft.spentOnTo)}`
-          : "No date range chosen"
 
   function handleApply() {
     // Section 27.3/27.4 + the inverted-range guard: the backend silently
@@ -221,43 +175,16 @@ export function ExpenseFilterButton({
         </DialogHeader>
         <DialogBody>
           <div className="flex flex-col gap-6">
-            <section className="flex flex-col gap-2">
-              <Label>Date range</Label>
-              <div className="flex flex-col gap-4 md:flex-row">
-                <div className="flex shrink-0 flex-col gap-1">
-                  {DATE_RANGE_PRESETS.map((preset) => (
-                    <button
-                      key={preset.key}
-                      type="button"
-                      onClick={() => choosePreset(preset.key)}
-                      className={cn(
-                        "rounded-lg border px-3 py-2 text-left text-body transition-colors",
-                        "hover:bg-surface-control",
-                        "outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary-ring",
-                        activePreset === preset.key
-                          ? "border-primary bg-primary-subtle text-text-primary"
-                          : "border-transparent text-text-secondary",
-                      )}
-                    >
-                      {preset.label}
-                    </button>
-                  ))}
-                </div>
-                {activePreset === "custom" || activePreset === undefined ? (
-                  <Calendar
-                    mode="range"
-                    numberOfMonths={2}
-                    selected={range}
-                    defaultMonth={range.from}
-                    onSelect={onCalendarSelect}
-                  />
-                ) : null}
-              </div>
-              {/* Section 27.4: the chosen range always displays as
-                  readable text, never only as "Custom". */}
-              <p className="text-label text-text-secondary">{rangeText}</p>
-              <InlineFieldError>{dateError}</InlineFieldError>
-            </section>
+            <DateRangeField
+              key={rangeKey}
+              from={draft.spentOnFrom}
+              to={draft.spentOnTo}
+              onChange={(spentOnFrom, spentOnTo) => {
+                setDraft((d) => ({ ...d, spentOnFrom, spentOnTo }))
+                setDateError(null)
+              }}
+              error={dateError}
+            />
 
             {showAmounts ? (
             <section className="flex flex-col gap-2">
@@ -309,7 +236,7 @@ export function ExpenseFilterButton({
             variant="secondary"
             onClick={() => {
               setDraft({})
-              setRange({ from: undefined, to: undefined })
+              setRangeKey((k) => k + 1)
               setMinText("")
               setMaxText("")
               setDateError(null)
@@ -325,21 +252,6 @@ export function ExpenseFilterButton({
       </DialogContent>
     </Dialog>
   )
-}
-
-/**
- * The one place a date-range filter becomes readable text — used for
- * both the on-screen chip (below) and the PDF export's heading
- * (`record-list.tsx`'s `describeFilters`), per section 1 rule 4: a
- * label is built once, not once per format.
- */
-function dateRangeLabel(from?: string, to?: string): string | null {
-  if (!from && !to) return null
-  return from && to
-    ? `${formatDate(from)} to ${formatDate(to)}`
-    : from
-      ? `From ${formatDate(from)}`
-      : `Until ${formatDate(to!)}`
 }
 
 /** Same reasoning as `dateRangeLabel`, for the amount range. */

@@ -50,15 +50,10 @@ export interface SearchField {
  * - `{ unscoped: 'master' | 'own-data', why }`: stated, never silent.
  *   'master' = a master list behind its `manage` key (All only);
  *   'own-data' = only the caller's own rows, by construction.
- * - `{ unscoped: 'legacy-until-p9', why }`: a caller the OLD route guard
- *   still lets in but the new one will refuse at P9 (an intended
- *   difference, e.g. D4), answered exactly as before roles until then.
- *   Pair it with a reviewed exemption marker in `baseWhere`. P9
- *   deletes every one: the new guard then refuses these callers first.
  */
 export type ListScope =
   | { key: PermissionKey; record: RecordType; alias: string }
-  | { unscoped: 'master' | 'own-data' | 'legacy-until-p9'; why: string };
+  | { unscoped: 'master' | 'own-data'; why: string };
 
 export type FilterBuilder = (
   value: string,

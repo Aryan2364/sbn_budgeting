@@ -252,26 +252,16 @@ export interface Matchable {
   matchedValue: string | null
 }
 
-/** CONTRACT §1. What was `role` is now `modules.budget`. */
-export type ModuleAccess = {
-  platform?: 'admin'
-  budget?: 'admin' | 'staff'
-  complaints?: 'admin' | 'member'
-}
-
 export interface AuthUser {
   id: string
   name: string
   email: string | null
   phone: string | null
   designation: { id: string; name: string; seedKey: string | null } | null
-  /**
-   * Today's per-module levels. Kept on the payload until access plan
-   * P11 so an already-open old tab keeps working through deploys, and
-   * read by NOTHING in this app: every permission question goes
-   * through lib/permissions.ts (kit 26.3), which reads `access` below.
-   */
-  modules: ModuleAccess
+  // The payload still carries the old per-module levels until access
+  // plan P11, for already-open old tabs. This app reads none of it:
+  // every permission question goes through lib/permissions.ts (kit
+  // 26.3), which reads `access` below, so the type leaves it out.
 }
 
 /**
@@ -392,7 +382,6 @@ export interface Person {
   canLogin: boolean
   designation: { id: string; name: string } | null
   reportsTo: { id: string; name: string } | null
-  modules: ModuleAccess
   /**
    * What points at this person — sites they manage or supervise,
    * expenses they booked, complaints still open with them. The API
@@ -543,18 +532,14 @@ export const pick = {
     ),
 }
 
-/** `POST/PATCH /users`. `null` in `modules` removes that module. */
+/** `POST/PATCH /users`: a person's details. Their roles are set on the Access screens (kit 40.6 rule 9). */
 export interface PersonBody {
   name: string
   email?: string | null
   phone?: string | null
   designationId?: string | null
+  /** An access change (O8): sent only by someone who holds access.rights.manage. */
   reportsToId?: string | null
-  modules?: {
-    platform?: 'admin' | null
-    budget?: 'admin' | 'staff' | null
-    complaints?: 'admin' | 'member' | null
-  }
   canLogin: boolean
   password?: string
 }

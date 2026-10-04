@@ -18,8 +18,8 @@ import { runPickQuery } from './pick-query';
  * 3.5 rule 6), never by looking it up here. That is what retires the
  * old pickers' preload of every person, which stopped at 100.
  *
- * Decided by the new route guard from the start (NEW_SYSTEM_PREFIXES):
- * a caller without the Pick gets 403 with the kit 26.2 reason.
+ * Decided by the permission guard (@PickOf): a caller without the
+ * Pick gets 403 with the kit 26.2 reason.
  */
 
 /** A single query-string value, or a 400; `?q=a&q=b` is not a search. */

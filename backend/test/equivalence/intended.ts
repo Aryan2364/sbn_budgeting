@@ -32,7 +32,7 @@ const same = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.str
 
 /**
  * D7: the `/pick/*` and `/access/*` routes exist (plan 6.3.3). They are
- * new-system routes (permission.guard.ts NEW_SYSTEM_PREFIXES), so the
+ * routes that exist only in the new system, so the
  * baseline has neither the route nor its cases. Only ADDED routes and
  * cases under these prefixes match; one missing from a run never does.
  */
@@ -90,6 +90,14 @@ export interface IntendedWorld {
    * -> its status.
    */
   selfApprovals: ReadonlyMap<string, string>;
+  /**
+   * The baseline's cases by key, for the switch-over matchers (D2, D3,
+   * D4), which judge a whole case by its two statuses. Without it they
+   * match nothing.
+   */
+  baselineCases?: Readonly<Record<string, { status: unknown }>>;
+  /** The switch-over's people and routes (D2, D4). Without it D2 and D4 match nothing. */
+  switchOver?: SwitchWorld;
 }
 
 export const D6_ACTION_ROUTES: readonly string[] = [
@@ -172,6 +180,10 @@ function d5IdFor(d: Difference): string | null {
 /** The id of the intended difference this one is, or null when it is unexplained. */
 export function intendedIdFor(d: Difference, world?: IntendedWorld): string | null {
   if ((d.kind === 'route-only-in-run' || d.kind === 'case-only-in-run') && isNewSystemRoute(d.key)) return 'D7';
+  if (d.kind === 'field' && world) {
+    const id = switchOverIdFor(d, world);
+    if (id) return id;
+  }
   const d5 = d5IdFor(d);
   if (d5) return d5;
   if (d.kind === 'field' && world) {
@@ -234,46 +246,19 @@ export function matchIntended(diffs: readonly Difference[], world?: IntendedWorl
 }
 
 // ---------------------------------------------------------------------
-// Shadow disagreements (plan P2b-P9): the new route guard runs beside
-// the old one and logs every request on which the two disagree
-// (src/access/permission.guard.ts). With the decision 23 mapping
-// applied (plan 6.3.1), every such line must be one of the intended
-// differences below, matched by id and matcher, faithful to plan
-// 6.3.3. Anything else is unplanned and fails the run.
+// The switch-over (plan P9, 6.3.3): D2, D3 and D4.
+//
+// From P2b to P9 the new route guard ran in SHADOW beside the old one,
+// and these three were matched as disagreements in its log. P9 deleted
+// the old guard: the permission guard now decides, so they show as
+// differences from the baseline instead. The baseline is NOT re-recorded
+// (it stays the reference, the old build's answers); each is matched
+// here by id and matcher, case by case, on the case's two statuses.
 // ---------------------------------------------------------------------
-
-/** One `ACCESS-SHADOW` line, parsed. */
-export interface ShadowLine {
-  method: string;
-  /** The concrete request path, ids filled in. */
-  path: string;
-  user: string;
-  old: 'allow' | 'deny';
-  next: 'allow' | 'deny';
-  /** Present when the new guard denies: the key it wanted. */
-  permission?: string;
-  raw: string;
-}
-
-const SHADOW_RE = /^(\S+) (\S+) user=(\S+) old=(allow|deny) new=(allow|deny)(?: permission=(\S+))?$/;
-
-export function parseShadowLine(line: string): ShadowLine | null {
-  const m = SHADOW_RE.exec(line);
-  if (!m) return null;
-  return {
-    method: m[1]!,
-    path: m[2]!,
-    user: m[3]!,
-    old: m[4] as 'allow' | 'deny',
-    next: m[5] as 'allow' | 'deny',
-    permission: m[6],
-    raw: line,
-  };
-}
 
 /**
  * D3: the full master lists need `manage` from P9; everyone else uses
- * /pick/... Route template -> the manage key the new guard asks for.
+ * /pick/... Route template -> the manage key the guard asks for.
  * `site-locations` is the locations alias (plan 5.3.3).
  */
 export const D3_MASTER_READS: Readonly<Record<string, string>> = {
@@ -293,92 +278,133 @@ export const D3_MASTER_READS: Readonly<Record<string, string>> = {
 export const D4_ROUTE = 'GET /api/users/picker';
 export const D4_KEY = 'platform.people.pick';
 
-export interface ShadowWorld {
+export interface SwitchWorld {
   /**
-   * The route template a concrete request hit ("GET /api/cost-heads/:id"),
-   * and the module of the key its declaration names. Null if no route matches.
+   * D2's people, from the mapping report (plan 5.4 items 2 and 3), by
+   * their case label: each platform admin Admin gives more than they
+   * had, and the modules they gain ('budget', 'complaints').
    */
-  routeOf(method: string, path: string): { route: string; module: string | null } | null;
-  /**
-   * D2's people, from the mapping report (plan 5.4 items 2 and 3): each
-   * platform admin Admin gives more than they had, and the modules they
-   * gain ('budget', 'complaints').
-   */
-  adminGains: ReadonlyMap<string, ReadonlySet<string>>;
-  /** D4's people: no user_module_access row today. */
+  d2Gains: ReadonlyMap<string, ReadonlySet<string>>;
+  /** D4's people, by case label: no user_module_access row today. */
   noModuleRows: ReadonlySet<string>;
+  /** "GET /api/cost-heads/:id" -> the module of the key its declaration names, or null. */
+  moduleOf(route: string): string | null;
 }
 
-/** The intended difference this shadow line is, or null when it is unplanned. */
-export function shadowIdFor(l: ShadowLine, world: ShadowWorld): string | null {
-  const hit = world.routeOf(l.method, l.path);
-  if (!hit) return null;
+/** The case's two statuses, or null when either side is missing. */
+function statuses(d: Difference, world: IntendedWorld): { base: unknown; run: unknown } | null {
+  const base = world.baselineCases?.[d.key];
+  const run = world.runCases[d.key] as { status?: unknown } | undefined;
+  return base && run ? { base: base.status, run: run.status } : null;
+}
 
-  // D2: a platform admin maps to Admin and gains the modules they lacked:
-  // old deny -> new allow, on those modules' routes, for those people only.
-  if (l.old === 'deny' && l.next === 'allow') {
-    const gains = world.adminGains.get(l.user);
-    if (gains && hit.module && gains.has(hit.module)) return 'D2';
-    return null;
+/** "user|target" -> the user's case label. */
+const personOf = (who: string): string => who.split('|')[0] ?? '';
+
+const REFUSED = new Set<unknown>([403, 404]);
+
+/**
+ * D2: a platform admin maps to Admin and gains what they lacked, on the
+ * gained modules' routes, for the people the mapping report names only.
+ * A case they were refused (403, or 404 out of scope) and now get any
+ * other answer short of a server error is D2 in every field. A case they already reached and
+ * still reach with the same status may only WIDEN: no id lost, and the
+ * totals, aggregates, flags and body that follow.
+ */
+function d2IdFor(d: Difference, world: IntendedWorld, route: string, who: string): string | null {
+  const sw = world.switchOver;
+  const gains = sw?.d2Gains.get(personOf(who));
+  const module = sw?.moduleOf(route) ?? null;
+  if (!gains || !module || !gains.has(module)) return null;
+  const st = statuses(d, world);
+  if (!st) return null;
+  // Refused before; now any answer the route gives a holder, including
+  // today's workflow refusals (409, 422), but never a server error.
+  if (REFUSED.has(st.base)) return st.run !== st.base && typeof st.run === 'number' && st.run < 500 ? 'D2' : null;
+  if (st.run !== st.base || d.field === 'status') return null;
+  if (d.field === 'ids') {
+    const after = new Set((d.run as string[] | undefined) ?? []);
+    return ((d.baseline as string[] | undefined) ?? []).every((id) => after.has(id)) ? 'D2' : null;
   }
-
-  // From here the new guard denies what the old one allowed.
-  if (l.old !== 'allow' || l.next !== 'deny') return null;
-
-  // D3: GETs of the full master lists by non-managers (the new guard asks for manage).
-  const d3Key = D3_MASTER_READS[hit.route];
-  if (d3Key && l.permission === d3Key) return 'D3';
-
-  // D4: /users/picker for people with no module rows today.
-  if (hit.route === D4_ROUTE && l.permission === D4_KEY && world.noModuleRows.has(l.user)) return 'D4';
-
-  return null;
+  return 'D2';
 }
 
-export interface ShadowMatch {
-  unmatched: ShadowLine[];
-  /** Intended id -> how many lines it explained. */
-  matched: Record<string, number>;
-  /** Intended id -> the people it touched. */
-  people: Record<string, Set<string>>;
-  /** Lines the parser did not understand (always unplanned). */
-  unparsed: string[];
+/** D3: a master list GET answered 200 in the baseline, now 403 (the guard asks for manage). */
+function d3IdFor(d: Difference, world: IntendedWorld, route: string): string | null {
+  if (!D3_MASTER_READS[route]) return null;
+  const st = statuses(d, world);
+  return st?.base === 200 && st.run === 403 ? 'D3' : null;
 }
 
-export function matchShadow(lines: readonly string[], world: ShadowWorld): ShadowMatch {
-  const out: ShadowMatch = { unmatched: [], matched: {}, people: {}, unparsed: [] };
-  for (const raw of lines) {
-    const l = parseShadowLine(raw);
-    if (!l) {
-      out.unparsed.push(raw);
-      continue;
-    }
-    const id = shadowIdFor(l, world);
-    if (!id) {
-      out.unmatched.push(l);
-      continue;
-    }
-    out.matched[id] = (out.matched[id] ?? 0) + 1;
-    (out.people[id] ??= new Set()).add(l.user);
+/** D4: the picker answered 200 to someone with no module rows today, now 403. */
+function d4IdFor(d: Difference, world: IntendedWorld, route: string, who: string): string | null {
+  if (route !== D4_ROUTE || !world.switchOver?.noModuleRows.has(personOf(who))) return null;
+  const st = statuses(d, world);
+  return st?.base === 200 && st.run === 403 ? 'D4' : null;
+}
+
+/** D2, D3 or D4 for one field difference, or null. */
+export function switchOverIdFor(d: Difference, world: IntendedWorld): string | null {
+  if (d.kind !== 'field') return null;
+  const { route, who } = splitKey(d.key);
+  return d2IdFor(d, world, route, who) ?? d3IdFor(d, world, route) ?? d4IdFor(d, world, route, who);
+}
+
+/**
+ * Against a PRE-SWITCH build's answers (a shadow-mode build, which
+ * already carried D1, D5, D6 and D7): only D2, D3 and D4 may differ.
+ * Anything else, including a difference that would be D1, D6 or D7
+ * against the old baseline, is unmatched.
+ */
+export function matchSwitchOnly(diffs: readonly Difference[], world: IntendedWorld): Matched {
+  const unmatched: Difference[] = [];
+  const matched: Record<string, number> = {};
+  for (const d of diffs) {
+    const id = switchOverIdFor(d, world);
+    if (id) matched[id] = (matched[id] ?? 0) + 1;
+    else unmatched.push(d);
+  }
+  return { unmatched, matched };
+}
+
+/**
+ * Plan 6.3.2: every listed entry appears. D2, D3 and D4 must each match
+ * at least one difference when their population is not empty, and every
+ * person D2 names must show at least one. One line per miss.
+ *   d2People   D2's people (case labels) who can sign in;
+ *   d3Expected someone who can sign in holds no master's manage key;
+ *   d4Expected someone who can sign in has no module rows.
+ */
+export function missingSwitchOver(
+  diffs: readonly Difference[],
+  world: IntendedWorld,
+  expect: { d2People: readonly string[]; d3Expected: boolean; d4Expected: boolean },
+): string[] {
+  const seen: Record<string, number> = {};
+  const d2Seen = new Set<string>();
+  for (const d of diffs) {
+    const id = switchOverIdFor(d, world);
+    if (!id) continue;
+    seen[id] = (seen[id] ?? 0) + 1;
+    if (id === 'D2') d2Seen.add(personOf(splitKey(d.key).who));
+  }
+  const out: string[] = [];
+  if (expect.d2People.length && !seen.D2) out.push('expected intended difference D2 never appeared');
+  if (expect.d3Expected && !seen.D3) out.push('expected intended difference D3 never appeared');
+  if (expect.d4Expected && !seen.D4) out.push('expected intended difference D4 never appeared');
+  for (const p of expect.d2People) {
+    if (!d2Seen.has(p)) out.push(`D2 lists ${p} (mapping report), but they gained nothing`);
   }
   return out;
 }
 
-/** The shadow ids this phase expects to see (plan 6.3.2: every listed entry appears). */
-export const EXPECTED_SHADOW_IDS = ['D2', 'D3', 'D4'] as const;
-
-/** Route template matching for ShadowWorld.routeOf. A static segment beats a parameter. */
-export function routeMatcher(
+/**
+ * Route template -> the module of its declaration, from the harness's
+ * discovered routes (support/app.ts `declaredModule`).
+ */
+export function moduleLookup(
   routes: ReadonlyArray<{ method: string; path: string; declaredModule: string | null }>,
-): ShadowWorld['routeOf'] {
-  const compiled = routes.map((r) => ({
-    ...r,
-    params: (r.path.match(/:/g) ?? []).length,
-    re: new RegExp(`^${r.path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/:[A-Za-z]+/g, '[^/]+')}$`),
-  }));
-  return (method, path) => {
-    const hits = compiled.filter((r) => r.method === method && r.re.test(path)).sort((a, b) => a.params - b.params);
-    const best = hits[0];
-    return best ? { route: `${best.method} ${best.path}`, module: best.declaredModule } : null;
-  };
+): SwitchWorld['moduleOf'] {
+  const byRoute = new Map(routes.map((r) => [`${r.method} ${r.path}`, r.declaredModule]));
+  return (route) => byRoute.get(route) ?? null;
 }

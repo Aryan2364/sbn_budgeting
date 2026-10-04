@@ -78,13 +78,9 @@ describe('complaints lane: scope through the routes (P3b)', { skip: dbTestsEnabl
     await resyncAccessMapping(db.client, { apply: true });
     F = await import('../equivalence/fixtures');
 
-    // A Selected-sites viewer: no_module gets today's complaints access
-    // (so the old route guard, which still decides until P9, lets them
-    // in) and ONLY a test role, view at Selected sites, ticked on Site A.
-    await db.client.query(
-      `insert into user_module_access (user_id, module, role) values ($1, 'complaints', 'member')`,
-      [F.U.no_module],
-    );
+    // A Selected-sites viewer: no_module has no module rows (from P9 the
+    // permission guard decides from roles alone) and ONLY a test role,
+    // view at Selected sites, ticked on Site A.
     await db.client.query(`insert into roles (id, name) values ($1, 'Test: view complaints on selected sites')`, [
       VIEWER_ROLE,
     ]);

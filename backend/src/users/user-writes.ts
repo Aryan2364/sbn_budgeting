@@ -2,7 +2,6 @@ import { UnprocessableEntityException } from '@nestjs/common';
 import type { Pool, PoolClient } from 'pg';
 
 import type { AuthModules } from '../common/current-user';
-import type { ModuleName } from '../common/module-access.decorator';
 
 type Db = Pool | PoolClient;
 
@@ -10,6 +9,9 @@ type Db = Pool | PoolClient;
  * The write helpers the people form and the import share, so a person
  * saved either way ends up in exactly the same state.
  */
+
+/** Today's three modules, as user_module_access names them (the compatibility shim; P11 removes it). */
+export type ModuleName = 'platform' | 'budget' | 'complaints';
 
 /** Which roles each module accepts. Mirrors user_module_access_role_check (0009). */
 export const MODULE_ROLES: Record<ModuleName, readonly string[]> = {

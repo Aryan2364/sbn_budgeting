@@ -12,8 +12,8 @@ import type { AuthModules, AuthUser } from '../common/current-user';
  * assignments and `active` are read here fresh on every request and
  * never cached.
  *
- * `modules` (the old levels) stays until P11, for the old guard and for
- * already-open tabs.
+ * `modules` (the old levels) stays until P11, for already-open tabs and
+ * the compatibility shim. Nothing decides access from it (P9).
  */
 export const AUTH_USER_SELECT = `
   select u.id, u.name, u.email, u.phone, u.can_login, u.active, u.password_hash,

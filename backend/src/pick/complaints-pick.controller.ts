@@ -20,7 +20,7 @@ import { runPickQuery } from './pick-query';
  * fields only, at most 50 matches ordered by name, searched on the
  * server by `q`, no paging and no `ids=` (a form shows its saved value
  * from the name embedded in the record, kit 3.5 rule 6). Decided by the
- * new route guard from the start (NEW_SYSTEM_PREFIXES).
+ * permission guard (@PickOf).
  */
 
 /** A single query-string value, or a 400; `?q=a&q=b` is not a search. */

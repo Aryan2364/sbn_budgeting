@@ -132,6 +132,12 @@ It pulls the new images, applies any new migrations, restarts the
 containers, and prunes the old images. Running it twice is harmless —
 migrations are checksummed and a second run is a no-op.
 
+Before it prunes, it waits up to 60 seconds for the backend to be
+running, to log `API listening`, and to stay up. A backend that refuses
+to start (a boot check failing, a missing setting) makes it print
+`DEPLOY FAILED: the backend did not start` with the backend's last 30
+log lines, and exit non-zero instead of printing `Done`.
+
 ## The database
 
 Amazon RDS, `database-1.cxoqkkq469da.ap-south-1.rds.amazonaws.com`, in

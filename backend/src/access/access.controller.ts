@@ -1,5 +1,4 @@
 import {
-  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -33,9 +32,9 @@ import { Can } from './decorators';
  *                    form (R12, kit 40.2 rule 8).
  *   People           GET /access/people (with uncoveredUnits),
  *                    GET /access/people/:id,
- *                    PUT /access/people/:id/access (roles and ticked
- *                    sites together), PUT /access/people/:id/active,
- *                    PUT /access/people/:id/reports-to.
+ *                    PUT /access/people/:id/access (roles, ticked
+ *                    sites and, when sent, who they report to: one
+ *                    request, one transaction), PUT /access/people/:id/active.
  *                    GET /access/units: every site, unpaginated, with its
  *                    location; the location shortcut is the client's
  *                    (ticks are stored per site, decision 3).
@@ -74,18 +73,19 @@ export class PersonAccessDto {
   @ArrayMaxSize(5000)
   @IsUUID('all', { each: true, message: 'Choose sites from the list' })
   unitIds!: string[];
+
+  /**
+   * Who they report to, saved in the same transaction as the roles and
+   * sites (O8). Absent = unchanged; null = they report to nobody.
+   */
+  @IsOptional()
+  @IsUUID('all', { message: 'Choose who they report to from the list' })
+  reportsToId?: string | null;
 }
 
 export class ActiveDto {
   @IsBoolean({ message: 'Say whether this person is active' })
   active!: boolean;
-}
-
-export class ReportsToDto {
-  /** null = they report to nobody. Required, so a missing key is not read as "nobody". */
-  @IsOptional()
-  @IsUUID('all', { message: 'Choose who they report to from the list' })
-  reportsToId?: string | null;
 }
 
 const actorOf = (user: AuthUser): AuditActor => ({ id: user.id, name: user.name });
@@ -174,20 +174,6 @@ export class AccessController {
     @CurrentAccess() access: AccessContext,
   ) {
     return this.access.setActive(access, actorOf(user), id, body.active);
-  }
-
-  @Put('people/:id/reports-to')
-  @Can('access.rights.manage')
-  setReportsTo(
-    @Param('id') id: string,
-    @Body() body: ReportsToDto,
-    @CurrentUser() user: AuthUser,
-    @CurrentAccess() access: AccessContext,
-  ) {
-    if (body.reportsToId === undefined) {
-      throw new BadRequestException('Say who they report to, or send null for nobody.');
-    }
-    return this.access.setReportsTo(access, actorOf(user), id, body.reportsToId);
   }
 
   @Get('units')

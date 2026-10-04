@@ -25,8 +25,8 @@ import { SKIP_REASON, dbTestsEnabled, openScratchDatabase, type ScratchDb } from
  *     list is the scoped set; a person outside it is the same 404;
  *   - PATCH and DELETE /users/:id: out of view scope 404, visible but
  *     outside the action's scope 403 with the reason;
- *   - GET /users/picker (the alias): scoped by the Pick, and until P9 a
- *     caller with no Pick (D4) still gets today's whole list.
+ *   - GET /users/picker (the alias): scoped by the Pick; from P9 a
+ *     caller with no Pick (D4) is refused 403.
  *
  * The graph:
  *   ceo
@@ -119,11 +119,6 @@ async function seed(db: ScratchDb['client']): Promise<void> {
   ];
   for (const [who, roleId] of give) {
     await db.query('insert into user_roles (user_id, role_id) values ($1, $2)', [P[who], roleId]);
-    // Until P9 the OLD guard decides /users: these callers are platform
-    // admins there, so the new scope is what narrows what they see.
-    if (who !== 'mgrA') {
-      await db.query(`insert into user_module_access (user_id, module, role) values ($1, 'platform', 'admin')`, [P[who]]);
-    }
   }
   await db.query('commit');
 }
@@ -330,13 +325,13 @@ describe('platform scope through the real routes (P3b)', { skip: dbTestsEnabled 
 
   // ---- the alias --------------------------------------------------------
 
-  it('GET /users/picker: scoped by the Pick; until P9, a caller with no Pick (D4) gets today\'s list', async () => {
+  it('GET /users/picker: scoped by the Pick; a caller with no Pick is refused 403 (D4, from P9)', async () => {
     assert.deepEqual(labels((await all('/users/picker', 'mgrA')).ids), ['mgrA']);
     assert.deepEqual(labels((await all('/users/picker', 'hod')).ids), ['hod', 'mgrA', 'mgrB', 'supA', 'supB']);
-    const legacy = await all('/users/picker', 'outsider');
-    assert.equal(legacy.status, 200);
-    assert.equal(legacy.total, 70);
-    const shape = await call('/users/picker?pageSize=1', 'outsider');
+    const refused = await call('/users/picker', 'outsider');
+    assert.equal(refused.status, 403);
+    assert.equal(refused.body.permission, 'platform.people.pick');
+    const shape = await call('/users/picker?pageSize=1', 'hod');
     assert.deepEqual(Object.keys(shape.body.data[0]).sort(), ['designationName', 'id', 'matchedField', 'matchedValue', 'name']);
   });
 });

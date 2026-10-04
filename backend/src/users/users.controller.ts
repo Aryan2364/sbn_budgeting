@@ -22,11 +22,10 @@ import {
 } from '../common/crud';
 import { CurrentUser, type AuthModules, type AuthUser } from '../common/current-user';
 import { ListQueryDto } from '../common/list-query.dto';
-import { runListQuery, type ListResult, type ListScope, type MatchInfo } from '../common/list-query';
-import { ModuleRole, type ModuleName } from '../common/module-access.decorator';
+import { runListQuery, type ListResult, type MatchInfo } from '../common/list-query';
 import { normalisePhone, PHONE_SQL } from '../common/phone';
 import { PG_POOL } from '../db/db.module';
-import { applyModules, MODULE_ROLES, type ModulesPatch } from './user-writes';
+import { applyModules, MODULE_ROLES, type ModuleName, type ModulesPatch } from './user-writes';
 
 const blankToNull = ({ value }: { value: unknown }): unknown =>
   typeof value === 'string' && value.trim() === '' ? null : value;
@@ -72,8 +71,9 @@ export class UserDto {
 
   /**
    * The budget role under its old name. The budget people screen sent
-   * it before modules existed; accepted as `modules.budget` so a cached
-   * frontend keeps working through the deploy. `modules.budget` wins.
+   * it before modules existed; accepted as the budget entry of `modules`
+   * so a cached frontend keeps working through the deploy. The entry in
+   * `modules` wins.
    */
   @IsOptional()
   @IsIn(['admin', 'staff'], { message: 'Choose a role' })
@@ -227,10 +227,8 @@ export class UsersController {
    * moved to the Pick (P7, P8). P11 deletes it.
    *
    * Scoped by the people Pick (platform.people.pick) the caller holds.
-   * Until P9 the OLD guard still decides this route and lets every
-   * signed-in user in, so a caller with no Pick (people with no role,
-   * D4) is answered exactly as before roles; from P9 the new guard
-   * refuses them (403) before this runs, and P9 deletes that branch.
+   * A caller with no Pick (people with no role, D4) is refused (403) by
+   * the permission guard before this runs.
    */
   @PickOf('platform.people')
   @Get('picker')
@@ -240,17 +238,10 @@ export class UsersController {
     @Query('designationId') designationId?: string,
     @Query('canLogin') canLogin?: string,
   ): Promise<ListResult<PersonOption & MatchInfo>> {
-    const holdsPick = can(access, 'platform.people.pick');
-    const scope: ListScope = holdsPick
-      ? { key: 'platform.people.pick', record: 'person', alias: 'u' }
-      : { unscoped: 'legacy-until-p9', why: 'D4: no people Pick; the old guard lets them in until P9.' };
     return runListQuery<PersonOption>(
       this.pool,
       {
-        scope,
-        ...(holdsPick
-          ? {}
-          : { baseWhere: '/*scope-exempt: D4, the answer today to a signed-in caller with no people Pick, until P9 refuses them*/ true' }),
+        scope: { key: 'platform.people.pick', record: 'person', alias: 'u' },
         from: `users u left join designations d on d.id = u.designation_id`,
         select: `u.id, u.name, d.name as "designationName"`,
         titleField: { sql: 'u.name', label: 'Name' },
@@ -269,7 +260,6 @@ export class UsersController {
   }
 
   @Get()
-  @ModuleRole('platform', 'admin')
   @Can('platform.people.view')
   list(
     @Query() query: ListQueryDto,
@@ -332,7 +322,6 @@ export class UsersController {
   }
 
   @Get(':id')
-  @ModuleRole('platform', 'admin')
   @Can('platform.people.view')
   get(
     @Param('id', new ParseUUIDPipe()) id: string,
@@ -342,7 +331,6 @@ export class UsersController {
   }
 
   @Post()
-  @ModuleRole('platform', 'admin')
   @Can('platform.people.create')
   async create(
     @Body() body: UserDto,
@@ -389,7 +377,6 @@ export class UsersController {
   }
 
   @Patch(':id')
-  @ModuleRole('platform', 'admin')
   // The access fields (modules, active, reportsToId) also need
   // access.rights.manage (O8), checked in the handler when they change.
   @Can('platform.people.edit')
@@ -480,7 +467,6 @@ export class UsersController {
   }
 
   @Delete(':id')
-  @ModuleRole('platform', 'admin')
   @Can('platform.people.delete')
   @HttpCode(204)
   async remove(

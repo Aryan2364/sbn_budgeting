@@ -11,7 +11,6 @@ import {
 } from '../common/crud';
 import { ListQueryDto } from '../common/list-query.dto';
 import { runListQuery, type ListResult, type MatchInfo } from '../common/list-query';
-import { ModuleRole } from '../common/module-access.decorator';
 import { PG_POOL } from '../db/db.module';
 
 export class DesignationDto {
@@ -44,8 +43,8 @@ export interface DesignationRow {
  * deactivated but never deleted — the cost_heads pattern.
  *
  * The full list (with usage counts) is the Settings screen, behind
- * platform.designations.manage (D3, decided by the old guard until P9:
- * anyone signed in). A screen that only CHOOSES a designation uses the
+ * platform.designations.manage (D3, from P9; before it, anyone signed
+ * in). A screen that only CHOOSES a designation uses the
  * Pick, GET /pick/platform/designations, which everyone holds.
  * Writes are platform admin only.
  */
@@ -107,7 +106,6 @@ export class DesignationsController {
   }
 
   @Post()
-  @ModuleRole('platform', 'admin')
   @Can('platform.designations.manage')
   async create(@Body() body: DesignationDto): Promise<DesignationRow> {
     await this.assertNameFree(body.name, null);
@@ -126,7 +124,6 @@ export class DesignationsController {
   }
 
   @Patch(':id')
-  @ModuleRole('platform', 'admin')
   @Can('platform.designations.manage')
   async update(
     @Param('id', new ParseUUIDPipe()) id: string,
@@ -151,7 +148,6 @@ export class DesignationsController {
   }
 
   @Delete(':id')
-  @ModuleRole('platform', 'admin')
   @Can('platform.designations.manage')
   @HttpCode(204)
   async remove(@Param('id', new ParseUUIDPipe()) id: string): Promise<void> {

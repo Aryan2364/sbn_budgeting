@@ -124,7 +124,7 @@ describe('P4 see amounts: the rules', () => {
     assert.deepEqual(AMOUNT_RULES.map((r) => r.module), ['budget'], 'only Budget has amounts');
   });
 
-  it('every mapped role that holds any Budget key holds budget.amounts.see (no change until P9)', () => {
+  it('every mapped role that holds any Budget key holds budget.amounts.see (switch day changes nothing)', () => {
     const map = buildRoleMap({
       version: 1,
       admin_ids: SEED_ROLES.filter((r) => r.systemKey === 'admin').map((r) => r.id),
@@ -229,8 +229,6 @@ async function seed(db: ScratchDb['client']): Promise<void> {
       await db.query(`insert into role_permissions (role_id, permission_key, scope) values ($1, $2, 'all')`, [ROLE[who], key]);
     }
     await db.query('insert into user_roles (user_id, role_id) values ($1, $2)', [P[who], ROLE[who]]);
-    // Until P9 the old guard decides the budget routes: both pass it.
-    await db.query(`insert into user_module_access (user_id, module, role) values ($1, 'budget', 'admin')`, [P[who]]);
   }
   await db.query(
     `insert into projects (id, donor_name, name, planned_trees) values ($1, 'Donor', 'Amounts project', 100)`,

@@ -326,6 +326,8 @@ export interface RoleInput {
 export interface PersonAccessInput {
   roleIds: string[];
   unitIds: string[];
+  /** Absent = unchanged; null = they report to nobody. */
+  reportsToId?: string | null;
 }
 
 /** A role's ticks, checked against the catalogue. 400 on anything the grid could not have sent. */
@@ -925,11 +927,19 @@ export class AccessService {
     return { ...rest, roles: rolesDetail };
   }
 
-  /** A person's page saves their roles and ticked sites together: one request, one transaction (kit 7.4). */
+  /**
+   * A person's page saves their roles, ticked sites and, when sent, who
+   * they report to, together: one request, one transaction (kit 7.4).
+   * Any refusal (a reporting loop, a role or site that no longer exists,
+   * the last-holder rule) rolls back all of it. Who they report to goes
+   * first, so the closure it rebuilds is in place before the rest;
+   * nothing here bumps access_version (the closure is read per request).
+   */
   async saveAccess(access: AccessContext, actor: AuditActor, id: string, input: PersonAccessInput): Promise<PersonDetail> {
     if (!UUID_RE.test(id)) throw new NotFoundException(PERSON_NOT_FOUND);
     await this.write(actor, async (w) => {
       const person = await w.person(id);
+      if (input.reportsToId !== undefined) await w.setReportsTo(id, input.reportsToId);
       await w.setRoles(person, input.roleIds);
       await w.setUnits(person, input.unitIds);
     });
@@ -939,17 +949,6 @@ export class AccessService {
   async setActive(access: AccessContext, actor: AuditActor, id: string, active: boolean): Promise<PersonDetail> {
     if (!UUID_RE.test(id)) throw new NotFoundException(PERSON_NOT_FOUND);
     await this.write(actor, (w) => w.setActive(id, active));
-    return this.getPerson(access, id);
-  }
-
-  async setReportsTo(
-    access: AccessContext,
-    actor: AuditActor,
-    id: string,
-    reportsToId: string | null,
-  ): Promise<PersonDetail> {
-    if (!UUID_RE.test(id)) throw new NotFoundException(PERSON_NOT_FOUND);
-    await this.write(actor, (w) => w.setReportsTo(id, reportsToId));
     return this.getPerson(access, id);
   }
 

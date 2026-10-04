@@ -60,13 +60,9 @@ describe('complaints workflow layer through the routes (P5)', { skip: dbTestsEna
     await resyncAccessMapping(db.client, { apply: true });
     F = await import('../equivalence/fixtures');
 
-    // A person who may view every complaint and do nothing else: today's
-    // complaints access (so the old route guard, which still decides
-    // until P9, lets them in) and ONLY a test role, view at All.
-    await db.client.query(
-      `insert into user_module_access (user_id, module, role) values ($1, 'complaints', 'member')`,
-      [F.U.no_module],
-    );
+    // A person who may view every complaint and do nothing else: no
+    // module rows (from P9 the permission guard decides from roles alone)
+    // and ONLY a test role, view at All.
     await db.client.query(`insert into roles (id, name) values ($1, 'Test: view complaints only')`, [APPROVE_ONLY_VIEW]);
     await db.client.query(
       `insert into role_permissions (role_id, permission_key, scope) values ($1, 'complaints.complaints.view', 'all')`,

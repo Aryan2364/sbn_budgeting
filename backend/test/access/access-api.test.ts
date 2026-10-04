@@ -384,13 +384,22 @@ describe('access write API through the real routes (P6)', { skip: dbTestsEnabled
     }
   });
 
-  it('reports_to: audited, the closure is rebuilt in the same transaction, a loop is refused', async () => {
-    const res = await call(`/access/people/${U.budget_staff}/reports-to`, U.platform_admin, {
+  it('reports_to with roles and sites: one request, one transaction; audited; the closure rebuilt; no version bump', async () => {
+    const before = await call(`/access/people/${U.budget_staff}`, U.platform_admin);
+    assert.equal(before.status, 200);
+    assert.equal(before.body.reportsTo, null);
+    const heldRoles: string[] = before.body.roles.map((r: any) => r.id);
+    const v0 = await accessVersion(db.client);
+
+    // All three parts change in the one save.
+    const res = await call(`/access/people/${U.budget_staff}/access`, U.platform_admin, {
       method: 'PUT',
-      body: { reportsToId: U.budget_admin },
+      body: { roleIds: [...heldRoles, SEED_ROLE_IDS.complaints_member], unitIds: [S.a], reportsToId: U.budget_admin },
     });
     assert.equal(res.status, 200, JSON.stringify(res.body));
     assert.deepEqual(res.body.reportsTo, { id: U.budget_admin, name: 'Bhavna Budgetadmin' });
+    assert.ok(res.body.roles.some((r: any) => r.id === SEED_ROLE_IDS.complaints_member));
+    assert.deepEqual(res.body.unitIds, [S.a]);
     assert.equal(
       await count(db.client, 'select count(*) from reporting_closure where ancestor_id = $1 and descendant_id = $2', [
         U.budget_admin,
@@ -398,16 +407,79 @@ describe('access write API through the real routes (P6)', { skip: dbTestsEnabled
       ]),
       1,
     );
+    assert.equal(await accessVersion(db.client), v0);
     const [row] = await audits('user.reports_to_changed', U.budget_staff);
     assert.deepEqual(row.before, { reportsTo: null });
     assert.deepEqual(row.after, { reportsTo: { id: U.budget_admin, name: 'Bhavna Budgetadmin' } });
+    // One transaction: the three audit rows carry one timestamp (now() is the transaction's start).
+    const added = (await audits('user.role_added', U.budget_staff)).at(-1);
+    const units = (await audits('user.units_changed', U.budget_staff)).at(-1);
+    assert.equal(added.role_id, SEED_ROLE_IDS.complaints_member);
+    assert.equal(String(added.at), String(row.at));
+    assert.equal(String(units.at), String(row.at));
 
-    const loop = await call(`/access/people/${U.budget_admin}/reports-to`, U.platform_admin, {
+    // Left out, reports_to is unchanged.
+    const same = await call(`/access/people/${U.budget_staff}/access`, U.platform_admin, {
       method: 'PUT',
-      body: { reportsToId: U.budget_staff },
+      body: { roleIds: heldRoles, unitIds: [S.a] },
+    });
+    assert.equal(same.status, 200, JSON.stringify(same.body));
+    assert.deepEqual(same.body.reportsTo, { id: U.budget_admin, name: 'Bhavna Budgetadmin' });
+    assert.equal((await audits('user.reports_to_changed', U.budget_staff)).length, 1);
+  });
+
+  it('a failure in the roles part rolls back reports_to too (one transaction)', async () => {
+    const reportsTo = async (id: string): Promise<string | null> =>
+      (await db.client.query<{ reports_to: string | null }>('select reports_to from users where id = $1', [id])).rows[0]!
+        .reports_to;
+    const closure = (): Promise<number> =>
+      count(db.client, 'select count(*) from reporting_closure where descendant_id = $1', [U.budget_staff]);
+    const rolesBefore = await rolesOf(U.budget_staff);
+    const closureBefore = await closure();
+    const auditBefore = (await audits('user.reports_to_changed', U.budget_staff)).length;
+    assert.equal(await reportsTo(U.budget_staff), U.budget_admin);
+
+    // reports_to is applied first; the unknown role then refuses the save (422).
+    const bad = await call(`/access/people/${U.budget_staff}/access`, U.platform_admin, {
+      method: 'PUT',
+      body: { roleIds: ['00000000-0000-4000-8000-000000000000'], unitIds: [], reportsToId: U.ceo },
+    });
+    assert.equal(bad.status, 422, JSON.stringify(bad.body));
+    assert.equal(await reportsTo(U.budget_staff), U.budget_admin);
+    assert.equal(await closure(), closureBefore);
+    assert.deepEqual(await rolesOf(U.budget_staff), rolesBefore);
+    assert.equal((await audits('user.reports_to_changed', U.budget_staff)).length, auditBefore);
+
+    // The same for a site that does not exist, and to nobody.
+    const badSite = await call(`/access/people/${U.budget_staff}/access`, U.platform_admin, {
+      method: 'PUT',
+      body: { roleIds: rolesBefore, unitIds: ['00000000-0000-4000-8000-000000000000'], reportsToId: null },
+    });
+    assert.equal(badSite.status, 422, JSON.stringify(badSite.body));
+    assert.equal(await reportsTo(U.budget_staff), U.budget_admin);
+
+    // A reporting loop is refused, and nothing else is saved with it.
+    const adminReportsTo = await reportsTo(U.budget_admin);
+    const loop = await call(`/access/people/${U.budget_admin}/access`, U.platform_admin, {
+      method: 'PUT',
+      body: { roleIds: [], unitIds: [], reportsToId: U.budget_staff },
     });
     assert.equal(loop.status, 422);
-    assert.equal((await call(`/access/people/${U.budget_admin}/reports-to`, U.platform_admin, { method: 'PUT', body: {} })).status, 400);
+    assert.match(loop.body.message, /report/);
+    assert.equal(await reportsTo(U.budget_admin), adminReportsTo);
+    assert.ok((await rolesOf(U.budget_admin)).length > 0);
+
+    const notId = await call(`/access/people/${U.budget_staff}/access`, U.platform_admin, {
+      method: 'PUT',
+      body: { roleIds: rolesBefore, unitIds: [], reportsToId: 'nobody' },
+    });
+    assert.equal(notId.status, 400);
+    // The separate reports-to route is gone; the one save carries it.
+    assert.equal(
+      (await call(`/access/people/${U.budget_staff}/reports-to`, U.platform_admin, { method: 'PUT', body: { reportsToId: null } }))
+        .status,
+      404,
+    );
   });
 
   it('the people form: the module selects become seed roles (shim), audited, with the dual-write', async () => {
@@ -432,8 +504,7 @@ describe('access write API through the real routes (P6)', { skip: dbTestsEnabled
   });
 
   it('the people form: active and reports_to need access.rights.manage (O8)', async () => {
-    // A people editor who is a platform admin on the OLD levels (so the old
-    // guard lets them in until P9) but holds no Admin role.
+    // A people editor: view and edit people at All, but no Admin role.
     await db.client.query(`insert into roles (id, name) values ('70000000-0000-4000-8000-000000000001', 'People editor')`);
     await db.client.query(
       `insert into role_permissions (role_id, permission_key, scope) values
@@ -441,7 +512,6 @@ describe('access write API through the real routes (P6)', { skip: dbTestsEnabled
          ('70000000-0000-4000-8000-000000000001', 'platform.people.edit', 'all')`,
     );
     await db.client.query(`insert into user_roles (user_id, role_id) values ($1, '70000000-0000-4000-8000-000000000001')`, [U.raiser]);
-    await db.client.query(`insert into user_module_access (user_id, module, role) values ($1, 'platform', 'admin')`, [U.raiser]);
 
     for (const body of [{ reportsToId: U.ceo }, { active: false }, { modules: { complaints: 'admin' } }]) {
       const res = await call(`/users/${U.budget_staff}`, U.raiser, { method: 'PATCH', body });

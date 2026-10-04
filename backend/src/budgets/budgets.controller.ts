@@ -20,7 +20,6 @@ import {
 } from 'class-validator';
 import type { Pool } from 'pg';
 
-import { ModuleAccess, ModuleRole } from '../common/module-access.decorator';
 import { type AccessContext, CurrentAccess } from '../access/access-context';
 import { Can } from '../access/decorators';
 import { assertRecordAccess, scopeWhere } from '../access/scope';
@@ -73,7 +72,6 @@ export interface BudgetCell {
  * A site's budget is reached through its site (decision 26): the grid
  * of a site outside the caller's budgets scope is not found (R7).
  */
-@ModuleAccess('budget')
 @Controller('sites/:siteId/budget')
 export class BudgetsController {
   constructor(@Inject(PG_POOL) private readonly pool: Pool) {}
@@ -125,7 +123,6 @@ export class BudgetsController {
    * partial save cannot silently wipe the rest of the grid.
    */
   @Put()
-  @ModuleRole('budget', 'admin', 'staff')
   @Can('budget.budgets.edit')
   async replace(
     @Param('siteId', new ParseUUIDPipe()) siteId: string,

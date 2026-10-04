@@ -9,7 +9,6 @@ import { Can } from '../access/decorators';
 import { CurrentUser, type AuthUser } from '../common/current-user';
 import { ListQueryDto } from '../common/list-query.dto';
 import type { ListResult, MatchInfo } from '../common/list-query';
-import { ModuleAccess } from '../common/module-access.decorator';
 import { NoteDto, RaiseComplaintDto, ReassignDto, ResolveDto } from './complaints.dto';
 import {
   ComplaintsService, type ComplaintDetail, type ComplaintRow, type ComplaintSite, type ComplaintSummary, type Tab,
@@ -24,9 +23,8 @@ import {
  * inside the service, after the row is locked. A complaint the caller
  * can't see is a 404 everywhere, so its existence never leaks.
  *
- * Access plan P2b: each handler also carries its new declaration
- * (`@Can`), checked in shadow beside `@ModuleAccess` until P9. The key
- * says only that the person may do this KIND of thing; who is the
+ * Access plan P2b, P9: each handler carries its declaration (`@Can`),
+ * which the permission guard decides. The key says only that the person may do this KIND of thing; who is the
  * supervisor or the approver on THIS complaint stays in permissions.ts
  * (the workflow layer, plan 6.2). RESOLUTIONS C1: `approve` covers
  * approve and send back; `work` covers start and resolve.
@@ -38,7 +36,6 @@ import {
  * action). The workflow layer then decides as before.
  */
 @Controller('complaints')
-@ModuleAccess('complaints')
 export class ComplaintsController {
   constructor(private readonly complaints: ComplaintsService) {}
 

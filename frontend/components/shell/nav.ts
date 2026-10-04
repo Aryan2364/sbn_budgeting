@@ -6,6 +6,7 @@ import {
   MessageSquareWarningIcon,
   ReceiptIcon,
   SettingsIcon,
+  ShieldIcon,
   TreePineIcon,
   WalletIcon,
   type LucideIcon,
@@ -20,7 +21,7 @@ import { MODULE_KEYS, type PermissionKey } from "@/lib/permission-keys"
  * switcher in the sidebar header moves between them (sidebar.tsx).
  *
  * MAXIMUM SEVEN TOP-LEVEL ITEMS PER MODULE. Beyond seven people stop
- * scanning and start hunting. Budget has six, Complaints three. The
+ * scanning and start hunting. Budget has seven, Complaints four. The
  * limit counts the full configured list, not what one user sees (kit
  * 12.1).
  *
@@ -39,7 +40,8 @@ import { MODULE_KEYS, type PermissionKey } from "@/lib/permission-keys"
  * Section 23.2 product rows (one icon per top-level section):
  *   Product mark tree-pine · Budget module wallet · Complaints module
  *   message-square-warning · Projects folder · Sites map-pin · Expenses
- *   receipt · Reports chart-column · Complaints message-square-warning.
+ *   receipt · Reports chart-column · Complaints message-square-warning ·
+ *   Access shield (kit 23.2, 40.1).
  */
 export type ModuleKey = "budget" | "complaints"
 
@@ -136,6 +138,19 @@ const SETTINGS_ITEM: NavItem = {
   permission: SETTINGS_SECTIONS.map((section) => section.permission),
 }
 
+/**
+ * Kit 40.1: ONE sidebar item, Access, with the shield icon, behind the
+ * permission that manages access; everyone else does not see it (kit 26
+ * rule 1). Like Settings it is shared by both modules and appears in
+ * each (access plan P10). Its four section tabs are app/(app)/access.
+ */
+const ACCESS_ITEM: NavItem = {
+  label: "Access",
+  href: "/access",
+  icon: ShieldIcon,
+  permission: "access.rights.manage",
+}
+
 export const MODULES: readonly ModuleDef[] = [
   {
     key: "budget",
@@ -163,6 +178,7 @@ export const MODULES: readonly ModuleDef[] = [
         items: [
           { label: "Reports", href: "/reports", icon: ChartColumnIcon, permission: "budget.reports.view" },
           SETTINGS_ITEM,
+          ACCESS_ITEM,
         ],
       },
     ],
@@ -192,7 +208,7 @@ export const MODULES: readonly ModuleDef[] = [
       },
       {
         label: "Setup",
-        items: [SETTINGS_ITEM],
+        items: [SETTINGS_ITEM, ACCESS_ITEM],
       },
     ],
   },
@@ -205,8 +221,9 @@ export function allowedModules(can: Can): ModuleDef[] {
 
 /**
  * CONTRACT section 4: the active module comes from the path.
- * `/complaints...` is Complaints; `/settings...` belongs to whichever
- * module was last active (`remembered`); everything else is Budget.
+ * `/complaints...` is Complaints; `/settings...` and `/access...` belong
+ * to whichever module was last active (`remembered`); everything else is
+ * Budget.
  * A module the user does not have is never returned while they have
  * another: a complaints-only user on /settings is in Complaints.
  */
@@ -217,15 +234,25 @@ export function moduleForPath(
 ): ModuleKey {
   let key: ModuleKey
   if (pathname === "/complaints" || pathname.startsWith("/complaints/")) key = "complaints"
-  else if (pathname === "/settings" || pathname.startsWith("/settings/")) key = remembered ?? allowed[0] ?? "budget"
+  else if (isSharedPath(pathname)) key = remembered ?? allowed[0] ?? "budget"
   else key = "budget"
   if (!allowed.includes(key) && allowed.length > 0) return allowed[0]
   return key
 }
 
-/** The module a path pins (and so is remembered for /settings), if any. */
+/** /settings and /access are shared by both modules (plan P10: /access is treated like /settings). */
+function isSharedPath(pathname: string): boolean {
+  return (
+    pathname === "/settings" ||
+    pathname.startsWith("/settings/") ||
+    pathname === "/access" ||
+    pathname.startsWith("/access/")
+  )
+}
+
+/** The module a path pins (and so is remembered for /settings and /access), if any. */
 export function pathPinsModule(pathname: string): ModuleKey | null {
-  if (pathname === "/" || pathname.startsWith("/settings") || pathname.startsWith("/login")) return null
+  if (pathname === "/" || isSharedPath(pathname) || pathname.startsWith("/login")) return null
   return pathname === "/complaints" || pathname.startsWith("/complaints/") ? "complaints" : "budget"
 }
 
@@ -255,7 +282,7 @@ export function homeHref(can: Can): string {
     const home = moduleHome(mod, can)
     if (home) return home
   }
-  return settingsSections(can)[0]?.href ?? "/"
+  return settingsSections(can)[0]?.href ?? (can("access.rights.manage") === true ? ACCESS_ITEM.href : "/")
 }
 
 /**

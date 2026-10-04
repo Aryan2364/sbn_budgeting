@@ -8,7 +8,12 @@ import { checkRoutes, type RouteHandler } from '../../src/access/boot-guard';
 import { PERMISSION_KEYS, type PermissionKey } from '../../src/access/catalogue';
 import type { AccessDeclaration } from '../../src/access/decorators';
 import { generatedPath, renderPermissionKeys } from '../../src/access/keys-script';
-import { decide, legacyAllows, reasonFor } from '../../src/access/permission.guard';
+import { ForbiddenException, type ExecutionContext } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
+
+import { Public } from '../../src/common/public.decorator';
+import { Can, SignedIn } from '../../src/access/decorators';
+import { PermissionGuard, UNDECLARED_REASON, decide, reasonFor } from '../../src/access/permission.guard';
 import { buildRoleMap, effectivePermissions } from '../../src/access/role-map.service';
 import { SEED_ROLE_IDS } from '../../src/access/seed-roles';
 
@@ -176,12 +181,71 @@ describe('the route guard decision', () => {
     assert.equal(reasonFor('access.rights.manage'), "Only people allowed to manage roles and people's access can do this.");
   });
 
-  it("mirrors the old guard's rule for the shadow comparison", () => {
-    const user = { id: 'u', name: 'U', email: null, phone: null, designation: null, modules: { budget: 'staff' as const } };
-    assert.equal(legacyAllows(user, []), true);
-    assert.equal(legacyAllows(user, [{ module: 'budget', roles: [] }]), true);
-    assert.equal(legacyAllows(user, [{ module: 'budget', roles: ['admin'] }]), false);
-    assert.equal(legacyAllows(user, [{ module: 'complaints', roles: [] }]), false);
+});
+
+describe('PermissionGuard decides every route (P9)', () => {
+  class Routes {
+    @Can('budget.expenses.view')
+    view(): void {}
+
+    @Can('budget.expenses.delete')
+    remove(): void {}
+
+    // Any signed-in user: the caller's own data.
+    @SignedIn()
+    me(): void {}
+
+    @Public()
+    login(): void {}
+
+    undeclared(): void {}
+
+    @Can('budget.expenses.view')
+    @SignedIn()
+    twice(): void {}
+  }
+  const guard = new PermissionGuard(new Reflector());
+  const staff = ctx([STAFF]);
+
+  function run(name: keyof Routes, access: AccessContext | undefined): boolean {
+    const handler = Routes.prototype[name] as unknown as () => void;
+    const context = {
+      getHandler: () => handler,
+      getClass: () => Routes,
+      switchToHttp: () => ({ getRequest: () => ({ access }) }),
+    } as unknown as ExecutionContext;
+    return guard.canActivate(context);
+  }
+
+  function refusal(name: keyof Routes, access: AccessContext | undefined): unknown {
+    try {
+      run(name, access);
+    } catch (error) {
+      assert.ok(error instanceof ForbiddenException, `${name}: expected a 403`);
+      return error.getResponse();
+    }
+    assert.fail(`${name}: expected a 403`);
+  }
+
+  it('allows a held key, signed-in routes and public routes', () => {
+    assert.equal(run('view', staff), true);
+    assert.equal(run('me', staff), true);
+    assert.equal(run('login', undefined), true);
+  });
+
+  it('refuses a key not held with 403 naming the permission, never a role (R7, kit 26.2)', () => {
+    assert.deepEqual(refusal('remove', staff), {
+      error: 'forbidden',
+      permission: 'budget.expenses.delete',
+      reason: 'Only people allowed to delete expenses can do this.',
+      message: 'Only people allowed to delete expenses can do this.',
+    });
+  });
+
+  it('fails closed: no declaration, several declarations, or no access context', () => {
+    assert.equal((refusal('undeclared', staff) as { reason: string }).reason, UNDECLARED_REASON);
+    assert.equal((refusal('twice', staff) as { reason: string }).reason, UNDECLARED_REASON);
+    assert.equal((refusal('view', undefined) as { reason: string }).reason, 'Sign in to continue.');
   });
 });
 

@@ -28,7 +28,6 @@ import { buildUpdate } from '../common/crud';
 import { CurrentUser, type AuthUser } from '../common/current-user';
 import { ListQueryDto } from '../common/list-query.dto';
 import { runListQuery, type ListResult, type MatchInfo, type WithCan } from '../common/list-query';
-import { ModuleAccess, ModuleRole } from '../common/module-access.decorator';
 import { type AccessContext, CurrentAccess } from '../access/access-context';
 import type { PermissionKey } from '../access/catalogue';
 import { Can } from '../access/decorators';
@@ -146,7 +145,6 @@ const FROM = `
   join sites s on s.id = e.site_id
   join cost_heads ch on ch.id = e.cost_head_id`;
 
-@ModuleAccess('budget')
 @Controller('expenses')
 export class ExpensesController {
   constructor(@Inject(PG_POOL) private readonly pool: Pool) {}
@@ -323,7 +321,6 @@ export class ExpensesController {
   }
 
   @Delete(':id')
-  @ModuleRole('budget', 'admin')
   @Can('budget.expenses.delete')
   @HttpCode(204)
   async remove(

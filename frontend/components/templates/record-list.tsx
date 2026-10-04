@@ -69,7 +69,7 @@ type ColumnPriority = "essential" | "secondary" | "tertiary"
  * every other `RecordList` caller (Sites, Reports, Dashboard, the
  * Settings master lists) unaffected — none of them sets `width`.
  */
-type ColumnWidth = "tight" | "narrow" | "amount"
+type ColumnWidth = "tight" | "narrow" | "amount" | "count" | "status" | "actions"
 
 export interface RecordColumn<T> {
   key: string
@@ -122,6 +122,11 @@ const WIDTH_CLASS: Record<ColumnWidth, string> = {
   tight: "w-col-tight",
   narrow: "w-col-narrow",
   amount: "w-col-amount",
+  // Kit 17.1's own column tokens (access plan P10): col-count 96px,
+  // col-status 152px, col-actions 80px, measured in globals.css.
+  count: "w-col-count",
+  status: "w-col-status",
+  actions: "w-col-actions",
 }
 
 /**
@@ -259,6 +264,16 @@ export interface RecordListProps<T> {
    */
   embedded?: boolean
   /**
+   * Access plan P10: the list's zones 2 to 4 (toolbar, chips, data area,
+   * pagination) WITHOUT zone 1 and the section tabs, because a layout
+   * above it already draws them: app/(app)/access/layout.tsx owns the
+   * page header and the four section tabs (kit 40.1, 33.2), and each
+   * tab's list sits under them in the same PageFrame. Unlike `embedded`
+   * the data area still owns the scroll (section 11.1: only zone 3
+   * scrolls). The header's record count comes back through `onResult`.
+   */
+  headerless?: boolean
+  /**
    * Section 27.3's filter panel, controlled from outside so a caller can
    * persist it (e.g. in the URL, matching how `app/(app)/reports/page.tsx`
    * already reads a `?view=` param via `useSearchParams`). Optional and
@@ -358,6 +373,7 @@ export function RecordList<T extends { id: string }>({
   metaTotal,
   exportPdf,
   embedded = false,
+  headerless = false,
   onResult,
   listState,
   onListStateChange,
@@ -735,6 +751,17 @@ export function RecordList<T extends { id: string }>({
         </div>
         {paginationBar}
       </div>
+    )
+  }
+
+  if (headerless) {
+    // The layout's PageFrame holds these, under its own header and tabs.
+    return (
+      <>
+        {toolbar}
+        {filterChipZone}
+        <ListDataArea footer={paginationBar}>{tableContent}</ListDataArea>
+      </>
     )
   }
 

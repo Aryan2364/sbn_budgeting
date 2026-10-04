@@ -427,6 +427,16 @@
   --spacing-col-ref: 144px;
   --spacing-col-status: 152px;
   --spacing-col-actions: 80px;
+  /* Kit 17.1 and 40.4: a permission grid cell, a tick and its scope.
+     Measured on "Selected sites" (this product's unit word, kit 0.1
+     item 8): 16px tick + 8px + label + 4px + 12px chevron + 32px cell
+     padding fits in 168px, the kit's value, measured on the longer
+     "Selected units". */
+  --spacing-col-scope: 168px;
+  /* Kit 17.1 and 40.10 rule 2: a date and time, the access History's
+     When column. The kit's value; this product's "04/10/26, 11:45 pm"
+     (DATE_TIME_FORMAT) is shorter than the kit's DD Mon YYYY form. */
+  --spacing-col-datetime: 192px;
 
   /* Menu height cap - 16.2: seven rows, then it scrolls. */
   --spacing-menu-max: var(--menu-max-height);

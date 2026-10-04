@@ -20,7 +20,6 @@ import { isPgError, PG_FOREIGN_KEY_VIOLATION, buildUpdate } from '../common/crud
 import { CurrentUser, type AuthUser } from '../common/current-user';
 import { ListQueryDto } from '../common/list-query.dto';
 import { runListQuery, type ListResult, type MatchInfo, type WithCan } from '../common/list-query';
-import { ModuleAccess, ModuleRole } from '../common/module-access.decorator';
 import { type AccessContext, CurrentAccess } from '../access/access-context';
 import type { PermissionKey } from '../access/catalogue';
 import { Can } from '../access/decorators';
@@ -80,7 +79,6 @@ const PROJECT_SELECT = `p.id, p.name, p.donor_name as "donorName",
  * caller can see (plan 6.1.4 item 2): at All, as every role mapped from
  * today holds it, that is every site.
  */
-@ModuleAccess('budget')
 @Controller('projects')
 export class ProjectsController {
   constructor(@Inject(PG_POOL) private readonly pool: Pool) {}
@@ -261,7 +259,6 @@ export class ProjectsController {
    * appearance.
    */
   @Delete(':id')
-  @ModuleRole('budget', 'admin')
   @Can('budget.projects.delete')
   @HttpCode(204)
   async remove(

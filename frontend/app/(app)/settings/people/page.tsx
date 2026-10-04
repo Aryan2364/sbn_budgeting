@@ -12,12 +12,12 @@ import {
   type DesignationPick,
   type ListResponse,
   type Matchable,
-  type ModuleAccess,
   type Person,
   type PersonPick,
   type PersonBody,
 } from "@/lib/api"
 import { reasonFor, useCan } from "@/lib/permissions"
+import { ACCESS_PATHS } from "@/lib/access-api"
 import { formatNumber } from "@/lib/format"
 import { errorMessage, useSession } from "@/components/shell/session"
 import { toast } from "@/components/ui/sonner"
@@ -98,34 +98,19 @@ const loadDesignations = () => pick.designations({ includeInactive: true })
  *
  * ONE list of people. Office staff sign in; a supervisor in the field
  * may sign in by phone; a manager named on a site may never sign in at
- * all. What each person is (designation), who they report to and
- * which modules they can open all live here.
+ * all. What each person is (designation) and who they report to live
+ * here. What they may do does not: roles and selected sites are set on
+ * the Access screens (kit 40.6 rule 9, access plan P10), which this
+ * dialog links to. The old per-module selects are gone with the
+ * compatibility shim they fed.
  *
  * People have no locations (removed 1 Oct 2026, user decision):
  * complaints route by the budget site, which names its own supervisor
  * and manager.
  */
 
-type ModuleKey = "platform" | "budget" | "complaints"
-
-const MODULE_LABEL: Record<ModuleKey, string> = {
-  platform: "Platform",
-  budget: "Budget",
-  complaints: "Complaints",
-}
-
-/** "Budget admin, Complaints member". Said once, used by the row and the export. */
-function describeModules(modules: ModuleAccess | null | undefined): string {
-  const parts: string[] = []
-  if (modules?.platform === "admin") parts.push("Platform admin")
-  if (modules?.budget) parts.push(`Budget ${modules.budget}`)
-  if (modules?.complaints) parts.push(`Complaints ${modules.complaints}`)
-  return parts.length ? parts.join(", ") : "No access"
-}
-
 interface PeopleFilters {
   designationId?: string
-  module?: ModuleKey
   canLogin?: "true" | "false"
 }
 
@@ -192,7 +177,6 @@ export default function PeopleSettingsPage() {
     { header: "Email", cell: (row) => row.email ?? "—", excelValue: (row) => row.email ?? null },
     { header: "Designation", cell: (row) => row.designation?.name ?? "—" },
     { header: "Reports to", cell: (row) => row.reportsTo?.name ?? "—" },
-    { header: "Access", cell: (row) => describeModules(row.modules) },
     { header: "Signs in", cell: (row) => (row.canLogin ? "Yes" : "No") },
   ]
 
@@ -251,12 +235,6 @@ export default function PeopleSettingsPage() {
               onRemove={() => applyFilters({ ...filters, designationId: undefined })}
             />
           ) : null}
-          {filters.module ? (
-            <FilterChip
-              label={`Access: ${MODULE_LABEL[filters.module]}`}
-              onRemove={() => applyFilters({ ...filters, module: undefined })}
-            />
-          ) : null}
           {filters.canLogin ? (
             <FilterChip
               label={SIGN_IN_LABEL[filters.canLogin]}
@@ -275,7 +253,7 @@ export default function PeopleSettingsPage() {
     <>
       <MasterSection
         title="People"
-        description="Everyone in the organisation: what they are, who they report to and what they can open."
+        description="Everyone in the organisation: what they are and who they report to. What they can do is set under Access."
         createLabel="Add person"
         canEdit={canEdit}
         cannotEditReason={reasonFor("platform.people.edit")}
@@ -339,12 +317,6 @@ export default function PeopleSettingsPage() {
             ),
           },
           {
-            key: "modules",
-            label: "Access",
-            priority: "secondary",
-            render: (row) => <Truncate>{describeModules(row.modules)}</Truncate>,
-          },
-          {
             key: "canLogin",
             label: "Signs in",
             className: "hidden w-col-count xl:table-cell",
@@ -402,7 +374,6 @@ export default function PeopleSettingsPage() {
         <PersonDialog
           key={editing?.id ?? "new"}
           person={editing}
-          selfId={user?.id ?? null}
           designations={designations.rows}
           onClose={() => {
             setCreating(false)
@@ -474,29 +445,6 @@ function PeopleFilterButton({
               />
             </div>
             <div className="flex flex-col gap-2">
-              <Label htmlFor="filter-module">Access to</Label>
-              <Select
-                items={{ [ANY]: "Any module", ...MODULE_LABEL }}
-                value={draft.module ?? ANY}
-                onValueChange={(v: string | null) =>
-                  setDraft((d) => ({
-                    ...d,
-                    module: v === "platform" || v === "budget" || v === "complaints" ? v : undefined,
-                  }))
-                }
-              >
-                <SelectTrigger id="filter-module">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={ANY}>Any module</SelectItem>
-                  <SelectItem value="platform">Platform</SelectItem>
-                  <SelectItem value="budget">Budget</SelectItem>
-                  <SelectItem value="complaints">Complaints</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="flex flex-col gap-2">
               <Label htmlFor="filter-can-login">Signing in</Label>
               <Select
                 items={{ [ANY]: "Anyone", true: SIGN_IN_LABEL.true, false: SIGN_IN_LABEL.false }}
@@ -545,15 +493,12 @@ function PeopleFilterButton({
 
 const NONE = "__none__"
 
-type Access = { platform: "admin" | null; budget: "admin" | "staff" | null; complaints: "admin" | "member" | null }
-
 interface PersonValues {
   name: string
   email: string
   phone: string
   designationId: string
   reportsToId: string
-  access: Access
   canLogin: boolean
   password: string
 }
@@ -565,12 +510,6 @@ function valuesOf(person: Person | null): PersonValues {
     phone: person?.phone ?? "",
     designationId: person?.designation?.id ?? NONE,
     reportsToId: person?.reportsTo?.id ?? NONE,
-    access: {
-      platform: person?.modules.platform ?? null,
-      budget: person?.modules.budget ?? null,
-      // A new person gets complaints membership, like an import does.
-      complaints: person ? (person.modules.complaints ?? null) : "member",
-    },
     canLogin: person?.canLogin ?? false,
     password: "",
   }
@@ -580,19 +519,27 @@ type FieldKey = "name" | "email" | "phone" | "reportsTo" | "password"
 
 function PersonDialog({
   person,
-  selfId,
   designations,
   onClose,
   onSaved,
 }: {
   person: Person | null
-  selfId: string | null
   designations: DesignationPick[] | null
   onClose: () => void
   onSaved: () => void
 }) {
   const isEdit = person !== null
-  const isSelf = isEdit && person.id === selfId
+  /**
+   * Who they report to is an access change (O8, access plan P6): the
+   * server needs access.rights.manage for it on top of editing people.
+   * Without it the field is shown, disabled, with the reason (kit 26 rule
+   * 2), and never sent, so the rest of the person still saves. While the
+   * answer is unknown: disabled, no reason (kit 26.1). Roles are not on
+   * this dialog at all; the Access link below goes to them.
+   */
+  const canManageAccess = useCan("access.rights.manage")
+  const manageAccessReason = reasonFor("access.rights.manage")
+  const accessLocked = canManageAccess !== true
   const saved = React.useMemo(() => valuesOf(person), [person])
   const [values, setValues] = React.useState<PersonValues>(saved)
   const [saving, setSaving] = React.useState(false)
@@ -619,8 +566,6 @@ function PersonDialog({
 
   const set = <K extends keyof PersonValues>(key: K, value: PersonValues[K]) =>
     setValues((v) => ({ ...v, [key]: value }))
-  const setAccess = <K extends keyof Access>(key: K, value: Access[K]) =>
-    setValues((v) => ({ ...v, access: { ...v.access, [key]: value } }))
 
   /**
    * A password is required whenever this save would turn sign-in ON for
@@ -699,12 +644,11 @@ function PersonDialog({
         email: values.email.trim() || null,
         phone: values.phone.trim() || null,
         designationId: values.designationId === NONE ? null : values.designationId,
-        reportsToId: values.reportsToId === NONE ? null : values.reportsToId,
-        modules: {
-          platform: values.access.platform,
-          budget: values.access.budget,
-          complaints: values.access.complaints,
-        },
+        // Reports to only from someone who may change it (O8); left out,
+        // the server keeps what the person has.
+        ...(canManageAccess === true
+          ? { reportsToId: values.reportsToId === NONE ? null : values.reportsToId }
+          : {}),
         canLogin: values.canLogin,
         ...(values.canLogin && values.password.trim() ? { password: values.password.trim() } : {}),
       }
@@ -812,6 +756,7 @@ function PersonDialog({
                 </div>
                 <div className="flex min-w-0 flex-col gap-2">
                   <Label htmlFor="person-reports-to">Reports to</Label>
+                  <PermissionTooltip allowed={canManageAccess} reason={manageAccessReason}>
                   <SearchableSelect
                     id="person-reports-to"
                     options={reportsToOptions}
@@ -829,8 +774,10 @@ function PersonDialog({
                     placeholder="Choose a person"
                     searchPlaceholder="Search people"
                     emptyMessage={(q) => `No people match '${q}'.`}
+                    disabled={accessLocked}
                     className={fieldErrors.reportsTo ? "border-danger" : undefined}
                   />
+                  </PermissionTooltip>
                   <InlineFieldError>{fieldErrors.reportsTo}</InlineFieldError>
                 </div>
               </div>
@@ -838,77 +785,30 @@ function PersonDialog({
 
             <section className="flex flex-col gap-4">
               <h3 className="text-card-heading font-medium text-text-primary">Access</h3>
-              <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
-                <div className="flex min-w-0 flex-col gap-2">
-                  <Label htmlFor="person-budget">Budget</Label>
-                  <Select
-                    items={{ [NONE]: "No access", staff: "Staff", admin: "Admin" }}
-                    value={values.access.budget ?? NONE}
-                    onValueChange={(v: string | null) =>
-                      setAccess("budget", v === "admin" || v === "staff" ? v : null)
-                    }
-                  >
-                    <SelectTrigger id="person-budget">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value={NONE}>No access</SelectItem>
-                      <SelectItem value="staff">Staff</SelectItem>
-                      <SelectItem value="admin">Admin</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="flex min-w-0 flex-col gap-2">
-                  <Label htmlFor="person-complaints">Complaints</Label>
-                  <Select
-                    items={{ [NONE]: "No access", member: "Member", admin: "Admin" }}
-                    value={values.access.complaints ?? NONE}
-                    onValueChange={(v: string | null) =>
-                      setAccess("complaints", v === "admin" || v === "member" ? v : null)
-                    }
-                  >
-                    <SelectTrigger id="person-complaints">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value={NONE}>No access</SelectItem>
-                      <SelectItem value="member">Member</SelectItem>
-                      <SelectItem value="admin">Admin</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="flex min-w-0 flex-col gap-2">
-                  <Label htmlFor="person-platform">Platform</Label>
-                  {/* The server refuses removing your own platform admin,
-                      so the control says so before the click (§26). */}
-                  <PermissionTooltip
-                    allowed={!(isSelf && saved.access.platform === "admin")}
-                    reason="This is your own access to Settings. Someone else who manages access has to change it."
-                  >
-                    <Select
-                      items={{ [NONE]: "No access", admin: "Admin" }}
-                      value={values.access.platform ?? NONE}
-                      disabled={isSelf && saved.access.platform === "admin"}
-                      onValueChange={(v: string | null) =>
-                        setAccess("platform", v === "admin" ? "admin" : null)
-                      }
-                    >
-                      <SelectTrigger id="person-platform">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value={NONE}>No access</SelectItem>
-                        <SelectItem value="admin">Admin</SelectItem>
-                      </SelectContent>
-                    </Select>
+              <p className="text-label text-text-secondary">
+                {isEdit
+                  ? "What they can do comes from their roles, set under Access."
+                  : "Once they are added, give them roles under Access › People."}
+              </p>
+              {isEdit ? (
+                <div>
+                  <PermissionTooltip allowed={canManageAccess} reason={manageAccessReason}>
+                    {canManageAccess === true ? (
+                      <Button
+                        variant="secondary"
+                        nativeButton={false}
+                        render={<Link href={ACCESS_PATHS.person(person.id)} />}
+                      >
+                        Edit access
+                      </Button>
+                    ) : (
+                      <Button type="button" variant="secondary" disabled>
+                        Edit access
+                      </Button>
+                    )}
                   </PermissionTooltip>
                 </div>
-              </div>
-              <p className="text-label text-text-secondary">
-                Budget staff book expenses; budget admins also change budgets and
-                settings. Complaint members raise and handle complaints; admins
-                see every complaint. Platform admins manage people and locations.
-              </p>
+              ) : null}
             </section>
 
             <section className="flex flex-col gap-4">

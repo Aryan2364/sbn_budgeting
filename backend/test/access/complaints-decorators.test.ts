@@ -1,26 +1,34 @@
 import assert from 'node:assert/strict';
-import { after, before, describe, it } from 'node:test';
+import { describe, it } from 'node:test';
 
-import { METHOD_METADATA } from '@nestjs/common/constants';
+import { METHOD_METADATA, PATH_METADATA } from '@nestjs/common/constants';
+
+import type { AccessContext } from '../../src/access/access-context';
+import { deriveRoleRows } from '../../src/access/catalogue';
+import { decide } from '../../src/access/permission.guard';
+import { buildRoleMap, effectivePermissions } from '../../src/access/role-map.service';
+import { SEED_ROLES, type LegacyModule } from '../../src/access/seed-roles';
+import { legacyAllows, legacyRuleFor } from '../support/legacy-route-rules';
 
 import { checkRoutes, type RouteHandler } from '../../src/access/boot-guard';
 import { declarationsOf, type AccessDeclaration } from '../../src/access/decorators';
 import { ComplaintCategoriesController } from '../../src/complaint-categories/complaint-categories.controller';
 import { ComplaintsController } from '../../src/complaints/complaints.controller';
 import { NotificationsController } from '../../src/notifications/notifications.controller';
-import { SKIP_REASON, dbTestsEnabled, openScratchDatabase, type ScratchDb } from './support';
 
 /**
- * Access plan P2b, complaints lane ("Done when"):
+ * Access plan P2b, complaints lane ("Done when"), and P9:
  *   - every complaints, complaint-categories and notifications handler
- *     carries its new declaration beside the old one, with the key the
- *     plan's route column (5.3.2, corrected by RESOLUTIONS C1) names;
+ *     carries its one declaration, with the key the plan's route column
+ *     (5.3.2, corrected by RESOLUTIONS C1) names;
  *   - boot validation passes for those handlers, strictly;
- *   - across the equivalence matrix on these routes, with the decision
- *     23 mapping applied (plan 6.3.1), the shadow guard disagrees with
- *     the old guard ONLY where the plan names the difference: D2
- *     (a platform-admin-only person maps to Admin) and D3 (the full
- *     category list needs `manage`; everyone else uses the Pick).
+ *   - for every one of today's level combinations, mapped to the seed
+ *     roles (plan 5.4), the permission guard disagrees with the old
+ *     guard's rule (frozen in test/support/legacy-route-rules.ts) ONLY
+ *     where the plan names the difference: D2 (a platform-admin-only
+ *     person maps to Admin) and D3 (the full category list needs
+ *     `manage`; everyone else uses the Pick). The equivalence harness
+ *     proves the same over the fixtures' real requests.
  */
 
 const can = (key: string): AccessDeclaration => ({ kind: 'can', keys: [key] }) as AccessDeclaration;
@@ -91,81 +99,76 @@ describe('complaints lane: route declarations (P2b)', () => {
   });
 });
 
-/** The complaints lane's route prefixes, as the harness discovers them. */
-const LANE_PREFIXES = ['/api/complaints', '/api/complaint-categories', '/api/notifications'];
-const isLaneRoute = (path: string): boolean =>
-  LANE_PREFIXES.some((p) => path === p || path.startsWith(`${p}/`));
+const METHODS = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'ALL', 'OPTIONS', 'HEAD'];
 
-/** A shadow line: "GET /api/x/<uuid> user=<id> old=allow new=deny permission=<key>". */
-interface ShadowLine {
-  method: string;
-  path: string;
-  user: string;
-  old: string;
-  next: string;
-  permission?: string;
+/** "GET /complaints/:id" -> the handler, for the three controllers. */
+function laneRoutes(): Array<{ route: string; handler: object }> {
+  const out: Array<{ route: string; handler: object }> = [];
+  for (const c of CONTROLLERS) {
+    const base = Reflect.getMetadata(PATH_METADATA, c) as string;
+    const proto = c.prototype as unknown as Record<string, unknown>;
+    for (const name of Object.getOwnPropertyNames(proto)) {
+      const fn = proto[name];
+      if (name === 'constructor' || typeof fn !== 'function') continue;
+      const method = Reflect.getMetadata(METHOD_METADATA, fn) as number | undefined;
+      const path = Reflect.getMetadata(PATH_METADATA, fn) as string | undefined;
+      if (method === undefined || path === undefined) continue;
+      const route = `${METHODS[method]} /${[base, path].map((p) => p.replace(/^\/+|\/+$/g, '')).filter(Boolean).join('/')}`;
+      out.push({ route, handler: fn });
+    }
+  }
+  return out;
 }
-function parseShadow(line: string): ShadowLine {
-  const m = /^(\S+) (\S+) user=(\S+) old=(\S+) new=(\S+)(?: permission=(\S+))?$/.exec(line);
-  assert.ok(m, `unparseable shadow line: ${line}`);
-  return { method: m[1]!, path: m[2]!, user: m[3]!, old: m[4]!, next: m[5]!, permission: m[6] };
+
+const map = buildRoleMap({
+  version: '1',
+  admin_ids: SEED_ROLES.filter((r) => r.systemKey === 'admin').map((r) => r.id),
+  grants: SEED_ROLES.flatMap((r) =>
+    deriveRoleRows(r.grants.map(([key, scope]) => ({ key, scope }))).rows.map(
+      (g) => [r.id, g.key, g.scope] as [string, string, string],
+    ),
+  ),
+});
+
+function contextFor(levels: Partial<Record<LegacyModule, string>>): AccessContext {
+  const roleIds = SEED_ROLES.filter((r) => levels[r.heldBy.module] === r.heldBy.role).map((r) => r.id);
+  return { userId: 'u', roleIds, version: map.version, perms: effectivePermissions(map, roleIds) };
 }
 
-describe('complaints lane: shadow guard agrees with the old guard (P2b)', { skip: dbTestsEnabled ? false : SKIP_REASON }, () => {
-  let db: ScratchDb;
-  let harness: import('../support/app').HarnessApp;
-
-  before(async () => {
-    db = await openScratchDatabase('p2b_complaints', { fixtures: true });
-    const { resyncAccessMapping } = await import('../../src/db/map-access-levels');
-    await resyncAccessMapping(db.client, { apply: true });
-    const url = new URL(process.env.TEST_DATABASE_URL!);
-    url.pathname = `/${db.name}`;
-    process.env.TEST_DATABASE_URL = url.toString();
-    const { startHarnessApp } = await import('../support/app');
-    harness = await startHarnessApp();
-  });
-
-  after(async () => {
-    await harness?.close();
-    await db?.close();
-  });
-
-  it('every disagreement on a complaints-lane route is D2 or D3, and nothing else', async () => {
-    const { discoverRoutes } = await import('../support/app');
-    const { runMatrix } = await import('../equivalence/matrix');
-    const { U } = await import('../equivalence/fixtures');
-    const { shadowDisagreements } = await import('../../src/access/permission.guard');
-
-    const routes = discoverRoutes(harness.app).filter((r) => isLaneRoute(r.path));
-    assert.ok(routes.length >= 21, `expected the lane's 21 routes, found ${routes.length}`);
-
-    shadowDisagreements.length = 0;
-    const run = await runMatrix(harness, routes, db.client);
-    const problems = Object.entries(run.cases).filter(([, c]) => c.status === 'NO-CASE' || c.status === 'ERROR');
-    assert.deepEqual(problems, [], 'every lane route ran');
-
-    const lines = shadowDisagreements.map(parseShadow).filter((l) => isLaneRoute(l.path));
-    assert.ok(shadowDisagreements.length < 1000, 'the shadow log did not overflow its cap');
-
-    // Complaints admins (directly, or through all_admin) manage categories today.
-    const categoryManagers = new Set([U.complaints_admin, U.all_admin]);
-    const unexplained = lines.filter((l) => {
-      // D2: the platform-admin-only person maps to Admin and gains Complaints.
-      if (l.user === U.platform_admin && l.old === 'deny' && l.next === 'allow') return false;
-      // D3: reading the full category list needs manage from P9.
-      if (
-        l.method === 'GET' &&
-        /^\/api\/complaint-categories(\/[^/]+)?$/.test(l.path) &&
-        l.old === 'allow' &&
-        l.next === 'deny' &&
-        l.permission === 'complaints.categories.manage' &&
-        !categoryManagers.has(l.user)
-      ) {
-        return false;
+describe('complaints lane: the permission guard agrees with the old rule, except D2 and D3 (P9)', () => {
+  it('disagrees only where D2 and D3 say, for every level combination', () => {
+    const unexplained: string[] = [];
+    let d2 = 0;
+    let d3 = 0;
+    for (const platform of [undefined, 'admin']) {
+      for (const budget of [undefined, 'admin', 'staff']) {
+        for (const complaints of [undefined, 'admin', 'member']) {
+          const levels: Partial<Record<LegacyModule, string>> = {};
+          if (platform) levels.platform = platform;
+          if (budget) levels.budget = budget;
+          if (complaints) levels.complaints = complaints;
+          const ctx = contextFor(levels);
+          for (const r of laneRoutes()) {
+            const old = legacyAllows({ modules: levels }, legacyRuleFor(r.route));
+            const now = decide(declarationsOf(r.handler)[0]!, ctx).allowed;
+            if (old === now) continue;
+            // D2: a platform admin maps to Admin and gains what they lacked.
+            if (platform && !old && now && complaints !== 'admin') {
+              d2 += 1;
+              continue;
+            }
+            // D3: reading the full category list needs manage; complaints admins have it.
+            if (/^GET \/complaint-categories(\/:id)?$/.test(r.route) && old && !now && complaints !== 'admin') {
+              d3 += 1;
+              continue;
+            }
+            unexplained.push(`${r.route} ${JSON.stringify(levels)} old=${old} new=${now}`);
+          }
+        }
       }
-      return true;
-    });
+    }
     assert.deepEqual(unexplained, []);
+    assert.ok(d2 > 0, 'D2 appears');
+    assert.ok(d3 > 0, 'D3 appears');
   });
 });

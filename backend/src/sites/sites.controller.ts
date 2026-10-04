@@ -35,7 +35,6 @@ import {
 import { CurrentUser, type AuthUser } from '../common/current-user';
 import { ListQueryDto } from '../common/list-query.dto';
 import { runListQuery, type ListResult, type MatchInfo, type WithCan } from '../common/list-query';
-import { ModuleAccess, ModuleRole } from '../common/module-access.decorator';
 import { type AccessContext, CurrentAccess, can } from '../access/access-context';
 import type { PermissionKey } from '../access/catalogue';
 import { writeAudit } from '../access/audit';
@@ -222,7 +221,6 @@ interface Leads {
   supervisor: { id: string; name: string } | null;
 }
 
-@ModuleAccess('budget')
 @Controller('sites')
 export class SitesController {
   constructor(@Inject(PG_POOL) private readonly pool: Pool) {}
@@ -582,7 +580,6 @@ export class SitesController {
   }
 
   @Delete(':id')
-  @ModuleRole('budget', 'admin')
   @Can('budget.sites.delete')
   @HttpCode(204)
   async remove(

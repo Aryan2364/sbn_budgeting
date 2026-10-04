@@ -372,12 +372,13 @@ export const ROUTES: Record<string, RouteSpec> = {
       {
         name: 'same',
         json: async ({ world, params }) => {
-          const row = await world.one<{ roleIds: string[]; unitIds: string[] }>(
+          const row = await world.one<{ roleIds: string[]; unitIds: string[]; reportsToId: string | null }>(
             `select coalesce((select array_agg(role_id::text) from user_roles where user_id = $1), '{}') as "roleIds",
-                    coalesce((select array_agg(unit_id::text) from user_units where user_id = $1), '{}') as "unitIds"`,
+                    coalesce((select array_agg(unit_id::text) from user_units where user_id = $1), '{}') as "unitIds",
+                    (select reports_to::text from users where id = $1) as "reportsToId"`,
             [params.id],
           );
-          return { roleIds: row?.roleIds ?? [], unitIds: row?.unitIds ?? [] };
+          return { roleIds: row?.roleIds ?? [], unitIds: row?.unitIds ?? [], reportsToId: row?.reportsToId ?? null };
         },
       },
     ],
@@ -390,20 +391,6 @@ export const ROUTES: Record<string, RouteSpec> = {
         json: async ({ world, params }) => {
           const u = await world.one<{ active: boolean }>('select active from users where id = $1', [params.id]);
           return { active: u?.active ?? true };
-        },
-      },
-    ],
-  },
-  'PUT /api/access/people/:id/reports-to': {
-    params: { id: 'user' },
-    variants: [
-      {
-        name: 'same',
-        json: async ({ world, params }) => {
-          const u = await world.one<{ reports_to: string | null }>('select reports_to from users where id = $1', [
-            params.id,
-          ]);
-          return { reportsToId: u?.reports_to ?? null };
         },
       },
     ],

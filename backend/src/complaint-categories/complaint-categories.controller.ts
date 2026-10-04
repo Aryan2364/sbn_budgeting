@@ -13,7 +13,6 @@ import {
 } from '../common/crud';
 import { ListQueryDto } from '../common/list-query.dto';
 import { runListQuery, type ListResult, type MatchInfo } from '../common/list-query';
-import { ModuleAccess, ModuleRole } from '../common/module-access.decorator';
 import { PG_POOL } from '../db/db.module';
 
 export class ComplaintCategoryDto {
@@ -53,19 +52,13 @@ export interface ComplaintCategoryRow {
 
 /**
  * Complaint categories: the cost-heads master pattern (plan 3.5).
- * Reading is open to every complaints member (the raise form's picker);
- * writing is complaints-admin only.
  *
- * Access plan P2b: each handler also carries the new declaration, Can
- * `complaints.categories.manage`, checked in shadow beside the old
- * module decorators until P9 (plan 5.3.2). The two GETs need `manage`
- * too: from P9 everyone else reads categories through
- * `/pick/complaints/categories` (intended difference D3), so until
- * the screens switch to the Pick the shadow log reports complaints
- * members reading these two routes.
+ * Every handler needs `complaints.categories.manage` (plan 5.3.2),
+ * reading as well as writing: the full list with usage counts is the
+ * Settings screen. Everyone else reads categories through
+ * `/pick/complaints/categories` (intended difference D3, from P9).
  */
 @Controller('complaint-categories')
-@ModuleAccess('complaints')
 export class ComplaintCategoriesController {
   constructor(@Inject(PG_POOL) private readonly pool: Pool) {}
 
@@ -74,7 +67,7 @@ export class ComplaintCategoriesController {
     left join designations ad on ad.id = cc.approver_designation_id
     left join lateral (
       select count(*)::int as complaint_count from complaints c
-      /*scope-exempt: a master's usage count on the full category list (complaints.categories.manage, All only; D3 until P9); no complaint is returned*/
+      /*scope-exempt: a master's usage count on the full category list (complaints.categories.manage, All only, D3); no complaint is returned*/
       where c.category_id = cc.id
     ) u on true`;
 
@@ -130,7 +123,6 @@ export class ComplaintCategoriesController {
   }
 
   @Post()
-  @ModuleRole('complaints', 'admin')
   @Can('complaints.categories.manage')
   async create(@Body() body: ComplaintCategoryDto): Promise<ComplaintCategoryRow> {
     const approverId = body.approverDesignationId ?? (await this.hodDesignationId(this.pool));
@@ -153,7 +145,6 @@ export class ComplaintCategoriesController {
    * null resets it to the HOD default.
    */
   @Patch(':id')
-  @ModuleRole('complaints', 'admin')
   @Can('complaints.categories.manage')
   async update(
     @Param('id', new ParseUUIDPipe()) id: string,
@@ -184,7 +175,6 @@ export class ComplaintCategoriesController {
 
   /** A category that has been used is deactivated, never deleted (plan 3.5). */
   @Delete(':id')
-  @ModuleRole('complaints', 'admin')
   @Can('complaints.categories.manage')
   @HttpCode(204)
   async remove(@Param('id', new ParseUUIDPipe()) id: string): Promise<void> {

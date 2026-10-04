@@ -2,7 +2,8 @@
 # Run this ON THE SERVER to deploy the latest images from GHCR.
 #   ./deploy.sh
 # It pulls the newest images, applies any new migrations, restarts the
-# containers, and cleans up old images.
+# containers, waits until the backend has actually started (or fails
+# with its log), and cleans up old images.
 set -euo pipefail
 
 COMPOSE_FILE="docker-compose.deploy.yml"
@@ -90,6 +91,50 @@ if [ "$verify_failed" -ne 0 ]; then
   echo "points at. Production may be on old code. Do not treat this as done." >&2
   exit 1
 fi
+
+echo "==> Waiting for the backend to start (up to 60 s)..."
+# The check above proves the right image is in the container, not that
+# the app in it started. A backend that refuses to start (a boot check
+# failing, a missing setting) exits, Docker restarts it, and everything
+# above still looks fine. So wait until the container is running, has
+# logged "API listening" since it last started, and is still the same
+# running process 5 seconds later. --since ties the log line to the
+# current start, so a line from an earlier, crashed start does not count.
+backend_cid="$(compose ps -q backend || true)"
+backend_ok=0
+state=""
+deadline=$((SECONDS + 60))
+while [ -n "$backend_cid" ] && [ "$SECONDS" -lt "$deadline" ]; do
+  state="$(docker inspect --format '{{.State.Status}} {{.State.StartedAt}}' "$backend_cid" 2>/dev/null || true)"
+  if [ "${state%% *}" = "running" ]; then
+    log="$(docker logs --since "${state#* }" "$backend_cid" 2>&1 || true)"
+    case "$log" in
+      *"API listening"*)
+        sleep 5
+        if [ "$(docker inspect --format '{{.State.Status}} {{.State.StartedAt}}' "$backend_cid" 2>/dev/null || true)" = "$state" ]; then
+          backend_ok=1
+          break
+        fi
+        ;;
+    esac
+  fi
+  sleep 2
+done
+
+if [ "$backend_ok" -ne 1 ]; then
+  status="${state%% *}"
+  echo >&2
+  echo "DEPLOY FAILED: the backend did not start. In 60 seconds it never logged" >&2
+  echo "'API listening' and then stayed up (Docker last showed it as: ${status:-no container})." >&2
+  echo "The site cannot work like this. Do not treat this as done." >&2
+  if [ -n "$backend_cid" ]; then
+    echo "Its last 30 log lines, which should say why:" >&2
+    echo >&2
+    docker logs --tail 30 "$backend_cid" >&2 2>&1 || true
+  fi
+  exit 1
+fi
+echo "    backend: started, and still up 5 s later"
 
 echo "==> Cleaning up old, unused images..."
 docker image prune -f

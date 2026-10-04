@@ -16,8 +16,7 @@ import { PlatformPickController } from './platform-pick.controller';
  * or everyone picks, and P3b turns on boot-guard's REQUIRE_PICK_ROUTES
  * once all needed Picks have a route.
  *
- * Routes under `/pick` are decided by the new PermissionGuard from the
- * start (NEW_SYSTEM_PREFIXES), never by the old module guard.
+ * Routes under `/pick` are decided by the PermissionGuard (@PickOf).
  */
 @Module({
   controllers: [PlatformPickController, ComplaintsPickController, BudgetPickController],

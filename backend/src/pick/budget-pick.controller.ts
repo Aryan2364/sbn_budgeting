@@ -12,8 +12,7 @@ import { runPickQuery } from './pick-query';
  * for displaying a saved one (kit 3.5 rule 6). Each returns its
  * section's declared `pick.fields` only (catalogue/budget.ts), at most
  * 50 matches ordered by name, scoped by the union of the Pick scopes
- * held. Decided by the new route guard from the start (/pick is a
- * new-system prefix): the old module guard never sees these routes.
+ * held. Decided by the permission guard (@PickOf).
  *
  * Fields (the P7 picker inventory):
  *   projects    id, name, donorName      the site form defaults a site's donor

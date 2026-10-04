@@ -1,8 +1,10 @@
-import { Injectable, Logger, type OnApplicationBootstrap } from '@nestjs/common';
+import { Inject, Injectable, Logger, type OnApplicationBootstrap } from '@nestjs/common';
 import { METHOD_METADATA, PATH_METADATA } from '@nestjs/common/constants';
 import { DiscoveryService } from '@nestjs/core';
+import type { Pool } from 'pg';
 
 import { IS_PUBLIC } from '../common/public.decorator';
+import { PG_POOL } from '../db/db.module';
 import {
   PICK_ACTION,
   assertCataloguesValid,
@@ -10,6 +12,7 @@ import {
   isPermissionKey,
 } from './catalogue';
 import { type AccessDeclaration, declarationsOf, inHandlerKeysOf } from './decorators';
+import { countUnmappedPeople, unmappedMessage } from './mapping-check';
 
 /**
  * Boot validation (access plan 6.1.3, backend kit 3.6). Runs before the
@@ -158,9 +161,12 @@ export function collectRouteHandlers(discovery: DiscoveryService): RouteHandler[
 export class AccessBootGuard implements OnApplicationBootstrap {
   private readonly logger = new Logger('Access');
 
-  constructor(private readonly discovery: DiscoveryService) {}
+  constructor(
+    private readonly discovery: DiscoveryService,
+    @Inject(PG_POOL) private readonly pool: Pool,
+  ) {}
 
-  onApplicationBootstrap(): void {
+  async onApplicationBootstrap(): Promise<void> {
     assertCataloguesValid();
     const result = checkRoutes(collectRouteHandlers(this.discovery), {
       requireDeclarations: REQUIRE_DECLARATION_ON_EVERY_ROUTE,
@@ -172,8 +178,17 @@ export class AccessBootGuard implements OnApplicationBootstrap {
     for (const w of result.warnings) this.logger.warn(w);
     if (!REQUIRE_DECLARATION_ON_EVERY_ROUTE && result.undeclared.length > 0) {
       this.logger.log(
-        `${result.undeclared.length} routes carry no access declaration yet; the old module guard decides them until P2b.`,
+        `${result.undeclared.length} routes carry no access declaration; the permission guard refuses them.`,
       );
+    }
+
+    // P9 boot safety check (mapping-check.ts): never serve a database
+    // whose people have old levels but no roles. One query, here only.
+    const unmapped = await countUnmappedPeople(this.pool);
+    if (unmapped > 0) {
+      const message = unmappedMessage(unmapped);
+      this.logger.error(message);
+      throw new Error(message);
     }
   }
 }

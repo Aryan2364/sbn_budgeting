@@ -3,8 +3,8 @@
  *
  *   npm run test:equivalence             run the matrix, compare with baseline.json
  *   npm run test:equivalence:record      run the matrix, (re)write baseline.json
- *   npm run test:equivalence -- --plant  self-check: remove one @ModuleRole in memory
- *                                        and prove the comparison catches it
+ *   npm run test:equivalence -- --plant  self-check: weaken one route's declaration in
+ *                                        memory and prove the comparison catches it
  *
  * Other flags:  --only "<METHOD /api/path>"   restrict to matching routes
  *               --no-setup                    use the database as it is (e.g. a
@@ -12,19 +12,39 @@
  *               --out <file>                  also write this run's snapshot there
  *               --ignore digest,keys          leave fields out of the comparison
  *
+ * For a production-shaped run (plan 6.3.1, the P9 runbook), on a restore:
+ *               --no-setup --prepare          apply any pending migrations and the
+ *                                             decision 23 mapping to the database as
+ *                                             it is, print the mapping report, stop
+ *               --baseline <file>             compare with this snapshot instead of
+ *                                             baseline.json (e.g. a pre-switch build's
+ *                                             answers on the same restore)
+ *               --switch-only                 that snapshot comes from a pre-switch
+ *                                             (shadow-mode) build, which already had
+ *                                             D1, D5, D6 and D7: only the switch-over's
+ *                                             D2, D3 and D4 may differ
+ *
  * Needs TEST_DATABASE_URL (see test/support/test-env.ts). Without
  * --no-setup the database is DROPPED, recreated, migrated, seeded with
  * test/equivalence/fixtures.ts and given the decision 23 mapping
  * (npm run access:map-levels -- --apply, plan 6.3.1) on every run. With
- * --no-setup the database must already carry the mapping.
+ * --no-setup the database must already carry the mapping (--prepare
+ * applies it).
  *
- * Two comparisons, both matched against the intended differences
- * (plan 6.3.3, intended.ts), never loosened:
- *   - each case against baseline.json (status, ids, keys, digest, ...);
- *   - every ACCESS-SHADOW disagreement between the new route guard and
- *     the old one. The run FAILS on any unplanned one.
+ * Each case is compared against baseline.json (status, ids, keys,
+ * digest, ...), and every difference is matched against the intended
+ * differences (plan 6.3.3, intended.ts), never loosened. The run FAILS
+ * on any unplanned one, and when a listed entry with a population never
+ * appears (plan 6.3.2).
+ *
+ * From P9 (switch-over) the permission guard decides every route, so
+ * D2, D3 and D4, which the shadow guard's log carried from P2b to P9,
+ * are matched here as baseline differences. The baseline is the OLD
+ * build's answers and is never re-recorded for them.
  */
-import { prepareTestEnv } from '../support/test-env';
+import { resolve } from 'node:path';
+
+import { launchDir, prepareTestEnv } from '../support/test-env';
 
 const env = prepareTestEnv();
 
@@ -34,14 +54,13 @@ import { migrateTestDatabase, recreateTestDatabase, withTestClient } from '../su
 import { compareRuns, formatDifference, type Difference, type Field } from './compare';
 import { USER_LABEL, seedFixtures } from './fixtures';
 import {
-  EXPECTED_SHADOW_IDS,
   matchIntended,
-  matchShadow,
+  matchSwitchOnly,
   missingD6,
-  routeMatcher,
+  missingSwitchOver,
+  moduleLookup,
   type IntendedWorld,
-  type ShadowMatch,
-  type ShadowWorld,
+  type SwitchWorld,
 } from './intended';
 import { runMatrix, type MatrixRun } from './matrix';
 import { BASELINE_FILE, readSnapshot, summarise, writeSnapshot } from './snapshot';
@@ -49,6 +68,12 @@ import { BASELINE_FILE, readSnapshot, summarise, writeSnapshot } from './snapsho
 export interface BaselineOptions {
   record?: boolean;
   setup?: boolean;
+  /** With --no-setup: migrate and map the database as it is, then stop. */
+  prepare?: boolean;
+  /** Compare with this snapshot instead of baseline.json. */
+  baselineFile?: string;
+  /** The baseline is a pre-switch build's: only D2, D3 and D4 may differ. */
+  switchOnly?: boolean;
   only?: string;
   plant?: boolean;
   out?: string;
@@ -60,10 +85,12 @@ export interface BaselineResult {
   run: MatrixRun;
   differences: Difference[];
   summary: Record<string, unknown>;
-  /** Every shadow disagreement of the run, classified. Null on --record and --plant. */
-  shadow: ShadowMatch | null;
-  /** The people D2 names (mapping report items 2 and 3), for the "every listed entry appears" check. */
-  d2People: string[];
+  /** The baseline's cases (empty on --record), for the switch-over matchers. */
+  baselineCases: MatrixRun['cases'];
+  /** D2's and D4's people and the routes' modules (intended.ts SwitchWorld). */
+  switchOver: SwitchWorld;
+  /** What must appear (plan 6.3.2): D2's people who can sign in, and whether D3 and D4 have a population. */
+  expect: { d2People: string[]; d3Expected: boolean; d4Expected: boolean };
   /** D6's complaints, for matching the baseline differences (intended.ts). */
   selfApprovals: Map<string, string>;
 }
@@ -75,9 +102,6 @@ function gainModule(gain: string): string | null {
   return null;
 }
 
-/** The guard keeps at most 1000 lines (permission.guard.ts SHADOW_CAP). */
-const SHADOW_DRAIN_LIMIT = 1000;
-
 /** The route the --plant self-check weakens, and the handler behind it. */
 export const PLANTED_ROUTE = 'DELETE /api/cost-heads/:id';
 
@@ -86,6 +110,21 @@ export async function runBaseline(options: BaselineOptions = {}): Promise<Baseli
     if (!options.quiet) process.stdout.write(`${msg}\n`);
   };
   const setup = options.setup ?? true;
+
+  if (options.prepare) {
+    if (setup) throw new Error('--prepare works on a database as it is: pass --no-setup with it.');
+    log(`Preparing "${env.databaseName}" as it is (no drop, no fixtures) ...`);
+    const applied = await migrateTestDatabase();
+    log(`  migrations applied: ${applied.length ? applied.join(', ') : 'none (already current)'}`);
+    const { resyncAccessMapping, formatResync } = await import('../../src/db/map-access-levels');
+    const mapping = await withTestClient((db) => resyncAccessMapping(db, { apply: true }));
+    log(formatResync(mapping));
+    if (mapping.report.underGranted.length) {
+      throw new Error('Report item 6 is not empty: someone would lose access. Stop and read the report.');
+    }
+    log('Prepared. Nothing else was run.');
+    process.exit(0);
+  }
 
   if (setup) {
     log(`Rebuilding test database "${env.databaseName}" ...`);
@@ -110,21 +149,40 @@ export async function runBaseline(options: BaselineOptions = {}): Promise<Baseli
         'Run npm run access:map-levels -- --apply on it first.',
     );
   }
-  const adminGains = new Map<string, Set<string>>();
+  // Cases are keyed by the person's label (matrix.ts): the fixture's
+  // name, or the id itself on a restore.
+  const label = (id: string): string => USER_LABEL[id] ?? id;
+
+  // D2 (plan 6.3.3): the people the mapping report names (items 2 and
+  // 3), and the modules Admin gives each of them.
+  const d2Gains = new Map<string, Set<string>>();
   for (const p of [...mapping.report.platformLevelOnly, ...mapping.report.otherAdminGains]) {
     const modules = new Set(p.gains.map(gainModule).filter((m): m is string => m !== null));
-    if (modules.size) adminGains.set(p.id, modules);
+    if (modules.size) d2Gains.set(label(p.id), modules);
   }
-  const noModuleRows = new Set(
-    await withTestClient(async (db) =>
-      (
-        await db.query<{ id: string }>(
-          `select u.id from users u /*scope-exempt: harness, every person*/
-           where not exists (select 1 from user_module_access m where m.user_id = u.id)`,
-        )
-      ).rows.map((r) => r.id),
-    ),
+  const people = await withTestClient(async (db) =>
+    (
+      await db.query<{ id: string; signs_in: boolean; no_module_rows: boolean; platform_admin: boolean }>(
+        `select u.id,
+                (u.active and u.can_login and u.password_hash is not null) as signs_in,
+                not exists (select 1 from user_module_access m where m.user_id = u.id) as no_module_rows,
+                exists (select 1 from user_module_access m
+                        where m.user_id = u.id and m.module = 'platform' and m.role = 'admin') as platform_admin
+         from users u /*scope-exempt: harness, every person*/`,
+      )
+    ).rows,
   );
+  // D4: people with no user_module_access row today.
+  const noModuleRows = new Set(people.filter((p) => p.no_module_rows).map((p) => label(p.id)));
+  // Plan 6.3.2, every listed entry appears, for entries with a
+  // population: a person who cannot sign in is 401 in both builds.
+  const signers = people.filter((p) => p.signs_in);
+  const expect = {
+    d2People: signers.map((p) => label(p.id)).filter((l) => d2Gains.has(l)).sort(),
+    // Only Admin manages designations and locations, so anyone else who signs in is refused their full lists.
+    d3Expected: signers.some((p) => !p.platform_admin),
+    d4Expected: signers.some((p) => p.no_module_rows),
+  };
 
   // D6 (plan 6.3.3): every complaint whose approver raised or resolved
   // it, keyed as the approver's case suffix "<label>|<complaint id>".
@@ -153,46 +211,32 @@ export async function runBaseline(options: BaselineOptions = {}): Promise<Baseli
     }
 
     if (options.plant) {
-      // A deliberately planted regression, in memory only: budget staff
-      // can now delete cost heads. The comparison must catch it.
+      // A deliberately planted regression, in memory only: anyone signed
+      // in can now delete cost heads (the route's @Can is swapped for
+      // @SignedIn). The comparison must catch it.
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       const { CostHeadsController } = require('../../src/cost-heads/cost-heads.controller') as
         typeof import('../../src/cost-heads/cost-heads.controller');
       // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const { MODULE_ACCESS } = require('../../src/common/module-access.decorator') as
-        typeof import('../../src/common/module-access.decorator');
-      Reflect.deleteMetadata(MODULE_ACCESS, CostHeadsController.prototype.remove);
-      log(`PLANTED: removed @ModuleRole('budget', 'admin') from ${PLANTED_ROUTE} (in memory only)`);
+      const { ACCESS_DECLARATIONS } = require('../../src/access/decorators') as
+        typeof import('../../src/access/decorators');
+      Reflect.defineMetadata(ACCESS_DECLARATIONS, [{ kind: 'signedIn' }], CostHeadsController.prototype.remove);
+      log(`PLANTED: swapped @Can('budget.cost_heads.manage') for @SignedIn() on ${PLANTED_ROUTE} (in memory only)`);
     }
 
     const routes = discoverRoutes(harness.app);
     const only = options.plant ? (options.only ?? PLANTED_ROUTE) : options.only;
     log(`Discovered ${routes.length} routes. Running the matrix${only ? ` (only "${only}")` : ''} ...`);
 
-    // The shadow log is capped in the guard; drain it after every person
-    // so nothing is lost, and fail if one person alone could have hit the cap.
-    const { shadowDisagreements } = await import('../../src/access/permission.guard');
-    const shadowLines: string[] = [];
-    const drainShadow = (): void => {
-      if (shadowDisagreements.length >= SHADOW_DRAIN_LIMIT) {
-        throw new Error('The shadow log reached its cap within one person; some lines may be lost.');
-      }
-      shadowLines.push(...shadowDisagreements.splice(0));
-    };
-    shadowDisagreements.length = 0;
     resetQueryGuard();
 
     const started = Date.now();
     const run = await withTestClient((db) =>
       runMatrix(harness, routes, db, {
         only,
-        onProgress: (n, label) => {
-          drainShadow();
-          log(`  [${n}] ${label}`);
-        },
+        onProgress: (n, who) => log(`  [${n}] ${who}`),
       }),
     );
-    drainShadow();
 
     // The query guard runs in record mode until P3b scopes every read:
     // report what is still unmarked, by table. P3b drives this to zero.
@@ -209,6 +253,7 @@ export async function runBaseline(options: BaselineOptions = {}): Promise<Baseli
     const summary = { ...summarise(run), seconds: Math.round((Date.now() - started) / 1000) };
     log(`Done: ${JSON.stringify(summary)}`);
 
+    const switchOver: SwitchWorld = { d2Gains, noModuleRows, moduleOf: moduleLookup(routes) };
     const meta = {
       what: 'Access baseline: every person x every route, today (access plan P0).',
       database: setup ? 'fixtures (test/equivalence/fixtures.ts)' : 'existing database (--no-setup)',
@@ -220,14 +265,14 @@ export async function runBaseline(options: BaselineOptions = {}): Promise<Baseli
       if (only || options.plant) throw new Error('Refusing to record a partial or planted run as the baseline.');
       writeSnapshot(BASELINE_FILE(), run, meta);
       log(`Baseline written to ${BASELINE_FILE()}`);
-      return { run, differences: [], summary, shadow: null, d2People: [], selfApprovals };
+      return { run, differences: [], summary, baselineCases: {}, switchOver, expect, selfApprovals };
     }
 
-    const baseline = readSnapshot(BASELINE_FILE());
+    const baselineFile = options.baselineFile ?? BASELINE_FILE();
+    log(`Comparing with ${baselineFile}${options.switchOnly ? ' (a pre-switch build: switch-over differences only)' : ''}`);
+    const baseline = readSnapshot(baselineFile);
     const differences = compareRuns(baseline, run, { only, ignore: options.ignore });
-    const world: ShadowWorld = { routeOf: routeMatcher(routes), adminGains, noModuleRows };
-    const shadow = options.plant ? null : matchShadow(shadowLines, world);
-    return { run, differences, summary, shadow, d2People: [...adminGains.keys()], selfApprovals };
+    return { run, differences, summary, baselineCases: baseline.cases, switchOver, expect, selfApprovals };
   } finally {
     await harness.close();
   }
@@ -241,17 +286,22 @@ function parseArgs(argv: string[]): BaselineOptions {
     else if (a === '--no-setup') opts.setup = false;
     else if (a === '--plant') opts.plant = true;
     else if (a === '--only') opts.only = argv[++i];
-    else if (a === '--out') opts.out = argv[++i];
+    else if (a === '--out') opts.out = resolve(launchDir, argv[++i] ?? '');
     else if (a === '--ignore') opts.ignore = (argv[++i] ?? '').split(',').filter(Boolean) as Field[];
+    else if (a === '--prepare') opts.prepare = true;
+    else if (a === '--baseline') opts.baselineFile = resolve(launchDir, argv[++i] ?? '');
+    else if (a === '--switch-only') opts.switchOnly = true;
     else throw new Error(`Unknown argument ${a}`);
   }
+  if (opts.switchOnly && !opts.baselineFile) throw new Error('--switch-only needs --baseline <file>.');
+  if (opts.baselineFile && opts.record) throw new Error('--baseline and --record do not go together.');
   return opts;
 }
 
 if (require.main === module) {
   const opts = parseArgs(process.argv.slice(2));
   runBaseline(opts)
-    .then(({ run, differences, shadow, d2People, selfApprovals }) => {
+    .then(({ run, differences, baselineCases, switchOver, expect, selfApprovals }) => {
       const problems = Object.entries(run.cases).filter(
         ([, c]) => c.status === 'NO-CASE' || c.status === 'ERROR',
       );
@@ -270,35 +320,22 @@ if (require.main === module) {
         process.exit(0);
       }
       // Intended differences (plan 6.3.3) are matched by id, never ignored.
-      const intendedWorld: IntendedWorld = { runCases: run.cases, selfApprovals };
-      const { unmatched, matched } = matchIntended(differences, intendedWorld);
+      const intendedWorld: IntendedWorld = { runCases: run.cases, selfApprovals, baselineCases, switchOver };
+      // Against a pre-switch build only the switch-over's own entries may
+      // differ; D6's changes are already in that build, so it has no count.
+      const { unmatched, matched } = opts.switchOnly
+        ? matchSwitchOnly(differences, intendedWorld)
+        : matchIntended(differences, intendedWorld);
       // D6's count: every listed complaint must show its change (plan 6.3.2).
-      const d6Missing = opts.only ? [] : missingD6(differences, intendedWorld);
+      const d6Missing = opts.only || opts.switchOnly ? [] : missingD6(differences, intendedWorld);
       const counts = (m: Record<string, number>): string =>
         Object.keys(m).length ? Object.entries(m).sort().map(([id, n]) => `${id}: ${n}`).join(', ') : 'none';
       process.stdout.write(`Baseline differences matched, per intended id: ${counts(matched)}.\n`);
 
-      // Shadow disagreements: every one must be an intended difference,
-      // and (on a full run) every expected one must appear (plan 6.3.2).
-      const shadowFailures: string[] = [];
-      if (shadow) {
-        const label = (id: string): string => USER_LABEL[id] ?? id;
-        process.stdout.write(`Shadow disagreements matched, per intended id: ${counts(shadow.matched)}.\n`);
-        for (const [id, people] of Object.entries(shadow.people).sort()) {
-          process.stdout.write(`  ${id} people: ${[...people].map(label).sort().join(', ')}\n`);
-        }
-        for (const l of shadow.unmatched) shadowFailures.push(`unplanned: ${l.raw} (${label(l.user)})`);
-        for (const raw of shadow.unparsed) shadowFailures.push(`unparseable: ${raw}`);
-        if (!opts.only) {
-          for (const id of EXPECTED_SHADOW_IDS) {
-            if (!shadow.matched[id]) shadowFailures.push(`expected intended difference ${id} never appeared`);
-          }
-          const d2 = shadow.people.D2 ?? new Set<string>();
-          for (const p of d2People) {
-            if (!d2.has(p)) shadowFailures.push(`D2 lists ${label(p)} (mapping report), but they gained nothing`);
-          }
-        }
-      }
+      // The switch-over's entries (D2, D3, D4): on a full run, each with
+      // a population must appear, and so must every person D2 names (plan 6.3.2).
+      process.stdout.write(`  D2 people (mapping report): ${expect.d2People.join(', ') || 'none'}\n`);
+      const missing = opts.only ? [] : missingSwitchOver(differences, intendedWorld, expect);
 
       if (d6Missing.length) {
         process.stdout.write(`FAIL: ${d6Missing.length} D6 change(s) missing.
@@ -306,19 +343,18 @@ if (require.main === module) {
         for (const m of d6Missing) process.stdout.write(`  ${m}
 `);
       }
-      if (unmatched.length === 0 && problems.length === 0 && shadowFailures.length === 0 && d6Missing.length === 0) {
-        process.stdout.write('PASS: zero unmatched differences from the baseline, zero unplanned shadow disagreements.\n');
+      if (missing.length) {
+        process.stdout.write(`FAIL: ${missing.length} listed intended difference(s) did not appear.\n`);
+        for (const m of missing) process.stdout.write(`  ${m}\n`);
+      }
+      if (unmatched.length === 0 && problems.length === 0 && missing.length === 0 && d6Missing.length === 0) {
+        process.stdout.write('PASS: zero unmatched differences from the baseline; every listed difference appeared.\n');
         process.exit(0);
       }
       if (unmatched.length) {
         process.stdout.write(`FAIL: ${unmatched.length} unmatched difference(s) from the baseline.\n`);
         for (const d of unmatched.slice(0, 200)) process.stdout.write(`  ${formatDifference(d)}\n`);
         if (unmatched.length > 200) process.stdout.write(`  ... and ${unmatched.length - 200} more\n`);
-      }
-      if (shadowFailures.length) {
-        process.stdout.write(`FAIL: ${shadowFailures.length} shadow problem(s).\n`);
-        for (const f of shadowFailures.slice(0, 200)) process.stdout.write(`  ${f}\n`);
-        if (shadowFailures.length > 200) process.stdout.write(`  ... and ${shadowFailures.length - 200} more\n`);
       }
       if (problems.length) process.stdout.write(`FAIL: ${problems.length} case(s) with no case or an error.\n`);
       process.exit(1);

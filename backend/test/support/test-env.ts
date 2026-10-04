@@ -29,6 +29,13 @@ export interface TestEnv {
 
 const NAME_MUST_MATCH = /test/i;
 
+/**
+ * Where the command was started, before prepareTestEnv moves the working
+ * directory away: npm's INIT_CWD (the folder `npm run` was typed in), or
+ * the process's own starting folder. File arguments resolve against it.
+ */
+export const launchDir: string = process.env.INIT_CWD ?? process.cwd();
+
 export function testDatabaseUrl(): { url: string; name: string } {
   const url = process.env.TEST_DATABASE_URL?.trim();
   if (!url) {

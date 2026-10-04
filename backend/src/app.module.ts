@@ -7,7 +7,6 @@ import { AmountsInterceptor } from './access/amounts.interceptor';
 import { PermissionGuard } from './access/permission.guard';
 import { AuthModule } from './auth/auth.module';
 import { JwtAuthGuard } from './auth/jwt-auth.guard';
-import { ModuleAccessGuard } from './auth/module-access.guard';
 import { BudgetsModule } from './budgets/budgets.module';
 import { ComplaintCategoriesModule } from './complaint-categories/complaint-categories.module';
 import { ComplaintsModule } from './complaints/complaints.module';
@@ -48,12 +47,10 @@ import { UsersModule } from './users/users.module';
     // never the other way round, so an endpoint nobody remembered to
     // guard is guarded.
     { provide: APP_GUARD, useClass: JwtAuthGuard },
-    // Access plan P2a-P9: the new route guard runs in SHADOW before the
-    // old one. It only logs disagreements on today's routes, and decides
-    // only the new-system routes (/pick, /access). The old guard still
-    // decides everything else until P9 removes it.
+    // Access plan P9: the permission guard decides every route from the
+    // route's one declaration (@SignedIn, @Can, @CanAny, @PickOf). Which
+    // records is decided in the data query (access/scope.ts).
     { provide: APP_GUARD, useClass: PermissionGuard },
-    { provide: APP_GUARD, useClass: ModuleAccessGuard },
     // Access plan P4 (6.1.6): without <module>.amounts.see, amount-only
     // routes are refused and amounts are removed from every response.
     { provide: APP_INTERCEPTOR, useClass: AmountsInterceptor },

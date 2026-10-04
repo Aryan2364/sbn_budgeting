@@ -11,7 +11,6 @@ import {
 } from '../common/crud';
 import { ListQueryDto } from '../common/list-query.dto';
 import { runListQuery, type ListResult, type MatchInfo } from '../common/list-query';
-import { ModuleRole } from '../common/module-access.decorator';
 import { PG_POOL } from '../db/db.module';
 
 export class LocationDto {
@@ -40,8 +39,8 @@ export interface LocationRow {
  * budget screens keep working through the rename.
  *
  * The full list (with usage counts) is the Settings screen, behind
- * platform.locations.manage (D3, decided by the old guard until P9:
- * anyone signed in). A screen that only CHOOSES a location uses the
+ * platform.locations.manage (D3, from P9; before it, anyone signed
+ * in). A screen that only CHOOSES a location uses the
  * Pick, GET /pick/platform/locations, which everyone holds. Writes are
  * platform admin only.
  *
@@ -113,7 +112,6 @@ export class LocationsController {
   }
 
   @Post()
-  @ModuleRole('platform', 'admin')
   @Can('platform.locations.manage')
   async create(@Body() body: LocationDto): Promise<LocationRow> {
     await this.assertNameFree(body.name, null);
@@ -129,7 +127,6 @@ export class LocationsController {
   }
 
   @Patch(':id')
-  @ModuleRole('platform', 'admin')
   @Can('platform.locations.manage')
   async update(
     @Param('id', new ParseUUIDPipe()) id: string,
@@ -151,7 +148,6 @@ export class LocationsController {
   }
 
   @Delete(':id')
-  @ModuleRole('platform', 'admin')
   @Can('platform.locations.manage')
   @HttpCode(204)
   async remove(@Param('id', new ParseUUIDPipe()) id: string): Promise<void> {

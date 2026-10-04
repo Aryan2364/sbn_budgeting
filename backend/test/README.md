@@ -23,9 +23,9 @@ throwaway local database only.
 | Command | What it does |
 |---|---|
 | `npm test` | `node:test` unit tests: the transaction-per-request wrapper, and that every API route has an equivalence case. Skipped when `TEST_DATABASE_URL` is unset. |
-| `npm run test:equivalence` | Applies the decision 23 mapping to the fixtures, runs every person x every API route x every sampled record against the real app, and compares with `test/equivalence/baseline.json`. Every difference, and every `ACCESS-SHADOW` disagreement between the new route guard and the old one, must match an intended difference in `equivalence/intended.ts` (plan 6.3.3); counts print per D-number. Exit 0 = nothing unplanned. It also reports, in record mode, the statements the query guard (`support/query-guard.ts`) found reading a guarded table with no scope marker. |
+| `npm run test:equivalence` | Applies the decision 23 mapping to the fixtures, runs every person x every API route x every sampled record against the real app, and compares with `test/equivalence/baseline.json` (the OLD build's answers, never re-recorded for the switch-over). Every difference must match an intended difference in `equivalence/intended.ts` (plan 6.3.3), and every listed one with a population must appear; counts print per D-number. Since P9 the permission guard decides every route, so D2, D3 and D4 are baseline differences (before P9 they were disagreements in the shadow guard's log). Exit 0 = nothing unplanned. It also reports the statements the query guard (`support/query-guard.ts`) found reading a guarded table with no scope marker. |
 | `npm run test:equivalence:record` | Same run, and rewrites `baseline.json`. Only when a change of answers is intended and agreed. |
-| `npm run test:equivalence -- --plant` | Self-check: removes one `@ModuleRole` in memory and proves the comparison catches it. |
+| `npm run test:equivalence -- --plant` | Self-check: swaps `DELETE /cost-heads/:id`'s `@Can` for `@SignedIn` in memory and proves the comparison catches it. |
 
 Extra flags after `--`: `--only "PATCH /api/expenses/:id"`, `--out run.json`,
 `--ignore digest`, `--no-setup` (run against a database as it is, e.g. a
@@ -50,4 +50,8 @@ that data).
   for the security fixes). A route with no entry is reported, never skipped.
 - `equivalence/legacy-screen-rules.ts` is a frozen copy of today's
   frontend gating (nav, settings sections, home route, gated buttons).
+- `support/legacy-route-rules.ts` is a frozen copy of the old route
+  guard's rules (`@ModuleAccess` / `@ModuleRole`, deleted at P9), so the
+  route tests still prove the permission guard answers as they did,
+  apart from D2, D3 and D4.
 - `equivalence/baseline.json` is the stored answer sheet, one case per line.

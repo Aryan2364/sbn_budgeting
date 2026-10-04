@@ -8,7 +8,6 @@ import type { Pool } from 'pg';
 import {
   findOneOrFail, isPgError, PG_FOREIGN_KEY_VIOLATION, PG_UNIQUE_VIOLATION,
 } from '../common/crud';
-import { ModuleAccess, ModuleRole } from '../common/module-access.decorator';
 import { Can } from '../access/decorators';
 
 export class CostHeadDto {
@@ -47,7 +46,6 @@ export interface CostHeadRow {
   expenseCount: number;
 }
 
-@ModuleAccess('budget')
 @Controller('cost-heads')
 export class CostHeadsController {
   constructor(@Inject(PG_POOL) private readonly pool: Pool) {}
@@ -133,7 +131,6 @@ export class CostHeadsController {
    * deploy.
    */
   @Patch(':id')
-  @ModuleRole('budget', 'admin')
   @Can('budget.cost_heads.manage')
   async update(
     @Param('id', new ParseUUIDPipe()) id: string,
@@ -159,7 +156,6 @@ export class CostHeadsController {
   }
 
   @Post()
-  @ModuleRole('budget', 'admin')
   @Can('budget.cost_heads.manage')
   async create(@Body() body: CostHeadDto): Promise<CostHeadRow> {
     try {
@@ -184,7 +180,6 @@ export class CostHeadsController {
    * Deletion only succeeds for a head nothing points at.
    */
   @Delete(':id')
-  @ModuleRole('budget', 'admin')
   @Can('budget.cost_heads.manage')
   @HttpCode(204)
   async remove(@Param('id', new ParseUUIDPipe()) id: string): Promise<void> {

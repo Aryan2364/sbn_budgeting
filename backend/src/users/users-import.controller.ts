@@ -12,7 +12,6 @@ import { ACCESS_MANAGE_KEY } from '../access/catalogue';
 import { Can } from '../access/decorators';
 import { IMPORT_DEFAULT_ROLE_ID } from '../access/seed-roles';
 import { CurrentUser, type AuthUser } from '../common/current-user';
-import { ModuleRole } from '../common/module-access.decorator';
 import { phoneDigits } from '../common/phone';
 import { PG_POOL } from '../db/db.module';
 import { formatPhone } from './users.controller';
@@ -100,7 +99,6 @@ export class UsersImportController {
 
   @Post('preview')
   @HttpCode(200)
-  @ModuleRole('platform', 'admin')
   @Can('platform.people.create')
   async preview(@Body() body: ImportDto, @CurrentAccess() access: AccessContext): Promise<PreviewResult> {
     const { result } = await analyse(this.pool, body.rows, can(access, ACCESS_MANAGE_KEY));
@@ -109,7 +107,6 @@ export class UsersImportController {
 
   @Post('commit')
   @HttpCode(200)
-  @ModuleRole('platform', 'admin')
   @Can('platform.people.create')
   async commit(
     @Body() body: ImportDto,

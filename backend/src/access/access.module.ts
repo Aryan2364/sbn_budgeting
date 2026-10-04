@@ -15,9 +15,8 @@ import { RoleMapService } from './role-map.service';
  * the people form and the import make their access writes through it
  * (plan 6.1.11).
  *
- * PermissionGuard is registered in AppModule as an APP_GUARD, between
- * JwtAuthGuard and ModuleAccessGuard, so the guard order is visible in
- * one place.
+ * PermissionGuard is registered in AppModule as an APP_GUARD, after
+ * JwtAuthGuard, so the guard order is visible in one place.
  */
 @Global()
 @Module({

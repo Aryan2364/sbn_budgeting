@@ -39,9 +39,9 @@ import { SKIP_REASON, dbTestsEnabled, openScratchDatabase, type ScratchDb } from
  * Roles: own (mgrA, supA, outsider), team (hod), units (office), all
  * (ceo): budget view/create/edit at that scope, plus change_people.
  * staffy holds the seed "Budget staff" role (view at All, expense edit
- * at Own). nobody holds no role. Until P9 the OLD guard decides the
- * budget routes, so every caller but nobody is a budget admin there and
- * the new scope is what narrows them.
+ * at Own). nobody holds no role. Nobody has a user_module_access row:
+ * from P9 the permission guard decides the routes from the roles alone,
+ * and the scope is what narrows them.
  */
 
 const id = (n: number): string => `b3000000-0000-4000-8000-${n.toString(16).padStart(12, '0')}`;
@@ -148,7 +148,6 @@ async function seed(db: ScratchDb['client']): Promise<void> {
   ];
   for (const [who, roleId] of give) {
     await db.query('insert into user_roles (user_id, role_id) values ($1, $2)', [P[who], roleId]);
-    await db.query(`insert into user_module_access (user_id, module, role) values ($1, 'budget', 'admin')`, [P[who]]);
   }
   await db.query('commit');
 }
