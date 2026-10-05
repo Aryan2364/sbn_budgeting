@@ -34,7 +34,7 @@ import { NotificationsController } from '../../src/notifications/notifications.c
 const can = (key: string): AccessDeclaration => ({ kind: 'can', keys: [key] }) as AccessDeclaration;
 const signedIn: AccessDeclaration = { kind: 'signedIn' };
 
-/** handler -> its one declaration (plan 5.3.2; C1: approve covers approve and send back, work covers start and resolve). */
+/** handler -> its one declaration (plan 5.3.2; C1: work covers start and resolve; A1: no approve or send back). */
 const EXPECTED: ReadonlyArray<readonly [object, string, AccessDeclaration]> = [
   [ComplaintsController, 'list', can('complaints.complaints.view')],
   [ComplaintsController, 'counts', can('complaints.complaints.view')],
@@ -46,8 +46,6 @@ const EXPECTED: ReadonlyArray<readonly [object, string, AccessDeclaration]> = [
   [ComplaintsController, 'comment', can('complaints.complaints.comment')],
   [ComplaintsController, 'start', can('complaints.complaints.work')],
   [ComplaintsController, 'resolve', can('complaints.complaints.work')],
-  [ComplaintsController, 'approve', can('complaints.complaints.approve')],
-  [ComplaintsController, 'sendBack', can('complaints.complaints.approve')],
   [ComplaintsController, 'reassign', can('complaints.complaints.reassign')],
   [ComplaintCategoriesController, 'list', can('complaints.categories.manage')],
   [ComplaintCategoriesController, 'get', can('complaints.categories.manage')],

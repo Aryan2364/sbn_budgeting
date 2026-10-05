@@ -18,9 +18,9 @@ import { STATUS_META } from "@/components/complaints/status"
  * `/complaints/dashboard` — section 11.4, read-only, from
  * `GET /complaints/summary`, which covers only what the viewer can see.
  *
- *   1. tiles     open, in progress, awaiting approval, closed (with how
- *                many closed in the last 7 days); each links to the list
- *                that explains its number
+ *   1. tiles     open, in progress, closed (with how many closed in
+ *                the last 7 days); each links to the list that explains
+ *                its number
  *   2. main      open and closed by site (the brand and ochre, 21:
  *                positions 1 and 2, direct labels, zero baseline)
  *   3. panels    by category, and how long the open ones have waited
@@ -149,7 +149,7 @@ function DashboardBody({ summary }: { summary: ComplaintSummary }) {
 
   return (
     <div className="mt-8 flex flex-col gap-6">
-      <MetricTileRow>
+      <MetricTileRow className="sm:grid-cols-3 lg:grid-cols-3">
         <MetricTile
           label={STATUS_META.open.label}
           period="Right now"
@@ -161,12 +161,6 @@ function DashboardBody({ summary }: { summary: ComplaintSummary }) {
           period="Right now"
           value={formatNumber(summary.byStatus.in_progress)}
           href={list("in_progress")}
-        />
-        <MetricTile
-          label={STATUS_META.awaiting_approval.label}
-          period="Right now"
-          value={formatNumber(summary.byStatus.awaiting_approval)}
-          href={list("awaiting_approval")}
         />
         <MetricTile
           label="Closed"

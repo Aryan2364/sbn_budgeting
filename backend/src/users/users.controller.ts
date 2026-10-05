@@ -156,7 +156,7 @@ const FROM = `
       (select count(*)::int from expenses e where e.created_by = u.id) as expense_count,
       (select count(*)::int from complaints c
         where c.status <> 'closed'
-          and u.id in (c.supervisor_id, c.manager_id, c.hod_id, c.ceo_id, c.approver_id))
+          and u.id in (c.supervisor_id, c.manager_id))
         as open_complaint_count
   ) c on true
   left join lateral (

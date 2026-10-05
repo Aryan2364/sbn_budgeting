@@ -38,6 +38,16 @@ import type { Client } from 'pg';
 
 export const FIXTURE_PASSWORD = 'harness-password';
 
+/**
+ * The schema these fixtures are written for: the world the baseline was
+ * recorded in, approvals, HOD, CEO and approver included. They are
+ * seeded once the migrations up to this one have run; the later ones
+ * (0013 closes the complaints waiting for approval and drops those
+ * columns) then carry them forward exactly as they carry production
+ * data, so every run also exercises those migrations on real rows.
+ */
+export const FIXTURE_SCHEMA = '0012_access';
+
 const uuid = (head: string, n: number): string =>
   `${head}-0000-4000-8000-${n.toString(16).padStart(12, '0')}`;
 

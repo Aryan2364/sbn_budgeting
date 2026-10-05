@@ -16,9 +16,7 @@ import { errorMessage } from "@/components/shell/session"
  *
  * Categories come from the categories Pick (access plan P7 inventory 9),
  * which every signed-in person holds: the full list is Settings ›
- * Complaint categories, under manage (D3). The Pick carries `isActive`,
- * `requiresApproval` and `approverDesignation`, the fields the raise
- * form shows.
+ * Complaint categories, under manage (D3). The Pick carries `isActive`.
  *
  * `activeOnly` is for the raise form, which must not offer a category
  * that has been retired (15.2). The list's filter wants every one,

@@ -171,8 +171,8 @@ export interface PhotoPlace {
 
 /**
  * `complaints/<yyyy>/<reference>/<stage>-<n>.<ext>`, with n continuing
- * after the highest n already stored for this complaint and stage, so a
- * second resolution after a send-back is resolved-2, -3, ... Keys in the
+ * after the highest n already stored for this complaint and stage
+ * (older complaints may carry a second resolution). Keys in the
  * old uuid layout never match the pattern and so never count.
  */
 export function planPhotoKeys(place: PhotoPlace, photos: CheckedPhoto[]): string[] {

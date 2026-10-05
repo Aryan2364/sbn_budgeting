@@ -74,7 +74,16 @@ function checksum(sql: string): string {
   return createHash('sha256').update(sql.replace(/\r\n/g, '\n')).digest('hex');
 }
 
-export async function migrateTestDatabase(target?: { url: string }): Promise<string[]> {
+/**
+ * Applies the pending migrations, in order. `through` stops after that
+ * version (e.g. '0012_access'), so data written for an older schema can
+ * be seeded and then carried forward by the later migrations, exactly
+ * as production data is (test/equivalence/fixtures.ts FIXTURE_SCHEMA).
+ */
+export async function migrateTestDatabase(
+  target?: { url: string },
+  { through }: { through?: string } = {},
+): Promise<string[]> {
   const { url } = target ?? testDatabaseUrl();
   const client = new Client({ connectionString: url });
   await client.connect();
@@ -93,6 +102,7 @@ export async function migrateTestDatabase(target?: { url: string }): Promise<str
     const dir = migrationsDir();
     for (const file of readdirSync(dir).filter((f) => f.endsWith('.sql')).sort()) {
       const version = file.replace(/\.sql$/, '');
+      if (through !== undefined && version > through) break;
       const sql = readFileSync(join(dir, file), 'utf8');
       const sum = checksum(sql);
       const prior = seen.get(version);

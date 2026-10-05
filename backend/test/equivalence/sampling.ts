@@ -70,8 +70,12 @@ const lim = (sql: string, partition?: string): string =>
 
 // coalesce: `x in (a, NULL)` is NULL, not false, when x is not a, and
 // `not NULL` would silently drop every complaint with an empty role.
-const COMPLAINT_NAMED =
-  `coalesce($1 in (c.supervisor_id, c.manager_id, c.hod_id, c.ceo_id, c.approver_id), false)`;
+// The HOD, CEO and approver columns exist only before migration 0013,
+// so they are read through to_jsonb: the same predicate on the fixtures'
+// own schema (where a fixture run samples), and on a restore after 0013.
+const COMPLAINT_PEOPLE = `($1::uuid::text in (c.supervisor_id::text, c.manager_id::text,
+  to_jsonb(c)->>'hod_id', to_jsonb(c)->>'ceo_id', to_jsonb(c)->>'approver_id'))`;
+const COMPLAINT_NAMED = `coalesce(${COMPLAINT_PEOPLE}, false)`;
 
 const QUERIES: Record<RecordType, ClassQuery[]> = {
   project: [
@@ -111,7 +115,8 @@ const QUERIES: Record<RecordType, ClassQuery[]> = {
         where u.id <> $1
           and not exists (select 1 from sites s where u.id in (s.manager_id, s.supervisor_id))
           and not exists (select 1 from expenses e where e.created_by = u.id)
-          and not exists (select 1 from complaints c where u.id in (c.raised_by, c.supervisor_id, c.manager_id, c.hod_id, c.ceo_id, c.approver_id))
+          and not exists (select 1 from complaints c where u.id::text in (c.raised_by::text, c.supervisor_id::text,
+                          c.manager_id::text, to_jsonb(c)->>'hod_id', to_jsonb(c)->>'ceo_id', to_jsonb(c)->>'approver_id'))
           and not exists (select 1 from users r where r.reports_to = u.id)` },
     { cls: 'none', sql: `select u.id from users u
         where u.id <> $1 and u.reports_to is distinct from $1

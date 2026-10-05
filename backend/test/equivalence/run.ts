@@ -22,7 +22,11 @@
  *               --switch-only                 that snapshot comes from a pre-switch
  *                                             (shadow-mode) build, which already had
  *                                             D1, D5, D6 and D7: only the switch-over's
- *                                             D2, D3 and D4 may differ
+ *                                             D2, D3 and D4 may differ, and D8 and D9
+ *                                             (migration 0013), which came after it
+ *               --through <version>           with --prepare: apply migrations only up
+ *                                             to that one (record a pre-switch build's
+ *                                             answers before 0013 drops what it reads)
  *
  * Needs TEST_DATABASE_URL (see test/support/test-env.ts). Without
  * --no-setup the database is DROPPED, recreated, migrated, seeded with
@@ -52,17 +56,22 @@ import { discoverRoutes, startHarnessApp } from '../support/app';
 import { queryGuardViolations, resetQueryGuard } from '../support/query-guard';
 import { migrateTestDatabase, recreateTestDatabase, withTestClient } from '../support/test-db';
 import { compareRuns, formatDifference, type Difference, type Field } from './compare';
-import { USER_LABEL, seedFixtures } from './fixtures';
+import { FIXTURE_SCHEMA, USER_LABEL, seedFixtures } from './fixtures';
 import {
   matchIntended,
   matchSwitchOnly,
-  missingD6,
+  missingApprovals,
   missingSwitchOver,
   moduleLookup,
+  type ApprovalsWorld,
   type IntendedWorld,
   type SwitchWorld,
 } from './intended';
-import { runMatrix, type MatrixRun } from './matrix';
+import {
+  captureLegacyWorld, emptyLegacyWorld, hodOnlyPairs, visibilityChange, type LegacyWorld,
+} from './legacy-approvals';
+import { loadUsers, runMatrix, type MatrixRun } from './matrix';
+import { sampleFor, type Sample } from './sampling';
 import { BASELINE_FILE, readSnapshot, summarise, writeSnapshot } from './snapshot';
 
 export interface BaselineOptions {
@@ -70,9 +79,11 @@ export interface BaselineOptions {
   setup?: boolean;
   /** With --no-setup: migrate and map the database as it is, then stop. */
   prepare?: boolean;
+  /** With --prepare: apply migrations only up to this version. */
+  through?: string;
   /** Compare with this snapshot instead of baseline.json. */
   baselineFile?: string;
-  /** The baseline is a pre-switch build's: only D2, D3 and D4 may differ. */
+  /** The baseline is a pre-switch build's: only D2, D3, D4 (and D8, D9, which came after it) may differ. */
   switchOnly?: boolean;
   only?: string;
   plant?: boolean;
@@ -91,8 +102,8 @@ export interface BaselineResult {
   switchOver: SwitchWorld;
   /** What must appear (plan 6.3.2): D2's people who can sign in, and whether D3 and D4 have a population. */
   expect: { d2People: string[]; d3Expected: boolean; d4Expected: boolean };
-  /** D6's complaints, for matching the baseline differences (intended.ts). */
-  selfApprovals: Map<string, string>;
+  /** D8's and D9's facts (intended.ts ApprovalsWorld); absent when the world before 0013 is unknown. */
+  approvals: ApprovalsWorld | undefined;
 }
 
 /** The module a mapping-report gain names: "Budget (from staff to everything)" -> 'budget'. */
@@ -114,8 +125,11 @@ export async function runBaseline(options: BaselineOptions = {}): Promise<Baseli
   if (options.prepare) {
     if (setup) throw new Error('--prepare works on a database as it is: pass --no-setup with it.');
     log(`Preparing "${env.databaseName}" as it is (no drop, no fixtures) ...`);
-    const applied = await migrateTestDatabase();
-    log(`  migrations applied: ${applied.length ? applied.join(', ') : 'none (already current)'}`);
+    const applied = await migrateTestDatabase(undefined, { through: options.through });
+    log(
+      `  migrations applied${options.through ? ` (through ${options.through})` : ''}: ` +
+        (applied.length ? applied.join(', ') : 'none (already current)'),
+    );
     const { resyncAccessMapping, formatResync } = await import('../../src/db/map-access-levels');
     const mapping = await withTestClient((db) => resyncAccessMapping(db, { apply: true }));
     log(formatResync(mapping));
@@ -126,28 +140,56 @@ export async function runBaseline(options: BaselineOptions = {}): Promise<Baseli
     process.exit(0);
   }
 
-  if (setup) {
-    log(`Rebuilding test database "${env.databaseName}" ...`);
-    await recreateTestDatabase({ drop: true });
-    const applied = await migrateTestDatabase();
-    log(`  migrations applied: ${applied.join(', ')}`);
-    await withTestClient((db) => seedFixtures(db, env.uploadDir));
-    log('  fixtures seeded');
-  }
-
   // The decision 23 mapping (plan 6.3.1): applied on a fresh fixture
   // database; on --no-setup, checked to be applied already (a dry run
   // that would change something means the roles are not today's levels,
   // and the shadow comparison would be meaningless).
   const { resyncAccessMapping } = await import('../../src/db/map-access-levels');
-  const mapping = await withTestClient((db) => resyncAccessMapping(db, { apply: setup }));
+  let mapping: Awaited<ReturnType<typeof resyncAccessMapping>>;
+  /**
+   * On a fixture run: every person's sample, drawn from the world the
+   * baseline was recorded in (before migration 0013 moved its statuses
+   * and dropped its people), so every case keeps the key it had there.
+   */
+  let samples: Map<string, Sample> | undefined;
+  /** On a fixture run: the complaint world before migration 0013 (D8, D9). */
+  let legacy: LegacyWorld | undefined;
   if (setup) {
+    log(`Rebuilding test database "${env.databaseName}" ...`);
+    await recreateTestDatabase({ drop: true });
+    const applied = await migrateTestDatabase(undefined, { through: FIXTURE_SCHEMA });
+    log(`  migrations applied: ${applied.join(', ')}`);
+    await withTestClient((db) => seedFixtures(db, env.uploadDir));
+    log(`  fixtures seeded (schema ${FIXTURE_SCHEMA})`);
+    mapping = await withTestClient((db) => resyncAccessMapping(db, { apply: true }));
     log(`  decision 23 mapping applied: ${mapping.changes.length} changes`);
-  } else if (mapping.changes.length > 0) {
-    throw new Error(
-      `The database does not carry the decision 23 mapping (${mapping.changes.length} pending changes). ` +
-        'Run npm run access:map-levels -- --apply on it first.',
-    );
+    samples = await withTestClient(async (db) => {
+      const out = new Map<string, Sample>();
+      for (const u of await loadUsers(db)) out.set(u.id ?? '', await sampleFor(db, u.id));
+      return out;
+    });
+    legacy = await withTestClient((db) => captureLegacyWorld(db));
+    const later = await migrateTestDatabase();
+    log(`  later migrations applied to the fixtures: ${later.join(', ') || 'none'}`);
+    // The migrations and the seed roles must agree: nothing left to map.
+    const after = await withTestClient((db) => resyncAccessMapping(db, { apply: false }));
+    if (after.changes.length > 0) {
+      throw new Error(
+        `After the later migrations the mapping still has ${after.changes.length} change(s): ` +
+          after.changes.map((c) => c.text).join('; '),
+      );
+    }
+  } else {
+    // A restore after migration 0013 can say what it held before only
+    // when it holds no complaint and no category (legacy-approvals.ts).
+    legacy = (await withTestClient((db) => emptyLegacyWorld(db))) ?? undefined;
+    mapping = await withTestClient((db) => resyncAccessMapping(db, { apply: false }));
+    if (mapping.changes.length > 0) {
+      throw new Error(
+        `The database does not carry the decision 23 mapping (${mapping.changes.length} pending changes). ` +
+          'Run npm run access:map-levels -- --apply on it first.',
+      );
+    }
   }
   // Cases are keyed by the person's label (matrix.ts): the fixture's
   // name, or the id itself on a restore.
@@ -184,20 +226,36 @@ export async function runBaseline(options: BaselineOptions = {}): Promise<Baseli
     d4Expected: signers.some((p) => p.no_module_rows),
   };
 
-  // D6 (plan 6.3.3): every complaint whose approver raised or resolved
-  // it, keyed as the approver's case suffix "<label>|<complaint id>".
-  const selfApprovals = new Map(
-    await withTestClient(async (db) =>
-      (
-        await db.query<{ id: string; approver_id: string; status: string }>(
-          `select c.id, c.approver_id, c.status from complaints c /*scope-exempt: harness, every complaint*/
-           where c.approver_id in (c.raised_by, c.resolved_by)`,
-        )
-      ).rows.map((r): [string, string] => [`${USER_LABEL[r.approver_id] ?? r.approver_id}|${r.id}`, r.status]),
-    ),
-  );
-  if (selfApprovals.size) {
-    log(`  D6: ${[...selfApprovals].filter(([, s]) => s !== 'closed').length} open complaint(s) whose approver raised or resolved it`);
+  // D8 and D9 (owner decisions A1-A3, migration 0013): the complaints
+  // 0013 closed, who reached one only as its HOD, and what each
+  // complaints member now sees that they did not (and the reverse), by
+  // case label "<user label>|<complaint id>".
+  let approvals: ApprovalsWorld | undefined;
+  if (legacy) {
+    const world = legacy;
+    const extras = new Map<string, Set<string>>();
+    const losses = new Map<string, Set<string>>();
+    await withTestClient(async (db) => {
+      for (const p of people) {
+        const v = await visibilityChange(db, world, p.id);
+        if (v.extras.size) extras.set(label(p.id), v.extras);
+        if (v.losses.size) losses.set(label(p.id), v.losses);
+      }
+    });
+    const hodOnly = new Set(
+      [...hodOnlyPairs(world)].map((pair) => {
+        const [person = '', complaint = ''] = pair.split('|');
+        return `${label(person)}|${complaint}`;
+      }),
+    );
+    approvals = { migrated: world.migrated, hodOnly, extras, losses };
+    log(
+      `  D8: ${world.migrated.size} complaint(s) closed by 0013, ${hodOnly.size} HOD-only reassign pair(s); ` +
+        `D9: ${[...extras].map(([l, s]) => `${l} +${s.size}`).join(', ') || 'nobody'} newly see complaints` +
+        (losses.size ? `, ${[...losses].map(([l, s]) => `${l} -${s.size}`).join(', ')} no longer` : ''),
+    );
+  } else {
+    log('  D8, D9: the complaint world before 0013 is unknown here; only their route removals can match.');
   }
 
   const harness = await startHarnessApp();
@@ -234,6 +292,8 @@ export async function runBaseline(options: BaselineOptions = {}): Promise<Baseli
     const run = await withTestClient((db) =>
       runMatrix(harness, routes, db, {
         only,
+        samples,
+        legacy,
         onProgress: (n, who) => log(`  [${n}] ${who}`),
       }),
     );
@@ -265,14 +325,14 @@ export async function runBaseline(options: BaselineOptions = {}): Promise<Baseli
       if (only || options.plant) throw new Error('Refusing to record a partial or planted run as the baseline.');
       writeSnapshot(BASELINE_FILE(), run, meta);
       log(`Baseline written to ${BASELINE_FILE()}`);
-      return { run, differences: [], summary, baselineCases: {}, switchOver, expect, selfApprovals };
+      return { run, differences: [], summary, baselineCases: {}, switchOver, expect, approvals };
     }
 
     const baselineFile = options.baselineFile ?? BASELINE_FILE();
     log(`Comparing with ${baselineFile}${options.switchOnly ? ' (a pre-switch build: switch-over differences only)' : ''}`);
     const baseline = readSnapshot(baselineFile);
     const differences = compareRuns(baseline, run, { only, ignore: options.ignore });
-    return { run, differences, summary, baselineCases: baseline.cases, switchOver, expect, selfApprovals };
+    return { run, differences, summary, baselineCases: baseline.cases, switchOver, expect, approvals };
   } finally {
     await harness.close();
   }
@@ -289,11 +349,13 @@ function parseArgs(argv: string[]): BaselineOptions {
     else if (a === '--out') opts.out = resolve(launchDir, argv[++i] ?? '');
     else if (a === '--ignore') opts.ignore = (argv[++i] ?? '').split(',').filter(Boolean) as Field[];
     else if (a === '--prepare') opts.prepare = true;
+    else if (a === '--through') opts.through = argv[++i];
     else if (a === '--baseline') opts.baselineFile = resolve(launchDir, argv[++i] ?? '');
     else if (a === '--switch-only') opts.switchOnly = true;
     else throw new Error(`Unknown argument ${a}`);
   }
   if (opts.switchOnly && !opts.baselineFile) throw new Error('--switch-only needs --baseline <file>.');
+  if (opts.through && !opts.prepare) throw new Error('--through goes with --prepare.');
   if (opts.baselineFile && opts.record) throw new Error('--baseline and --record do not go together.');
   return opts;
 }
@@ -301,7 +363,7 @@ function parseArgs(argv: string[]): BaselineOptions {
 if (require.main === module) {
   const opts = parseArgs(process.argv.slice(2));
   runBaseline(opts)
-    .then(({ run, differences, baselineCases, switchOver, expect, selfApprovals }) => {
+    .then(({ run, differences, baselineCases, switchOver, expect, approvals }) => {
       const problems = Object.entries(run.cases).filter(
         ([, c]) => c.status === 'NO-CASE' || c.status === 'ERROR',
       );
@@ -320,14 +382,14 @@ if (require.main === module) {
         process.exit(0);
       }
       // Intended differences (plan 6.3.3) are matched by id, never ignored.
-      const intendedWorld: IntendedWorld = { runCases: run.cases, selfApprovals, baselineCases, switchOver };
-      // Against a pre-switch build only the switch-over's own entries may
-      // differ; D6's changes are already in that build, so it has no count.
+      const intendedWorld: IntendedWorld = { runCases: run.cases, baselineCases, switchOver, approvals };
+      // Against a pre-switch build only the switch-over's own entries, and
+      // D8 and D9 (which came after it), may differ.
       const { unmatched, matched } = opts.switchOnly
         ? matchSwitchOnly(differences, intendedWorld)
         : matchIntended(differences, intendedWorld);
-      // D6's count: every listed complaint must show its change (plan 6.3.2).
-      const d6Missing = opts.only || opts.switchOnly ? [] : missingD6(differences, intendedWorld);
+      // D8 and D9 must appear (plan 6.3.2): the removed routes, and every member who newly sees a complaint.
+      const approvalsMissing = opts.only ? [] : missingApprovals(differences, intendedWorld);
       const counts = (m: Record<string, number>): string =>
         Object.keys(m).length ? Object.entries(m).sort().map(([id, n]) => `${id}: ${n}`).join(', ') : 'none';
       process.stdout.write(`Baseline differences matched, per intended id: ${counts(matched)}.\n`);
@@ -337,17 +399,15 @@ if (require.main === module) {
       process.stdout.write(`  D2 people (mapping report): ${expect.d2People.join(', ') || 'none'}\n`);
       const missing = opts.only ? [] : missingSwitchOver(differences, intendedWorld, expect);
 
-      if (d6Missing.length) {
-        process.stdout.write(`FAIL: ${d6Missing.length} D6 change(s) missing.
-`);
-        for (const m of d6Missing) process.stdout.write(`  ${m}
-`);
+      if (approvalsMissing.length) {
+        process.stdout.write(`FAIL: ${approvalsMissing.length} D8/D9 change(s) missing.\n`);
+        for (const m of approvalsMissing) process.stdout.write(`  ${m}\n`);
       }
       if (missing.length) {
         process.stdout.write(`FAIL: ${missing.length} listed intended difference(s) did not appear.\n`);
         for (const m of missing) process.stdout.write(`  ${m}\n`);
       }
-      if (unmatched.length === 0 && problems.length === 0 && missing.length === 0 && d6Missing.length === 0) {
+      if (unmatched.length === 0 && problems.length === 0 && missing.length === 0 && approvalsMissing.length === 0) {
         process.stdout.write('PASS: zero unmatched differences from the baseline; every listed difference appeared.\n');
         process.exit(0);
       }

@@ -23,8 +23,7 @@ import {
  *   - "Mark all as read" marks everything read.
  *
  * Rows stay neutral (7.3). A status badge appears only where the event
- * genuinely is good or needs attention: a complaint closed or approved
- * (success), or a fix sent back (warning).
+ * genuinely is good: a complaint closed (success).
  *
  * "View all" goes to the complaints list: there is no notifications
  * list endpoint that pages (CONTRACT §9, fe-complaints).
@@ -34,12 +33,7 @@ const POLL_MS = 60_000
 const LIMIT = 25
 
 function toPanel(item: NotificationItem): Notification {
-  const status: Notification["status"] =
-    item.kind === "closed" || item.kind === "approved"
-      ? "success"
-      : item.kind === "sent_back"
-        ? "warning"
-        : undefined
+  const status: Notification["status"] = item.kind === "closed" ? "success" : undefined
   return {
     id: item.id,
     text: item.body ? `${item.title}. ${item.body}` : item.title,

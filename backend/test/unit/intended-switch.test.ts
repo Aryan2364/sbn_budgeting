@@ -35,7 +35,6 @@ function world(cases: Record<string, [unknown, unknown]>): IntendedWorld {
   return {
     runCases: Object.fromEntries(Object.entries(cases).map(([k, [, run]]) => [k, { status: run }])) as IntendedWorld['runCases'],
     baselineCases: Object.fromEntries(Object.entries(cases).map(([k, [base]]) => [k, { status: base }])),
-    selfApprovals: new Map(),
     switchOver: {
       d2Gains: new Map([['platform_admin', new Set(['budget'])]]),
       noModuleRows: new Set(['no_module']),
@@ -117,7 +116,7 @@ describe('switch-over intended differences (P9): D2, D3, D4', () => {
     assert.deepEqual(missingSwitchOver([], w, { d2People: [], d3Expected: false, d4Expected: false }), []);
   });
 
-  it('against a pre-switch build only D2, D3 and D4 match (--switch-only)', () => {
+  it('against a pre-switch build only D2, D3 and D4 match, and D8 and D9 which came after it (--switch-only)', () => {
     const d3 = 'GET /api/designations |budget_staff';
     const d7 = 'GET /api/expenses |budget_staff';
     const w = world({ [d3]: [200, 403], [d7]: [200, 200] });
@@ -127,10 +126,12 @@ describe('switch-over intended differences (P9): D2, D3, D4', () => {
         // Would be D7 against the old baseline; a pre-switch build already sent `can`.
         diff(d7, 'itemKeys', ['id'], ['can', 'id']),
         { key: 'GET /api/pick/budget/sites', kind: 'route-only-in-run' },
+        // Migration 0013 (A1) came after every pre-switch build.
+        { key: 'POST /api/complaints/:id/approve', kind: 'route-only-in-baseline' },
       ],
       w,
     );
-    assert.deepEqual(result.matched, { D3: 1 });
+    assert.deepEqual(result.matched, { D3: 1, D8: 1 });
     assert.equal(result.unmatched.length, 2);
   });
 });

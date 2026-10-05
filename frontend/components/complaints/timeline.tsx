@@ -7,7 +7,6 @@ import {
   CircleDotIcon,
   MessageSquareIcon,
   PlayIcon,
-  Undo2Icon,
   WrenchIcon,
 } from "lucide-react"
 
@@ -55,19 +54,13 @@ function describe(event: ComplaintEvent): { icon: React.ReactNode; text: string 
     case "started":
       return { icon: <PlayIcon />, text: `${who} started work on it` }
     case "resolved":
-      return {
-        icon: <WrenchIcon />,
-        text:
-          event.toStatus === "closed"
-            ? `${who} resolved it, which closed it`
-            : `${who} resolved it and sent it for approval`,
-      }
-    case "approved":
-      return { icon: <CircleCheckIcon />, text: `${who} approved the fix and closed it` }
+      return { icon: <WrenchIcon />, text: `${who} resolved it and closed it` }
     case "closed":
-      return { icon: <CircleCheckIcon />, text: `${who} closed it` }
-    case "sent_back":
-      return { icon: <Undo2Icon />, text: `${who} sent it back to the supervisor` }
+      // Written only by a data update, with no person behind it.
+      return {
+        icon: <CircleCheckIcon />,
+        text: event.actor ? `${who} closed it` : "Closed automatically by a system update",
+      }
     case "reassigned": {
       const from = payloadName(event.payload, "fromSupervisor", "from", "previousSupervisor")
       const to = payloadName(event.payload, "toSupervisor", "to", "supervisor")

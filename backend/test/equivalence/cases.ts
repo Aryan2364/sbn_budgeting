@@ -89,10 +89,17 @@ export class World {
        where u.can_login order by s.id limit 1`,
     );
   }
-  /** An active category, preferring one that needs no approver. */
+  /**
+   * An active category. Before migration 0013 this preferred one that
+   * needed no approver (raising another could fail for want of one); with
+   * approvals gone (A1) any active category raises, and the fixture's
+   * "Information" is still the one chosen, so the case is unchanged.
+   */
   raisableCategory(): Promise<string> {
     return this.id(
-      'select id from complaint_categories where is_active order by requires_approval, id limit 1',
+      `select id from complaint_categories where is_active and name = 'Information'
+       union all (select id from complaint_categories where is_active order by id limit 1)
+       limit 1`,
     );
   }
   anyPerson(): Promise<string> {
@@ -447,14 +454,8 @@ export const ROUTES: Record<string, RouteSpec> = {
       },
     ],
   },
-  'POST /api/complaints/:id/approve': {
-    params: { id: 'complaint' },
-    variants: [{ name: '', json: () => ({ note: NOTE }) }],
-  },
-  'POST /api/complaints/:id/send-back': {
-    params: { id: 'complaint' },
-    variants: [{ name: '', json: () => ({ note: NOTE }) }],
-  },
+  // POST /:id/approve and /:id/send-back: gone with A1 (migration 0013,
+  // intended difference D8). Their baseline cases are matched there.
   'POST /api/complaints/:id/reassign': {
     params: { id: 'complaint' },
     variants: [
@@ -482,7 +483,7 @@ export const ROUTES: Record<string, RouteSpec> = {
 
   'GET /api/complaint-categories': { variants: [{ name: '', list: true }] },
   'POST /api/complaint-categories': {
-    variants: [{ name: '', json: () => ({ name: 'Harness Category', requiresApproval: false }) }],
+    variants: [{ name: '', json: () => ({ name: 'Harness Category' }) }],
   },
   'GET /api/complaint-categories/:id': { params: { id: 'complaint_category' }, variants: [{ name: '' }] },
   'PATCH /api/complaint-categories/:id': {
@@ -491,19 +492,13 @@ export const ROUTES: Record<string, RouteSpec> = {
       {
         name: 'same-values',
         json: async ({ world, params }) => {
-          const c = await world.one<{
-            name: string; is_active: boolean; requires_approval: boolean; approver_designation_id: string | null;
-          }>(
-            `select name, is_active, requires_approval, approver_designation_id
-             from complaint_categories where id = $1`,
+          // requiresApproval and the approver designation went with A1
+          // (migration 0013); the whitelist strips them if sent.
+          const c = await world.one<{ name: string; is_active: boolean }>(
+            `select name, is_active from complaint_categories where id = $1`,
             [params.id],
           );
-          return {
-            name: c?.name ?? 'Harness',
-            isActive: c?.is_active ?? true,
-            requiresApproval: c?.requires_approval ?? false,
-            approverDesignationId: c?.approver_designation_id ?? null,
-          };
+          return { name: c?.name ?? 'Harness', isActive: c?.is_active ?? true };
         },
       },
     ],

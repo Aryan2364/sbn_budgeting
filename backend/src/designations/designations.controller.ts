@@ -7,7 +7,7 @@ import type { Pool } from 'pg';
 
 import { Can } from '../access/decorators';
 import {
-  buildUpdate, findOneOrFail, isPgError, PG_FOREIGN_KEY_VIOLATION, PG_UNIQUE_VIOLATION,
+  buildUpdate, findOneOrFail, isPgError, PG_UNIQUE_VIOLATION,
 } from '../common/crud';
 import { ListQueryDto } from '../common/list-query.dto';
 import { runListQuery, type ListResult, type MatchInfo } from '../common/list-query';
@@ -38,9 +38,9 @@ export interface DesignationRow {
 }
 
 /**
- * Admin-editable master (plan 3.3). seed_key is the stable identity the
- * complaints routing reads, so a seeded row can be renamed or
- * deactivated but never deleted — the cost_heads pattern.
+ * Admin-editable master (plan 3.3): a job label on a person. No logic
+ * branches on a designation (owner decision, 5 Oct 2026), so any one
+ * nobody holds can be deleted; seed_key is only the migration's handle.
  *
  * The full list (with usage counts) is the Settings screen, behind
  * platform.designations.manage (D3, from P9; before it, anyone signed
@@ -152,27 +152,13 @@ export class DesignationsController {
   @HttpCode(204)
   async remove(@Param('id', new ParseUUIDPipe()) id: string): Promise<void> {
     const row = await this.get(id);
-    if (row.seedKey) {
-      throw new ConflictException(
-        `${row.name} is used to route complaints, so it can be renamed or deactivated but not deleted.`,
-      );
-    }
     if (row.userCount > 0) {
       throw new ConflictException(
         `${row.userCount} ${row.userCount === 1 ? 'person has' : 'people have'} the designation ${row.name}. ` +
           'Change their designation first, or deactivate it instead.',
       );
     }
-    try {
-      await this.pool.query('delete from designations where id = $1', [id]);
-    } catch (error) {
-      if (isPgError(error, PG_FOREIGN_KEY_VIOLATION)) {
-        throw new ConflictException(
-          `Complaint categories use ${row.name} as their approver. Change their approver first, or deactivate ${row.name} instead.`,
-        );
-      }
-      throw error;
-    }
+    await this.pool.query('delete from designations where id = $1', [id]);
   }
 
   /**

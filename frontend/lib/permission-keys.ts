@@ -40,7 +40,6 @@ export type PermissionKey =
   | 'complaints.complaints.raise'
   | 'complaints.complaints.comment'
   | 'complaints.complaints.work'
-  | 'complaints.complaints.approve'
   | 'complaints.complaints.reassign'
   | 'complaints.categories.manage'
   | 'complaints.categories.pick'
@@ -81,7 +80,6 @@ export const PERMISSION_KEYS: readonly PermissionKey[] = [
   'complaints.complaints.raise',
   'complaints.complaints.comment',
   'complaints.complaints.work',
-  'complaints.complaints.approve',
   'complaints.complaints.reassign',
   'complaints.categories.manage',
   'complaints.categories.pick',
@@ -127,7 +125,6 @@ export const PERMISSION_LABELS: Readonly<Record<PermissionKey, string>> = {
   'complaints.complaints.raise': 'raise complaints',
   'complaints.complaints.comment': 'comment on complaints',
   'complaints.complaints.work': 'start and resolve complaints assigned to them',
-  'complaints.complaints.approve': 'approve or send back complaints',
   'complaints.complaints.reassign': 'reassign complaints',
   'complaints.categories.manage': 'manage complaint categories',
   'complaints.categories.pick': 'pick categories',
@@ -172,7 +169,6 @@ export const MODULE_KEYS: Readonly<Record<ModuleKey, readonly PermissionKey[]>> 
     'complaints.complaints.raise',
     'complaints.complaints.comment',
     'complaints.complaints.work',
-    'complaints.complaints.approve',
     'complaints.complaints.reassign',
     'complaints.categories.manage',
   ],
@@ -509,12 +505,6 @@ export const CATALOGUE: readonly CatalogueModule[] = [
             key: 'complaints.complaints.work',
             short: 'Work',
             label: 'start and resolve complaints assigned to them',
-            needs: [],
-          },
-          {
-            key: 'complaints.complaints.approve',
-            short: 'Approve',
-            label: 'approve or send back complaints',
             needs: [],
           },
           {

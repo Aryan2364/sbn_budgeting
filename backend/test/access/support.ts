@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 import { Client } from 'pg';
 
-import { seedFixtures } from '../equivalence/fixtures';
+import { FIXTURE_SCHEMA, seedFixtures } from '../equivalence/fixtures';
 import { migrateTestDatabase, recreateTestDatabase } from '../support/test-db';
 import { testDatabaseUrl } from '../support/test-env';
 
@@ -24,6 +24,8 @@ export const SKIP_REASON = 'TEST_DATABASE_URL is not set';
 export interface ScratchDb {
   client: Client;
   name: string;
+  /** Applies the migrations not yet run (after `stopAtFixtureSchema`). */
+  migrate(): Promise<string[]>;
   close(): Promise<void>;
 }
 
@@ -49,21 +51,33 @@ async function dropDatabase(target: { url: string; name: string }): Promise<void
   }
 }
 
-/** A freshly migrated scratch database, optionally seeded with the P0 fixtures. */
-export async function openScratchDatabase(suffix: string, options: { fixtures?: boolean } = {}): Promise<ScratchDb> {
+/**
+ * A freshly migrated scratch database, optionally seeded with the P0
+ * fixtures. The fixtures are written for the schema as of FIXTURE_SCHEMA,
+ * so they go in at that point and the later migrations carry them
+ * forward, as they carry production data. With `stopAtFixtureSchema`
+ * they are not carried forward: the caller runs `migrate()` itself (a
+ * test of a later migration on that data).
+ */
+export async function openScratchDatabase(
+  suffix: string,
+  options: { fixtures?: boolean; stopAtFixtureSchema?: boolean } = {},
+): Promise<ScratchDb> {
   const target = scratchTarget(suffix);
   await recreateTestDatabase({ drop: true, target });
-  await migrateTestDatabase(target);
+  await migrateTestDatabase(target, options.fixtures ? { through: FIXTURE_SCHEMA } : {});
   const client = new Client({ connectionString: target.url });
   await client.connect();
   if (options.fixtures) {
     const uploadDir = join(tmpdir(), 'sadbhavna-access-p1-tests', suffix);
     mkdirSync(uploadDir, { recursive: true });
     await seedFixtures(client, uploadDir);
+    if (!options.stopAtFixtureSchema) await migrateTestDatabase(target);
   }
   return {
     client,
     name: target.name,
+    migrate: () => migrateTestDatabase(target),
     close: async () => {
       await client.end();
       await dropDatabase(target);

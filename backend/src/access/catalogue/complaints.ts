@@ -5,21 +5,20 @@ import type { ModuleCatalogue } from './types';
  * No see amounts.
  *
  * The workflow layer (plan section 6.2) sits on top of these keys and
- * still decides, per complaint, whether this person is the supervisor
- * or the approver. A key only says the person may do the kind of thing.
+ * still decides, per complaint, whether this person is its supervisor.
+ * A key only says the person may do the kind of thing. There is no
+ * approval step (owner decision, 5 Oct 2026): resolving closes it.
  *
  * Routes (put on the handlers in P2b):
  *   view      GET /complaints, /counts, /summary, /:id, /:id/photos/:photoId
  *   raise     GET /complaints/sites, POST /complaints
  *   comment   POST /:id/comments
  *   work      POST /:id/start, /:id/resolve
- *   approve   POST /:id/approve, /:id/send-back   (C1)
  *   reassign  POST /:id/reassign
  *   categories.manage  GET/POST/PATCH/DELETE /complaint-categories[/:id]
  *
  * There is ONE reassign key (O6). At Own it reaches the complaints where
- * you are the manager or HOD (ownColumns), which is today's member rule;
- * at All it reaches every complaint, today's admin rule.
+ * you are the manager (ownColumns); at All it reaches every complaint.
  */
 export const complaintsCatalogue = {
   module: 'complaints',
@@ -47,15 +46,10 @@ export const complaintsCatalogue = {
           short: 'Work',
         },
         {
-          key: 'approve',
-          label: 'approve or send back complaints',
-          short: 'Approve',
-        },
-        {
           key: 'reassign',
           label: 'reassign complaints',
           short: 'Reassign',
-          ownColumns: ['manager_id', 'hod_id'],
+          ownColumns: ['manager_id'],
           // Choosing the new supervisor means choosing from everyone.
           needs: [{ pick: 'platform.people', scope: 'all' }],
         },
@@ -65,13 +59,9 @@ export const complaintsCatalogue = {
       key: 'categories',
       label: 'Categories',
       record: 'master',
-      // The raise form tells the raiser whether closing needs approval,
-      // and by whom, before they submit; the list filter keeps retired
+      // The raise form chooses from it; the list filter keeps retired
       // categories findable (GET /pick/complaints/categories).
-      pick: {
-        everyone: true,
-        fields: ['id', 'name', 'isActive', 'requiresApproval', 'approverDesignation'],
-      },
+      pick: { everyone: true, fields: ['id', 'name', 'isActive'] },
       actions: [{ key: 'manage', label: 'manage complaint categories', short: 'Manage' }],
     },
   ],

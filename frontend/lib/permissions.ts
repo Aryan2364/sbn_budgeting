@@ -81,21 +81,16 @@ import { toast } from "@/components/ui/sonner"
  *     uses id, name; sites also projectId (the site list follows the project)
  *     now  GET /pick/budget/projects, GET /pick/budget/sites (extra: projectId)
  *  8. components/complaints/action-dialogs.tsx, Reassign
- *     was  GET /designations?pageSize=100     (D3) to find seedKey 'supervisor',
- *          then GET /users/picker?designationId=&canLogin=true
- *     uses designations: id, seedKey; people: id, name
- *     now  GET /pick/platform/designations    extra: seedKey, isActive
- *          GET /pick/platform/people?designationId=&canReceive=true
+ *     was  GET /users/picker?designationId=&canLogin=true
+ *     uses id, name, designationName
+ *     now  GET /pick/platform/people?canReceive=true&holds=complaints.complaints.work
  *  9. components/complaints/use-masters.ts (the raise form, and the
  *     complaint list's Category filter)
  *     was  GET /complaint-categories, every page (D3); raise: isActive=true
- *     uses id, name, isActive, requiresApproval, approverDesignation.name
- *     now  GET /pick/complaints/categories    extra: isActive,
- *          requiresApproval, approverDesignationName
- * 10. app/(app)/settings/complaint-categories, the approver designation
- *     was  GET /designations, every page      (D3)
- *     uses id, name, seedKey ('hod', the default), isActive
- *     now  GET /pick/platform/designations    extra: seedKey, isActive
+ *     uses id, name, isActive
+ *     now  GET /pick/complaints/categories    extra: isActive
+ * 10. app/(app)/settings/complaint-categories: picks nothing any more
+ *     (5 Oct 2026, categories have only a name and an active flag)
  * 11. app/(app)/settings/people, the Designation filter and field
  *     was  GET /designations, every page
  *     uses id, name

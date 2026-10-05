@@ -257,7 +257,7 @@ export interface AuthUser {
   name: string
   email: string | null
   phone: string | null
-  designation: { id: string; name: string; seedKey: string | null } | null
+  designation: { id: string; name: string } | null
   // The payload still carries the old per-module levels until access
   // plan P11, for already-open old tabs. This app reads none of it:
   // every permission question goes through lib/permissions.ts (kit
@@ -367,8 +367,6 @@ export type SiteLocation = Location
 export interface Designation {
   id: string
   name: string
-  /** Set on the seeded ones (supervisor, manager, hod, ceo). Never deletable. */
-  seedKey: string | null
   sortOrder: number
   isActive: boolean
   userCount: number
@@ -447,23 +445,19 @@ export interface CostHeadPick extends PickOption {
 
 /**
  * `complaints.categories.pick`. Active ones only unless
- * `includeInactive`: the raise form offers active ones and says when a
- * category needs approval, and by whom; the complaint list's filter
- * wants retired ones too, because old complaints still carry them.
+ * `includeInactive`: the raise form offers active ones; the complaint
+ * list's filter wants retired ones too, because old complaints still
+ * carry them.
  */
 export interface CategoryPick extends PickOption {
   isActive: boolean
-  requiresApproval: boolean
-  approverDesignation: { id: string; name: string } | null
 }
 
 /**
- * `platform.designations.pick`. `seedKey` finds the Supervisor (reassign)
- * and the default HOD approver (categories); `isActive` keeps a retired
- * one off a form that is choosing afresh.
+ * `platform.designations.pick`. `isActive` keeps a retired one off a
+ * form that is choosing afresh.
  */
 export interface DesignationPick extends PickOption {
-  seedKey: string | null
   isActive: boolean
 }
 
@@ -517,17 +511,17 @@ export const pick = {
     ),
   /**
    * `q` searches name and designation on the server (P8's search-as-
-   * you-type picker sends it 300 ms after typing stops). `designationId`
-   * and `canReceive` (active and can sign in) narrow, never widen (plan
-   * 5.3.3): the reassign dialog asks for Supervisors who can take a
-   * complaint.
+   * you-type picker sends it 300 ms after typing stops). `canReceive`
+   * (active and can sign in) and `holds` (a permission key the person
+   * holds) narrow, never widen (plan 5.3.3): the reassign dialog asks
+   * for people who can sign in and hold complaints.complaints.work.
    */
-  people: (params: { q?: string; designationId?: string; canReceive?: boolean } = {}) =>
+  people: (params: { q?: string; canReceive?: boolean; holds?: string } = {}) =>
     pickRows<PersonPick>(
       `/pick/platform/people${query({
         q: params.q,
-        designationId: params.designationId,
         canReceive: params.canReceive === undefined ? undefined : String(params.canReceive),
+        holds: params.holds,
       })}`,
     ),
 }

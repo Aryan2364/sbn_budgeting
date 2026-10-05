@@ -34,11 +34,8 @@ import {
 /**
  * The designations master (CONTRACT §2), platform admin only. The
  * cost-heads pattern: a paged master list, one Add/Edit dialog, and a
- * delete that is checked before it is offered.
- *
- * The four seeded designations (supervisor, manager, HOD, CEO) route
- * complaints by their seed key, so they can be renamed or deactivated
- * but never deleted.
+ * delete that is checked before it is offered. A designation says what
+ * a person is; nothing in the app acts on which one it is.
  *
  * Section 27.2: the list's sort is by name, A to Z. Designations have
  * no position of their own, and nobody sets one.
@@ -81,7 +78,7 @@ export default function DesignationsSettingsPage() {
     <>
       <MasterSection
         title="Designations"
-        description="What each person is: Supervisor, Manager, HOD, CEO and any others. Complaints are routed by the first four."
+        description="What each person is, such as Supervisor or Manager. It shows on each person and in the people list."
         createLabel="Add designation"
         canEdit={canEdit}
         cannotEditReason={reasonFor("platform.designations.manage")}
@@ -130,28 +127,18 @@ export default function DesignationsSettingsPage() {
         deleteWhat="designation"
         deleteName={(row) => row.name}
         /*
-         * The same two refusals the server makes, said before the click
-         * (§26, §15.1): a seeded designation is never deletable, and one
+         * The server's refusal, said before the click (§26, §15.1): one
          * that people hold is deactivated instead (§15.2).
          */
         deleteBlocked={(row) => {
-          if (row.seedKey) {
-            return `${row.name} is used to route complaints, so it can be renamed but not deleted.`
-          }
           if (row.userCount === 0) return null
           const who = `${formatNumber(row.userCount)} ${row.userCount === 1 ? "person has" : "people have"} this designation`
           return row.isActive
             ? `${who}, so it cannot be deleted. Deactivating it keeps them as they are and stops it being offered for anyone new.`
             : `${who}, so it cannot be deleted. It is already inactive, so nothing further is needed.`
         }}
-        /*
-         * Not offered for a seeded designation: deactivating Supervisor
-         * from a delete dialog would quietly stop it being offered for
-         * new people while complaints still route by it. That stays a
-         * deliberate edit, not a one-click alternative.
-         */
         deleteAlternative={(row) =>
-          row.isActive && !row.seedKey
+          row.isActive
             ? {
                 label: "Deactivate designation",
                 run: async () => {
@@ -171,7 +158,7 @@ export default function DesignationsSettingsPage() {
           </>
         )}
         emptyHeading="No designations yet"
-        emptyBody="Designations say what each person is, and route complaints to the right people."
+        emptyBody="Designations say what each person is, such as Supervisor or Manager."
         onChanged={refresh}
       />
 
@@ -247,11 +234,7 @@ function DesignationDialog({
       <DialogContent>
         <DialogHeader>
           <DialogTitle>{isEdit ? "Edit designation" : "Add designation"}</DialogTitle>
-          <DialogDescription>
-            {designation?.seedKey
-              ? "This designation routes complaints. Renaming it keeps the routing."
-              : "The name shows on each person and in the people list."}
-          </DialogDescription>
+          <DialogDescription>The name shows on each person and in the people list.</DialogDescription>
         </DialogHeader>
 
         <DialogBody className="flex flex-col gap-6">

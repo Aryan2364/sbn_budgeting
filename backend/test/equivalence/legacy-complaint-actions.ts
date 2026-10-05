@@ -15,6 +15,10 @@
  * baseline digest, every byte outside `actions` is unchanged, and the
  * `actions` allowed flags are still compared on their own (`actions`
  * field, matched only by D6). Nothing is loosened.
+ *
+ * Since migration 0013 (RESOLUTIONS A1-A3) D6 is retired and the detail
+ * changes further (D8, D9): legacy-approvals.ts undoes those and then
+ * puts this file's `actions` back, for the same proof.
  */
 
 type Status = 'open' | 'in_progress' | 'awaiting_approval' | 'closed';

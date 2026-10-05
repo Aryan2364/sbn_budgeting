@@ -11,10 +11,12 @@ import { SKIP_REASON, dbTestsEnabled, openScratchDatabase, type ScratchDb } from
  * The switched code decides from roles alone, so it must refuse to
  * start on a database whose current people have old levels but no
  * roles (the mapping not applied, or applied only partly), and say how
- * to fix it. Booted for real, on one scratch database, in three states:
+ * to fix it. Booted for real, in three states:
  *   empty (freshly migrated, nobody)  -> boots;
  *   fixtures, no mapping              -> refuses, naming the count and the fix;
  *   fixtures, mapping applied         -> boots.
+ * The fixtures go into a second scratch database, seeded at their own
+ * schema and migrated forward (fixtures.ts FIXTURE_SCHEMA).
  */
 
 describe('the message (pure)', () => {
@@ -29,18 +31,28 @@ describe('the message (pure)', () => {
 });
 
 describe('boot safety check: refuses to start until the mapping is applied (P9)', { skip: dbTestsEnabled ? false : SKIP_REASON }, () => {
+  let empty: ScratchDb;
   let db: ScratchDb;
 
-  before(async () => {
-    db = await openScratchDatabase('p9_mapcheck');
+  /** Points the app (and the env the harness prepares) at one scratch database. */
+  function use(scratch: ScratchDb): void {
     const url = new URL(process.env.TEST_DATABASE_URL!);
-    url.pathname = `/${db.name}`;
+    url.pathname = `/${scratch.name}`;
+    process.env.DATABASE_URL = url.toString();
+  }
+
+  before(async () => {
+    empty = await openScratchDatabase('p9_mapcheck');
+    db = await openScratchDatabase('p9_mapcheck_fixtures', { fixtures: true });
+    const url = new URL(process.env.TEST_DATABASE_URL!);
+    url.pathname = `/${empty.name}`;
     process.env.TEST_DATABASE_URL = url.toString();
     const { prepareTestEnv } = await import('../support/test-env');
     prepareTestEnv();
   });
 
   after(async () => {
+    await empty?.close();
     await db?.close();
   });
 
@@ -60,13 +72,12 @@ describe('boot safety check: refuses to start until the mapping is applied (P9)'
   }
 
   it('a freshly migrated, empty database boots', async () => {
+    use(empty);
     await boot();
   });
 
   it('old levels with no roles: refuses to start, with the count and the fix', async () => {
-    const { seedFixtures } = await import('../equivalence/fixtures');
-    const { tmpdir } = await import('node:os');
-    await seedFixtures(db.client, tmpdir());
+    use(db);
     const { rows } = await db.client.query<{ n: number }>(
       `select count(*)::int as n from users u
        where u.active and exists (select 1 from user_module_access m where m.user_id = u.id)`,

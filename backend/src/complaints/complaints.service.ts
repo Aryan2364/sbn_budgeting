@@ -7,9 +7,9 @@ import {
 import type { Pool, PoolClient } from 'pg';
 
 import { can as holds, type AccessContext } from '../access/access-context';
-import { blocked } from '../access/approval';
 import type { PermissionKey } from '../access/catalogue';
 import { reasonFor } from '../access/permission.guard';
+import { RoleMapService } from '../access/role-map.service';
 import {
   assertRecordAccess, canSelect, createSiteWhere, scopeWhere, type Param, type RecordCan,
 } from '../access/scope';
@@ -56,7 +56,7 @@ export interface ComplaintRow {
   photoCount: number;
   /**
    * On a list row: the permission layer's answer per permission action
-   * (`comment`, `work`, `approve`, `reassign`; plan 6.1.4 item 6, kit
+   * (`comment`, `work`, `reassign`; plan 6.1.4 item 6, kit
    * 8.3), for the keys the caller holds at some scope, computed in the
    * same query as the row: `{ reassign: true, comment: 'You can ...' }`.
    * A row does not carry the people the workflow reads, so it answers
@@ -71,11 +71,7 @@ export interface ComplaintRow {
 export interface ComplaintDetail extends ComplaintRow {
   complainantPhone: string;
   locationNote: string | null;
-  requiresApproval: boolean;
   manager: PersonRef | null;
-  hod: PersonRef | null;
-  ceo: PersonRef | null;
-  approver: PersonRef | null;
   startedAt: string | null;
   resolvedAt: string | null;
   closedAt: string | null;
@@ -95,22 +91,22 @@ export interface ComplaintDetail extends ComplaintRow {
    * workflow action, for the actions whose key the caller holds at some
    * scope: `true`, or the reason, from the permission layer or the
    * workflow layer (`permissions.ts`, the same function every action
-   * route runs): `{ start: true, approve: 'You raised this complaint, so
-   * someone else must approve it.' }`.
+   * route runs): `{ start: true, resolve: 'Only Ramesh Patel, the
+   * assigned supervisor, can resolve this.' }`.
    */
   can: Partial<Record<ActionName, true | string>>;
   /**
    * Compatibility alias of `can` until the screens read `can` (P7), in
-   * the old shape and with all six actions: an action whose key the
+   * the old shape and with all four actions: an action whose key the
    * caller does not hold reads `allowed: false` with that permission's
    * sentence. Same answers as `can`, never computed apart from it.
    */
   actions: Record<ActionName, { allowed: boolean; reason: string | null }>;
 }
 
-export type Tab = 'assigned' | 'approval' | 'raised' | 'all';
-export const TABS: Tab[] = ['assigned', 'approval', 'raised', 'all'];
-const STATUSES: ComplaintStatus[] = ['open', 'in_progress', 'awaiting_approval', 'closed'];
+export type Tab = 'assigned' | 'raised' | 'all';
+export const TABS: Tab[] = ['assigned', 'raised', 'all'];
+const STATUSES: ComplaintStatus[] = ['open', 'in_progress', 'closed'];
 
 /** `id` is null only for the bucket of older, location-only complaints. */
 export interface SiteBucket {
@@ -194,17 +190,12 @@ const ROW_SELECT = `
 
 const DETAIL_FROM = `${ROW_FROM}
   left join users mg on mg.id = c.manager_id
-  left join users hd on hd.id = c.hod_id
-  left join users ce on ce.id = c.ceo_id
-  left join users ap on ap.id = c.approver_id
   left join users rv on rv.id = c.resolved_by
   left join users cl on cl.id = c.closed_by`;
 
 const DETAIL_SELECT = `${ROW_SELECT},
   c.complainant_phone as "complainantPhone", c.location_note as "locationNote",
-  c.requires_approval as "requiresApproval",
-  ${personOrNull('mg')} as manager, ${personOrNull('hd')} as hod,
-  ${personOrNull('ce')} as ceo, ${personOrNull('ap')} as approver,
+  ${personOrNull('mg')} as manager,
   c.started_at as "startedAt", c.resolved_at as "resolvedAt", c.closed_at as "closedAt",
   c.resolution_note as "resolutionNote",
   ${personOrNull('rv')} as "resolvedBy", ${personOrNull('cl')} as "closedBy"`;
@@ -214,9 +205,10 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 // ---------------------------------------------------------------------
 // Access (plan 6.1.4, 6.2). Visibility is `complaints.complaints.view`
 // through the shared scope filter: Own = raised by me or named on the
-// snapshot (supervisor, manager, HOD, CEO, approver), which is today's
-// member rule word for word; All = every complaint, today's admin rule.
-// A site-less legacy complaint is reached by Own and All only (O10 Q9).
+// snapshot (supervisor, manager); Team = that, for me or anyone who
+// reports up to me, or on a site my team runs (a complaints member, owner
+// decision 5 Oct 2026); All = every complaint. A site-less legacy
+// complaint is reached through its people only (O10 Q9).
 // Who may do what to ONE complaint is still decided by the workflow
 // layer, permissions.ts (decision 27), after these checks.
 // ---------------------------------------------------------------------
@@ -225,12 +217,13 @@ const VIEW: PermissionKey = 'complaints.complaints.view';
 const RAISE: PermissionKey = 'complaints.complaints.raise';
 /** Choosing the new supervisor on reassign (the reassign key needs this Pick at All). */
 const PEOPLE_PICK: PermissionKey = 'platform.people.pick';
+/** What the new supervisor on a reassign must hold: they start and resolve it. */
+const WORK: PermissionKey = 'complaints.complaints.work';
 
 /** The permission actions' keys: a row's `can`, and the workflow's `Viewer.may`. */
 const CAN_ACTIONS: Readonly<Record<PermissionAction, PermissionKey>> = {
   comment: 'complaints.complaints.comment',
   work: 'complaints.complaints.work',
-  approve: 'complaints.complaints.approve',
   reassign: 'complaints.complaints.reassign',
 };
 
@@ -238,8 +231,6 @@ const CAN_ACTIONS: Readonly<Record<PermissionAction, PermissionKey>> = {
 const ACTION_KEY: Record<ActionName, PermissionKey> = {
   start: 'complaints.complaints.work',
   resolve: 'complaints.complaints.work',
-  approve: 'complaints.complaints.approve',
-  sendBack: 'complaints.complaints.approve',
   reassign: 'complaints.complaints.reassign',
   comment: 'complaints.complaints.comment',
 };
@@ -270,7 +261,6 @@ function lazyMe(param: Param, userId: string): () => string {
 function tabSql(tab: Tab, me: () => string): string {
   switch (tab) {
     case 'assigned': return `c.supervisor_id = ${me()} and c.status in ('open', 'in_progress')`;
-    case 'approval': return `c.approver_id = ${me()} and c.status = 'awaiting_approval'`;
     case 'raised': return `c.raised_by = ${me()}`;
     case 'all': return 'true';
   }
@@ -282,8 +272,6 @@ const NOT_FOUND =
 const EVENT_VERB: Record<string, string> = {
   started: 'started',
   resolved: 'resolved',
-  approved: 'approved',
-  sent_back: 'sent back',
   closed: 'closed',
 };
 
@@ -306,7 +294,7 @@ function viewerOf(access: AccessContext, c: DetailCore): Viewer {
 
 /**
  * The detail's `can` (only the actions whose key is held, kit 8.3) and
- * its `actions` alias (all six, the old shape), from ONE workflow run.
+ * its `actions` alias (all four, the old shape), from ONE workflow run.
  */
 function answersFor(
   access: AccessContext,
@@ -336,7 +324,10 @@ function requireNote(value: string | undefined, message: string): string {
 
 @Injectable()
 export class ComplaintsService {
-  constructor(@Inject(PG_POOL) private readonly pool: Pool) {}
+  constructor(
+    @Inject(PG_POOL) private readonly pool: Pool,
+    private readonly roleMap: RoleMapService,
+  ) {}
 
   // -------------------------------------------------------------------
   // Reads
@@ -378,7 +369,7 @@ export class ComplaintsService {
           raisedAt: 'c.raised_at',
           number: 'c.number',
           reference: 'c.number',
-          status: `array_position(array['open','in_progress','awaiting_approval','closed'], c.status)`,
+          status: `array_position(array['open','in_progress','closed'], c.status)`,
           ageDays: AGE_DAYS_SQL,
           site: 'st.name',
           location: 'l.name',
@@ -414,7 +405,6 @@ export class ComplaintsService {
     const { rows } = await this.pool.query<Record<Tab, number>>(
       `select
          count(*) filter (where ${tabSql('assigned', me)})::int as assigned,
-         count(*) filter (where ${tabSql('approval', me)})::int as approval,
          count(*) filter (where ${tabSql('raised', me)})::int as raised,
          count(*)::int as "all"
        from complaints c
@@ -616,12 +606,8 @@ export class ComplaintsService {
           throw new ForbiddenException({ error: 'forbidden', permission: RAISE, reason, message: reason });
         }
         const site = { id: found.id, name: found.name };
-        const { rows: catRows } = await client.query<{
-          id: string; name: string; is_active: boolean; requires_approval: boolean;
-          approver_designation_id: string | null;
-        }>(
-          `select id, name, is_active, requires_approval, approver_designation_id
-           from complaint_categories where id = $1`,
+        const { rows: catRows } = await client.query<{ id: string; name: string; is_active: boolean }>(
+          `select id, name, is_active from complaint_categories where id = $1`,
           [body.categoryId],
         );
         const category = catRows[0];
@@ -634,17 +620,7 @@ export class ComplaintsService {
           );
         }
 
-        const routing = await resolveRouting(client, {
-          site,
-          // The raiser is never chosen as the approver (O10 Q11, D6).
-          raisedBy: user.id,
-          category: {
-            id: category.id,
-            name: category.name,
-            requiresApproval: category.requires_approval,
-            approverDesignationId: category.approver_designation_id,
-          },
-        });
+        const routing = await resolveRouting(client, site);
 
         // The reference and year name the photo folder, so the row goes in
         // first. If anything after this fails the transaction rolls back
@@ -652,15 +628,13 @@ export class ComplaintsService {
         const { rows } = await client.query<{ id: string; reference: string; year: number }>(
           `insert into complaints as c
              (site_id, category_id, complainant_name, complainant_phone, location_note,
-              description, requires_approval, raised_by,
-              supervisor_id, manager_id, hod_id, ceo_id, approver_id)
-           values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+              description, raised_by, supervisor_id, manager_id)
+           values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
            returning c.id, ${REFERENCE_SQL} as reference, ${RAISED_YEAR_SQL} as year`,
           [
             site.id, category.id, body.complainantName, body.complainantPhone,
-            body.locationNote || null, body.description, category.requires_approval, user.id,
-            routing.supervisor.id, routing.manager?.id ?? null, routing.hod?.id ?? null,
-            routing.ceo?.id ?? null, routing.approver?.id ?? null,
+            body.locationNote || null, body.description, user.id,
+            routing.supervisor.id, routing.manager?.id ?? null,
           ],
         );
         const created = rows[0]!;
@@ -685,8 +659,6 @@ export class ComplaintsService {
         await notify(client, created.id, user.id, short(body.description), [
           { userId: routing.supervisor.id, kind: 'assigned', title: `New complaint ${created.reference} for you: ${what}` },
           { userId: routing.manager?.id, kind: 'copied', title: `${created.reference} raised: ${what}` },
-          { userId: routing.hod?.id, kind: 'copied', title: `${created.reference} raised: ${what}` },
-          { userId: routing.ceo?.id, kind: 'copied', title: `${created.reference} raised: ${what}` },
         ]);
         return created.id;
       });
@@ -730,74 +702,30 @@ export class ComplaintsService {
           'Add a resolution note saying what was done. Resolving needs a note.',
         );
         const photos = checkPhotos(files, { min: 1, max: MAX_PHOTOS });
-        const to: ComplaintStatus = c.requiresApproval ? 'awaiting_approval' : 'closed';
 
+        // Resolving closes it: there is no approval step (owner, 5 Oct 2026).
         await client.query(
           `update complaints /*scope-exempt: follows the scoped, locked read of this complaint (act)*/
-           set status = $2, resolution_note = $3, resolved_at = now(), resolved_by = $4,
-               closed_at = case when $2 = 'closed' then now() else null end,
-               closed_by = case when $2 = 'closed' then $4::uuid else null end,
-               updated_at = now()
+           set status = 'closed', resolution_note = $2, resolved_at = now(), resolved_by = $3,
+               closed_at = now(), closed_by = $3, updated_at = now()
            where id = $1`,
-          [id, to, note, user.id],
+          [id, note, user.id],
         );
         // Numbered after any earlier resolution's photos; act() holds the
         // row lock, so no other resolve can choose the same names.
         stored = await storePhotos(photos, await this.photoPlace(client, id, 'resolve'));
         await this.insertPhotos(client, id, 'resolve', stored, user.id);
-        await this.event(client, id, 'resolved', user.id, note, c.status, to, {
-          photoCount: stored.length,
-          closedWithoutApproval: to === 'closed',
-        });
+        await this.event(client, id, 'resolved', user.id, note, c.status, 'closed', { photoCount: stored.length });
 
-        await notify(client, id, user.id, short(note), to === 'closed'
-          ? [{ userId: c.raisedBy.id, kind: 'closed', title: `${c.reference} was resolved and closed by ${user.name}` }]
-          : [{ userId: c.approver?.id, kind: 'approval_needed', title: `${c.reference} is resolved and waiting for your approval` }]);
+        await notify(client, id, user.id, short(note), [
+          { userId: c.raisedBy.id, kind: 'closed', title: `${c.reference} was resolved and closed by ${user.name}` },
+        ]);
       },
       // A refused or failed resolve leaves no orphan files behind. Run
       // before the rollback releases the lock: the next resolve reuses
       // these names, and a late delete would remove its photos instead.
       () => removeStored(stored),
     );
-  }
-
-  approve(user: AuthUser, access: AccessContext, id: string, noteRaw: string | undefined): Promise<ComplaintDetail> {
-    return this.act(user, access, id, 'approve', async (client, c) => {
-      const note = noteRaw?.trim() || null;
-      await client.query(
-        `update complaints /*scope-exempt: follows the scoped, locked read of this complaint (act)*/
-         set status = 'closed', closed_at = now(), closed_by = $2, updated_at = now()
-         where id = $1`,
-        [id, user.id],
-      );
-      await this.event(client, id, 'approved', user.id, note, c.status, 'closed');
-      await notify(client, id, user.id, note, [
-        { userId: c.supervisor.id, kind: 'approved', title: `${c.reference} was approved and closed by ${user.name}` },
-        { userId: c.raisedBy.id, kind: 'closed', title: `${c.reference} was approved and closed by ${user.name}` },
-      ]);
-    });
-  }
-
-  sendBack(user: AuthUser, access: AccessContext, id: string, noteRaw: string | undefined): Promise<ComplaintDetail> {
-    return this.act(user, access, id, 'sendBack', async (client, c) => {
-      const note = requireNote(
-        noteRaw,
-        'Add a note saying what still needs to be done. Sending back needs a note.',
-      );
-      // The previous resolution stays in the timeline (its event and
-      // photos); the row goes back to "being worked on".
-      await client.query(
-        `update complaints /*scope-exempt: follows the scoped, locked read of this complaint (act)*/
-         set status = 'in_progress', resolution_note = null, resolved_at = null, resolved_by = null,
-             updated_at = now()
-         where id = $1`,
-        [id],
-      );
-      await this.event(client, id, 'sent_back', user.id, note, c.status, 'in_progress');
-      await notify(client, id, user.id, short(note), [
-        { userId: c.supervisor.id, kind: 'sent_back', title: `${c.reference} was sent back by ${user.name}` },
-      ]);
-    });
   }
 
   reassign(user: AuthUser, access: AccessContext, id: string, body: ReassignDto): Promise<ComplaintDetail> {
@@ -807,28 +735,28 @@ export class ComplaintsService {
         'Add a note saying why it is being reassigned. Reassigning needs a note.',
       );
       // The new supervisor is chosen through the people Pick, which the
-      // reassign key needs at All: anyone the caller may pick.
-      const targetQuery = params([body.supervisorId]);
-      const { rows } = await client.query<{
-        id: string; name: string; can_receive: boolean; seed_key: string | null;
-      }>(
-        `select u.id, u.name, (u.active and u.can_login) as can_receive, d.seed_key
-         from users u left join designations d on d.id = u.designation_id
+      // reassign key needs at All: anyone the caller may pick who may work
+      // on complaints (start and resolve them) and can sign in.
+      const targetQuery = params([body.supervisorId, this.roleMap.rolesHolding(WORK)]);
+      const { rows } = await client.query<{ id: string; name: string; can_receive: boolean; can_work: boolean }>(
+        `select u.id, u.name, (u.active and u.can_login) as can_receive,
+                exists (select 1 from user_roles ur where ur.user_id = u.id and ur.role_id = any($2::uuid[])) as can_work
+         from users u
          where u.id = $1 and ${scopeWhere(access, PEOPLE_PICK, 'person', 'u', targetQuery.param)}`,
         targetQuery.values,
       );
       const target = rows[0];
       if (!target) {
-        throw new UnprocessableEntityException('That person no longer exists. Choose another supervisor.');
+        throw new UnprocessableEntityException('That person no longer exists. Choose someone else.');
       }
-      if (target.seed_key !== 'supervisor') {
+      if (!target.can_work) {
         throw new UnprocessableEntityException(
-          `${target.name} doesn't hold the Supervisor designation, so they can't take complaints. Choose a supervisor.`,
+          `${target.name} can't start or resolve complaints, so they couldn't work on this one. Choose someone who can.`,
         );
       }
       if (!target.can_receive) {
         throw new UnprocessableEntityException(
-          `${target.name} can't sign in, so they couldn't work on this complaint. Choose another supervisor, or give them a login first.`,
+          `${target.name} can't sign in, so they couldn't work on this complaint. Choose someone else, or give them a login first.`,
         );
       }
       if (target.id === c.supervisor.id) {
@@ -887,7 +815,7 @@ export class ComplaintsService {
         // 1. Visibility (404) and 2. permission (403), in one locked read
         // (plan 6.1.4 item 4, 6.2): outside the view scope is the same
         // 404 as a missing complaint; visible but outside the action's
-        // scope (reassign at Own: not its manager or HOD) is 403.
+        // scope (reassign at Own: not its manager) is 403.
         await assertRecordAccess(client, access, {
           table: 'complaints', alias: 'c', record: 'complaint', id,
           view: VIEW, action: ACTION_KEY[action], notFound: NOT_FOUND, forUpdate: true,
@@ -896,8 +824,7 @@ export class ComplaintsService {
         if (!c) throw new NotFoundException(NOT_FOUND);
         // 3. The workflow (permissions.ts, decision 27), on the permission
         // layer's answers for this complaint: is this person the
-        // supervisor or the approver on THIS complaint, not its raiser or
-        // resolver when approving, and does its status allow it. The
+        // supervisor on THIS complaint, and does its status allow it. The
         // same function the detail's `can` comes from.
         const viewer = viewerOf(access, c);
         const check = checkAction(action, viewer, c);
@@ -943,8 +870,6 @@ export class ComplaintsService {
    * The route's answer when the workflow function says no (plan 6.1.10):
    *   permission    403 naming the key (the scoped read normally said so first);
    *   person        403 with the same sentence the disabled button shows (L1 until P11);
-   *   self          409 blocked: the approver raised or resolved it (D6, R7);
-   *   notApplicable 422 (L2 until P11);
    *   status        409, naming who moved it, because the caller's
    *                 screen was stale.
    */
@@ -961,8 +886,6 @@ export class ComplaintsService {
       return new ForbiddenException({ error: 'forbidden', permission, reason, message: reason });
     }
     if (check.failure === 'person') return new ForbiddenException(reason);
-    if (check.failure === 'self') return blocked(reason);
-    if (check.failure === 'notApplicable') return new UnprocessableEntityException(reason);
 
     const { rows } = await client.query<{ kind: string; actor_id: string | null; name: string | null }>(
       `select e.kind, e.actor_id, a.name

@@ -50,6 +50,13 @@ that data).
   for the security fixes). A route with no entry is reported, never skipped.
 - `equivalence/legacy-screen-rules.ts` is a frozen copy of today's
   frontend gating (nav, settings sections, home route, gated buttons).
+- The fixtures are written for the schema of `FIXTURE_SCHEMA`
+  (`0012_access`): a run migrates to it, seeds them, applies the mapping,
+  samples every person and records the complaint world, then applies the
+  later migrations (0013: no approvals) to them, as to production data.
+  `equivalence/legacy-approvals.ts` uses that record to undo D8 and D9
+  on each affected response (`legacyDigest`), so a digest difference is
+  matched only when the rest of the body is the baseline's exactly.
 - `support/legacy-route-rules.ts` is a frozen copy of the old route
   guard's rules (`@ModuleAccess` / `@ModuleRole`, deleted at P9), so the
   route tests still prove the permission guard answers as they did,

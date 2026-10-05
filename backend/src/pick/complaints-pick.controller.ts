@@ -40,17 +40,13 @@ function flag(value: unknown, name: string): boolean {
 
 /**
  * One category to choose from: the catalogue's declared pick fields
- * (`complaints.categories` pick.fields). `requiresApproval` and
- * `approverDesignation` are what the raise form tells the raiser before
- * they submit ("closing needs approval by the HOD"); never a usage
- * count, which stays on the managed list.
+ * (`complaints.categories` pick.fields); never a usage count, which
+ * stays on the managed list.
  */
 export interface CategoryOption {
   id: string;
   name: string;
   isActive: boolean;
-  requiresApproval: boolean;
-  approverDesignation: { id: string; name: string } | null;
 }
 
 @Controller('pick/complaints')
@@ -77,11 +73,9 @@ export class ComplaintsPickController {
       access,
       {
         section: 'complaints.categories',
-        from: 'complaint_categories cc left join designations ad on ad.id = cc.approver_designation_id',
+        from: 'complaint_categories cc',
         alias: 'cc',
-        select: `cc.id, cc.name, cc.is_active as "isActive", cc.requires_approval as "requiresApproval",
-                 case when ad.id is null then null
-                      else json_build_object('id', ad.id, 'name', ad.name) end as "approverDesignation"`,
+        select: 'cc.id, cc.name, cc.is_active as "isActive"',
         nameSql: 'cc.name',
         where: () => (all ? [] : ['cc.is_active']),
       },

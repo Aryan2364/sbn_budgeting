@@ -2,62 +2,148 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import type { Difference } from '../equivalence/compare';
-import { intendedIdFor, missingD6, type IntendedWorld } from '../equivalence/intended';
+import { intendedIdFor, missingApprovals, type IntendedWorld } from '../equivalence/intended';
 import { legacyActions } from '../equivalence/legacy-complaint-actions';
 
 /**
- * D1 and D6 on the complaint workflow (plan 6.2, 6.3.3; P5): matched
- * by id and matcher, never by loosening the comparison.
+ * The complaint workflow's intended differences, matched by id and
+ * matcher, never by loosening the comparison:
+ *   D1 (P5)  refusal reasons stop naming a role;
+ *   D8 (A1, A2; migration 0013)  approvals removed, no routing by designation;
+ *   D9 (A3)  a complaints member views and comments at Team.
+ * D6 is retired with D8: its two routes are gone.
  */
-const K = 'kkkk';
-const OTHER = 'oooo';
-const world = (legacyDigest?: string): IntendedWorld => ({
-  runCases: { [`GET /api/complaints/:id |approver|${K}`]: { legacyDigest }, [`GET /api/complaints/:id |raiser|${OTHER}`]: { legacyDigest } },
-  selfApprovals: new Map([[`approver|${K}`, 'awaiting_approval']]),
+const K = 'kkkk'; // a complaint 0013 closed
+const T = 'tttt'; // a complaint the member newly sees (D9)
+const O = 'oooo'; // an ordinary complaint
+
+const world = (
+  cases: Record<string, { base?: unknown; run?: unknown; legacyDigest?: string; legacyWhy?: string; baseIds?: string[]; runIds?: string[] }> = {},
+): IntendedWorld => ({
+  runCases: Object.fromEntries(
+    Object.entries(cases).map(([k, c]) => [k, { status: c.run, legacyDigest: c.legacyDigest, legacyWhy: c.legacyWhy, ids: c.runIds }]),
+  ),
+  baselineCases: Object.fromEntries(Object.entries(cases).map(([k, c]) => [k, { status: c.base, ids: c.baseIds }])),
+  approvals: {
+    migrated: new Set([K]),
+    hodOnly: new Set([`hod|${O}`]),
+    extras: new Map([['approver', new Set([T])]]),
+    losses: new Map(),
+  },
 });
 const diff = (key: string, field: Difference['field'], baseline: unknown, run: unknown): Difference => ({
   key, kind: 'field', field, baseline, run,
 });
-const flags = (approve: boolean, sendBack = approve) => ({
-  approve, comment: true, reassign: false, resolve: false, sendBack, start: false,
+const flags = (reassign: boolean, extra: Record<string, boolean> = {}) => ({
+  comment: true, reassign, resolve: false, start: false, ...extra,
 });
 
-describe('intended differences D1 and D6 (P5)', () => {
-  it('D6: approve and send back 200 -> 409, only for the approver on a listed complaint', () => {
+describe('intended differences D1, D8 and D9 (complaint workflow)', () => {
+  it('D8: the approve and send-back routes and every one of their cases are gone; nothing else is', () => {
     const w = world();
-    assert.equal(intendedIdFor(diff(`POST /api/complaints/:id/approve |approver|${K}`, 'status', 200, 409), w), 'D6');
-    assert.equal(intendedIdFor(diff(`POST /api/complaints/:id/send-back |approver|${K}`, 'status', 200, 409), w), 'D6');
-    assert.equal(intendedIdFor(diff(`POST /api/complaints/:id/approve |approver|${OTHER}`, 'status', 200, 409), w), null);
-    assert.equal(intendedIdFor(diff(`POST /api/complaints/:id/approve |hod|${K}`, 'status', 200, 409), w), null);
-    assert.equal(intendedIdFor(diff(`POST /api/complaints/:id/approve |approver|${K}`, 'status', 200, 403), w), null);
-    assert.equal(intendedIdFor(diff(`POST /api/complaints/:id/start |approver|${K}`, 'status', 200, 409), w), null);
-    assert.equal(intendedIdFor(diff(`POST /api/complaints/:id/approve |approver|${K}`, 'status', 200, 409)), null, 'no world, no match');
+    assert.equal(intendedIdFor({ key: 'POST /api/complaints/:id/approve', kind: 'route-only-in-baseline' }, w), 'D8');
+    assert.equal(intendedIdFor({ key: `POST /api/complaints/:id/send-back |approver|${K}`, kind: 'case-only-in-baseline' }, w), 'D8');
+    assert.equal(intendedIdFor({ key: 'POST /api/complaints/:id/start', kind: 'route-only-in-baseline' }, w), null);
+    assert.equal(intendedIdFor({ key: `POST /api/complaints/:id/comments |raiser|${O}`, kind: 'case-only-in-baseline' }, w), null);
   });
 
-  it("D6: the detail's approve and send back flags turn off, and nothing else moves", () => {
-    const w = world();
-    const key = `GET /api/complaints/:id |approver|${K}`;
-    assert.equal(intendedIdFor(diff(key, 'actions', flags(true), flags(false)), w), 'D6');
-    assert.equal(intendedIdFor(diff(key, 'actions', flags(true), { ...flags(false), comment: false }), w), null);
-    assert.equal(intendedIdFor(diff(key, 'actions', flags(false), flags(true)), w), null);
+  it('D8: the Approval tab answers 400 where it answered 200, and only that', () => {
+    const key = 'GET /api/complaints [tab-approval] |approver';
+    assert.equal(intendedIdFor(diff(key, 'status', 200, 400), world({ [key]: { base: 200, run: 400 } })), 'D8');
+    assert.equal(intendedIdFor(diff(key, 'digest', 'x', undefined), world({ [key]: { base: 200, run: 400 } })), 'D8');
+    assert.equal(intendedIdFor(diff(key, 'status', 200, 403), world({ [key]: { base: 200, run: 403 } })), null);
+    const all = 'GET /api/complaints [tab-all] |approver';
+    assert.equal(intendedIdFor(diff(all, 'status', 200, 400), world({ [all]: { base: 200, run: 400 } })), null);
   });
 
-  it('D1/D6: a detail digest differs only in `actions` when the legacy digest equals the baseline', () => {
-    assert.equal(intendedIdFor(diff(`GET /api/complaints/:id |raiser|${OTHER}`, 'digest', 'base', 'new'), world('base')), 'D1');
-    assert.equal(intendedIdFor(diff(`GET /api/complaints/:id |approver|${K}`, 'digest', 'base', 'new'), world('base')), 'D6');
-    assert.equal(intendedIdFor(diff(`GET /api/complaints/:id |raiser|${OTHER}`, 'digest', 'base', 'new'), world('other')), null);
-    assert.equal(intendedIdFor(diff(`GET /api/complaints/:id |raiser|${OTHER}`, 'digest', 'base', 'new'), world()), null);
-    assert.equal(intendedIdFor(diff(`GET /api/complaints |raiser`, 'digest', 'base', 'new'), world('base')), null);
+  it('D8: exactly the dropped keys are gone (with D7 adding `can`)', () => {
+    const w = world();
+    const detail = `GET /api/complaints/:id |raiser|${O}`;
+    const base = ['actions', 'approver', 'ceo', 'hod', 'id', 'requiresApproval', 'status'];
+    assert.equal(intendedIdFor(diff(detail, 'keys', base, ['actions', 'can', 'id', 'status']), w), 'D8');
+    assert.equal(intendedIdFor(diff(detail, 'keys', base, ['actions', 'can', 'hod', 'id', 'status']), w), null, 'one kept');
+    assert.equal(intendedIdFor(diff(detail, 'keys', base, ['actions', 'can', 'status']), w), null, 'one more lost');
+    const counts = 'GET /api/complaints/counts |raiser';
+    assert.equal(intendedIdFor(diff(counts, 'keys', ['all', 'approval', 'assigned', 'raised'], ['all', 'assigned', 'raised']), w), 'D8');
+    const cats = 'GET /api/complaint-categories |complaints_admin';
+    assert.equal(
+      intendedIdFor(diff(cats, 'itemKeys', ['approverDesignation', 'id', 'name', 'requiresApproval'], ['id', 'name']), w),
+      'D8',
+    );
+    assert.equal(intendedIdFor(diff('GET /api/sites |raiser', 'itemKeys', ['hod', 'id'], ['id']), w), null);
   });
 
-  it("D6's count: every listed waiting complaint must show both changes", () => {
+  it("D8: the detail's approve and send back flags go, and only reassign may turn off, and only where 0013 says", () => {
     const w = world();
-    const both = [
-      diff(`POST /api/complaints/:id/approve |approver|${K}`, 'status', 200, 409),
-      diff(`POST /api/complaints/:id/send-back |approver|${K}`, 'status', 200, 409),
-    ];
-    assert.deepEqual(missingD6(both, w), []);
-    assert.equal(missingD6(both.slice(0, 1), w).length, 1);
+    const old = (reassign: boolean) => flags(reassign, { approve: false, sendBack: false });
+    assert.equal(intendedIdFor(diff(`GET /api/complaints/:id |raiser|${O}`, 'actions', old(false), flags(false)), w), 'D8');
+    // Closed by 0013: reassign off.
+    assert.equal(intendedIdFor(diff(`GET /api/complaints/:id |manager|${K}`, 'actions', old(true), flags(false)), w), 'D8');
+    // The HOD who could reassign only as HOD: off.
+    assert.equal(intendedIdFor(diff(`GET /api/complaints/:id |hod|${O}`, 'actions', old(true), flags(false)), w), 'D8');
+    // Anyone else losing reassign, or any other flag moving: not D8.
+    assert.equal(intendedIdFor(diff(`GET /api/complaints/:id |manager|${O}`, 'actions', old(true), flags(false)), w), null);
+    assert.equal(intendedIdFor(diff(`GET /api/complaints/:id |manager|${K}`, 'actions', old(false), flags(true)), w), null);
+    assert.equal(
+      intendedIdFor(diff(`GET /api/complaints/:id |manager|${K}`, 'actions', old(true), { ...flags(false), comment: false }), w),
+      null,
+    );
+  });
+
+  it('D8: reassign a complaint 0013 closed (200 -> 409), or as its HOD only (-> 403); nothing else', () => {
+    const r = 'POST /api/complaints/:id/reassign [to-another-supervisor]';
+    const at = (who: string, base: number, run: number) => {
+      const key = `${r} |${who}`;
+      return intendedIdFor(diff(key, 'status', base, run), world({ [key]: { base, run } }));
+    };
+    assert.equal(at(`manager|${K}`, 200, 409), 'D8');
+    assert.equal(at(`hod|${O}`, 200, 403), 'D8');
+    assert.equal(at(`hod|${O}`, 409, 403), 'D8');
+    assert.equal(at(`manager|${O}`, 200, 409), null);
+    assert.equal(at(`manager|${O}`, 200, 403), null);
+    assert.equal(at(`manager|${K}`, 200, 403), null);
+  });
+
+  it('D9: a member newly sees a team complaint (404 -> 200, or 403 for an action at Own), only that one', () => {
+    const at = (key: string, base: number, run: number) =>
+      intendedIdFor(diff(key, 'status', base, run), world({ [key]: { base, run } }));
+    assert.equal(at(`GET /api/complaints/:id |approver|${T}`, 404, 200), 'D9');
+    assert.equal(at(`POST /api/complaints/:id/comments |approver|${T}`, 404, 200), 'D9');
+    assert.equal(at(`POST /api/complaints/:id/start |approver|${T}`, 404, 403), 'D9');
+    assert.equal(at(`POST /api/complaints/:id/start |approver|${T}`, 404, 409), null, 'not an answer at Own');
+    assert.equal(at(`GET /api/complaints/:id |approver|${O}`, 404, 200), null, 'not one D9 lists');
+    assert.equal(at(`GET /api/complaints/:id |raiser|${T}`, 404, 200), null, 'not for this person');
+  });
+
+  it('D9: a list gains exactly the newly seen ids, and its total moves by that', () => {
+    const key = 'GET /api/complaints [tab-all] |approver';
+    const w = world({ [key]: { base: 200, run: 200, baseIds: [`id:${O}`], runIds: [`id:${O}`, `id:${T}`] } });
+    assert.equal(intendedIdFor(diff(key, 'ids', [`id:${O}`], [`id:${O}`, `id:${T}`]), w), 'D9');
+    assert.equal(intendedIdFor(diff(key, 'total', 1, 2), w), 'D9');
+    assert.equal(intendedIdFor(diff(key, 'total', 1, 3), w), null);
+    const wrong = world({ [key]: { base: 200, run: 200, baseIds: [`id:${O}`], runIds: [`id:${O}`, `id:${K}`] } });
+    assert.equal(intendedIdFor(diff(key, 'ids', [`id:${O}`], [`id:${O}`, `id:${K}`]), wrong), null);
+  });
+
+  it('D1/D8/D9: a digest differs only where the undone body says, when its digest is the baseline', () => {
+    const key = `GET /api/complaints/:id |raiser|${O}`;
+    const w = (legacyDigest: string | undefined, legacyWhy: string) =>
+      world({ [key]: { base: 200, run: 200, legacyDigest, legacyWhy } });
+    assert.equal(intendedIdFor(diff(key, 'digest', 'base', 'new'), w('base', 'D8')), 'D8');
+    assert.equal(intendedIdFor(diff(key, 'digest', 'base', 'new'), w('base', 'D1')), 'D1');
+    assert.equal(intendedIdFor(diff(key, 'digest', 'base', 'new'), w('other', 'D8')), null);
+    assert.equal(intendedIdFor(diff(key, 'digest', 'base', 'new'), w(undefined, 'D8')), null);
+  });
+
+  it('D8 must appear, and D9 for every member who newly sees a complaint', () => {
+    const w = world();
+    const removed: Difference = { key: 'POST /api/complaints/:id/approve', kind: 'route-only-in-baseline' };
+    const seen = `GET /api/complaints/:id |approver|${T}`;
+    const sees = diff(seen, 'status', 404, 200);
+    const both = world({ [seen]: { base: 404, run: 200 } });
+    assert.deepEqual(missingApprovals([removed, sees], both), []);
+    assert.deepEqual(missingApprovals([sees], both), ['expected intended difference D8 never appeared']);
+    assert.deepEqual(missingApprovals([removed], w), ['D9 lists approver (sees 1 more), but nothing changed for them']);
   });
 
   it('the frozen legacy `actions` still says what the baseline build said', () => {
@@ -67,7 +153,7 @@ describe('intended differences D1 and D6 (P5)', () => {
       manager: p('m'), hod: p('h'), ceo: null, approver: p('a'),
     };
     const member = legacyActions({ id: 'a', complaintsAdmin: false }, c);
-    assert.equal(member.approve.allowed, true, 'today the raiser-approver may approve');
+    assert.equal(member.approve.allowed, true, 'the baseline let the raiser-approver approve');
     assert.equal(member.reassign.reason, 'Only M (manager) or H (HOD), or a complaints admin, can reassign this.');
     assert.equal(legacyActions({ id: 'x', complaintsAdmin: true }, c).reassign.allowed, true);
   });

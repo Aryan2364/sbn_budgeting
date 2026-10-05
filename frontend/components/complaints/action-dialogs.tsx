@@ -27,9 +27,9 @@ import { useUnsavedChanges } from "@/components/ui/unsaved-changes"
 import { Choice } from "@/components/complaints/choice"
 
 /**
- * The state-changing actions that need input: Resolve, Approve, Send
- * back and Reassign. Start and comments need none and are called from
- * the detail page directly.
+ * The state-changing actions that need input: Resolve and Reassign.
+ * Start and comments need none and are called from the detail page
+ * directly.
  *
  * Each is a dialog (a full-screen sheet on a phone, the agreed field
  * exception), guarded against losing typed text (11.3.10), and each
@@ -229,7 +229,7 @@ export function ResolveDialog({ complaint, onClose, onDone, onRefresh }: ActionD
   const [failure, setFailure] = React.useState<Failure | null>(null)
 
   const checkNote = (text = note) =>
-    text.trim() ? null : "Say what was done to fix it, so the approver can check it"
+    text.trim() ? null : "Say what was done to fix it"
   const checkPhotos = (items = photos) =>
     filesToSend(items).length === 0 ? "Add at least one photo of the fix" : null
 
@@ -245,12 +245,7 @@ export function ResolveDialog({ complaint, onClose, onDone, onRefresh }: ActionD
     setFailure(null)
     try {
       const next = await complaintsApi.resolve(complaint.id, note.trim(), filesToSend(photos))
-      onDone(
-        next,
-        next.status === "closed"
-          ? `${next.reference} resolved and closed`
-          : `${next.reference} resolved. ${next.approver?.name ?? "The approver"} has been asked to approve it.`,
-      )
+      onDone(next, `${next.reference} resolved and closed`)
     } catch (caught) {
       setFailure(failureFrom(caught))
       setSaving(false)
@@ -260,11 +255,7 @@ export function ResolveDialog({ complaint, onClose, onDone, onRefresh }: ActionD
   return (
     <ActionFrame
       title="Resolve complaint"
-      description={
-        complaint.requiresApproval
-          ? `Once resolved it goes to ${complaint.approver?.name ?? "the approver"} to approve.`
-          : "This category needs no approval, so resolving closes the complaint."
-      }
+      description="Resolving closes the complaint. After that it can no longer be changed, but anyone it was sent to can still comment."
       formId="resolve-form"
       submitLabel="Resolve complaint"
       savingLabel="Resolving…"
@@ -316,116 +307,13 @@ export function ResolveDialog({ complaint, onClose, onDone, onRefresh }: ActionD
 }
 
 // ---------------------------------------------------------------
-// Approve: an optional note
+// Reassign: another person who can work on complaints, and why
 // ---------------------------------------------------------------
 
-export function ApproveDialog({ complaint, onClose, onDone, onRefresh }: ActionDialogProps) {
-  const [note, setNote] = React.useState("")
-  const [saving, setSaving] = React.useState(false)
-  const [failure, setFailure] = React.useState<Failure | null>(null)
-
-  async function submit() {
-    setSaving(true)
-    setFailure(null)
-    try {
-      const next = await complaintsApi.approve(complaint.id, note.trim() || undefined)
-      onDone(next, `${next.reference} approved and closed`)
-    } catch (caught) {
-      setFailure(failureFrom(caught))
-      setSaving(false)
-    }
-  }
-
-  return (
-    <ActionFrame
-      title="Approve and close"
-      description={`${complaint.resolvedBy?.name ?? "The supervisor"}'s fix is accepted and the complaint closes. ${complaint.supervisor.name} and ${complaint.raisedBy.name} are told.`}
-      formId="approve-form"
-      submitLabel="Approve and close"
-      savingLabel="Approving…"
-      saving={saving}
-      changed={note.trim() !== ""}
-      onClose={onClose}
-      onSubmit={submit}
-      failure={failure}
-      onRefresh={onRefresh}
-    >
-      <NoteField
-        id="approve-note"
-        label="Note"
-        value={note}
-        onChange={setNote}
-        hint="Optional. It is added to the complaint's activity."
-      />
-    </ActionFrame>
-  )
-}
-
-// ---------------------------------------------------------------
-// Send back: a note is required (plan Q4 default)
-// ---------------------------------------------------------------
-
-export function SendBackDialog({ complaint, onClose, onDone, onRefresh }: ActionDialogProps) {
-  const [note, setNote] = React.useState("")
-  const [error, setError] = React.useState<string | null>(null)
-  const [saving, setSaving] = React.useState(false)
-  const [failure, setFailure] = React.useState<Failure | null>(null)
-  const check = (text = note) =>
-    text.trim() ? null : "Say what still needs fixing, so the supervisor knows what to do"
-
-  async function submit() {
-    const e = check()
-    setError(e)
-    if (e) return document.getElementById("send-back-note")?.focus()
-    setSaving(true)
-    setFailure(null)
-    try {
-      const next = await complaintsApi.sendBack(complaint.id, note.trim())
-      onDone(next, `${next.reference} sent back to ${next.supervisor.name}`)
-    } catch (caught) {
-      setFailure(failureFrom(caught))
-      setSaving(false)
-    }
-  }
-
-  return (
-    <ActionFrame
-      title="Send back to the supervisor"
-      description={`It returns to In progress and ${complaint.supervisor.name} is told what still needs doing.`}
-      formId="send-back-form"
-      submitLabel="Send back"
-      savingLabel="Sending back…"
-      saving={saving}
-      changed={note.trim() !== ""}
-      onClose={onClose}
-      onSubmit={submit}
-      failure={failure}
-      onRefresh={onRefresh}
-    >
-      <NoteField
-        id="send-back-note"
-        label="What still needs doing"
-        required
-        autoFocus
-        value={note}
-        onChange={(v) => {
-          setNote(v)
-          if (error) setError(check(v))
-        }}
-        onBlur={() => setError(check())}
-        error={error}
-      />
-    </ActionFrame>
-  )
-}
-
-// ---------------------------------------------------------------
-// Reassign: another Supervisor-designation person, and why
-// ---------------------------------------------------------------
+/** Who may take a complaint over: anyone who holds this (access plan P8). */
+const WORK_KEY = "complaints.complaints.work"
 
 export function ReassignDialog({ complaint, onClose, onDone, onRefresh }: ActionDialogProps) {
-  /** The Supervisor designation's id, which narrows the people search. null until found. */
-  const [designationId, setDesignationId] = React.useState<string | null>(null)
   /** Whether anyone else can take it over, from the first answer. null until known. */
   const [anyoneElse, setAnyoneElse] = React.useState<boolean | null>(null)
   const [loadError, setLoadError] = React.useState<string | null>(null)
@@ -438,45 +326,31 @@ export function ReassignDialog({ complaint, onClose, onDone, onRefresh }: Action
 
   /**
    * The people Pick, searched on the server as the user types (access
-   * plan P8): Supervisors only, and only people who can receive a
-   * complaint, narrowed by the server. The one it is with now is left
-   * out; it cannot move to them.
+   * plan P8): only people who can sign in and may work on complaints,
+   * narrowed by the server. The one it is with now is left out; it
+   * cannot move to them.
    */
-  const searchSupervisors = React.useCallback(
+  const searchPeople = React.useCallback(
     (query: string) =>
       pick
-        .people({ q: query, designationId: designationId ?? undefined, canReceive: true })
+        .people({ q: query, canReceive: true, holds: WORK_KEY })
         .then((rows) =>
           rows
             .filter((p) => p.id !== complaint.supervisor.id)
             .map((p) => ({ value: p.id, label: p.name, detail: p.designationName })),
         ),
-    [designationId, complaint.supervisor.id],
+    [complaint.supervisor.id],
   )
 
   React.useEffect(() => {
     let cancelled = false
-    // Picks, not lists (access plan P7 inventory 8): the designations
-    // list is Settings, under manage (D3).
+    // One first answer (at most 50, never everyone) says whether there
+    // is anyone to choose at all; the picker searches the rest.
     pick
-      .designations()
-      .then(async (designations) => {
-        const supervisor = designations.find((d) => d.seedKey === "supervisor")
-        if (!supervisor) {
-          throw new ApiError(
-            404,
-            "There is no Supervisor designation to choose from. Ask an administrator to check Settings, Designations.",
-          )
-        }
-        // One first answer (at most 50, never everyone) says whether
-        // there is anyone to choose at all; the picker searches the rest.
-        const first = await pick.people({ designationId: supervisor.id, canReceive: true })
-        return { id: supervisor.id, others: first.some((p) => p.id !== complaint.supervisor.id) }
-      })
-      .then(({ id, others }) => {
+      .people({ canReceive: true, holds: WORK_KEY })
+      .then((first) => {
         if (!cancelled) {
-          setDesignationId(id)
-          setAnyoneElse(others)
+          setAnyoneElse(first.some((p) => p.id !== complaint.supervisor.id))
           setLoadError(null)
         }
       })
@@ -490,7 +364,7 @@ export function ReassignDialog({ complaint, onClose, onDone, onRefresh }: Action
 
   const checkSupervisor = (id = supervisorId) => (id ? null : "Choose who takes this complaint over")
   const checkNote = (text = note) =>
-    text.trim() ? null : "Say why it is moving, so both supervisors know"
+    text.trim() ? null : "Say why it is moving, so both people know"
 
   async function submit() {
     const s = checkSupervisor()
@@ -512,7 +386,7 @@ export function ReassignDialog({ complaint, onClose, onDone, onRefresh }: Action
   return (
     <ActionFrame
       title="Reassign complaint"
-      description={`It moves from ${complaint.supervisor.name} to the supervisor you choose. Both are told.`}
+      description={`It moves from ${complaint.supervisor.name} to the person you choose, who becomes its supervisor. Both are told.`}
       formId="reassign-form"
       submitLabel="Reassign complaint"
       savingLabel="Reassigning…"
@@ -526,12 +400,12 @@ export function ReassignDialog({ complaint, onClose, onDone, onRefresh }: Action
     >
       <div className="flex flex-col gap-2">
         <Label htmlFor="reassign-supervisor" required>
-          New supervisor
+          Who will work on it
         </Label>
         {loadError ? (
           <Banner variant="danger">
             <CircleAlertIcon />
-            <BannerTitle>The supervisors could not be loaded</BannerTitle>
+            <BannerTitle>The people could not be loaded</BannerTitle>
             <BannerDescription>{loadError}</BannerDescription>
             <BannerAction>
               <Button type="button" variant="secondary" size="sm" onClick={() => setAttempt((a) => a + 1)}>
@@ -543,15 +417,15 @@ export function ReassignDialog({ complaint, onClose, onDone, onRefresh }: Action
           <Skeleton className="h-control w-full max-w-field-max" />
         ) : !anyoneElse ? (
           <p className="text-body text-text-secondary">
-            There is no other supervisor who can sign in. Add one in Settings, People, then
-            reassign.
+            Nobody else who can sign in may work on complaints. Once an administrator gives
+            someone that access in Access, you can reassign it.
           </p>
         ) : (
           <Choice
             id="reassign-supervisor"
             options={[]}
-            search={searchSupervisors}
-            emptyMessage={(q) => `No supervisors match '${q}'.`}
+            search={searchPeople}
+            emptyMessage={(q) => `No one matches '${q}'.`}
             value={supervisorId}
             onValueChange={(v) => {
               setSupervisorId(v)
@@ -559,8 +433,8 @@ export function ReassignDialog({ complaint, onClose, onDone, onRefresh }: Action
             }}
             onBlur={() => setErrors((e) => ({ ...e, supervisor: checkSupervisor() }))}
             invalid={Boolean(errors.supervisor)}
-            placeholder="Choose a supervisor"
-            searchPlaceholder="Search supervisors"
+            placeholder="Choose a person"
+            searchPlaceholder="Search people"
           />
         )}
         <InlineFieldError>{errors.supervisor}</InlineFieldError>

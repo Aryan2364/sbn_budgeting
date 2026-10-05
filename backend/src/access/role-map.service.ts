@@ -187,6 +187,16 @@ export class RoleMapService {
     return { userId, roleIds: sorted, version: map.version, perms };
   }
 
+  /**
+   * The ids of the roles that grant `key` at any scope, Admin included,
+   * from the current map. For a narrowing filter on OTHER people ("who
+   * may work on complaints"), read inside a request whose guard has
+   * already brought the map up to that request's access version.
+   */
+  rolesHolding(key: PermissionKey): string[] {
+    return [...this.map.roles].filter(([, perms]) => (perms.get(key)?.size ?? 0) > 0).map(([id]) => id);
+  }
+
   /** Reads the map again. Concurrent callers share one read. Fails closed (503). */
   reload(): Promise<RoleMapSnapshot> {
     if (this.loading) return this.loading;

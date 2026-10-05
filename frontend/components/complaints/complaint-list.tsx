@@ -52,8 +52,8 @@ import { useComplaintMasters } from "@/components/complaints/use-masters"
  *
  *   1  header     title, the active tab's count as meta, ONE primary
  *                 action: Raise complaint
- *   1a tabs       Assigned to me / Awaiting my approval / Raised by me /
- *                 All, each with its count from /complaints/counts
+ *   1a tabs       Assigned to me / Raised by me / All, each with its
+ *                 count from /complaints/counts
  *   2  toolbar    search (27.1) and Filter (27.3)
  *   3  data       a table from 768px, record cards below it (the agreed
  *                 phone exception); the only scrolling zone
@@ -118,7 +118,6 @@ function writeState(state: ListUrlState): string {
 
 /** Which tab a person most likely wants when they arrive with none chosen. */
 function defaultTab(counts: ComplaintCounts): ComplaintTab {
-  if (counts.approval > 0) return "approval"
   if (counts.assigned > 0) return "assigned"
   return "all"
 }
@@ -130,11 +129,6 @@ const EMPTY_COPY: Record<
   assigned: {
     heading: "Nothing is assigned to you",
     body: "Complaints raised at a site you supervise appear here until you resolve them.",
-    action: "all",
-  },
-  approval: {
-    heading: "Nothing is waiting for your approval",
-    body: "When a supervisor resolves a complaint you approve, it waits here for you.",
     action: "all",
   },
   raised: {

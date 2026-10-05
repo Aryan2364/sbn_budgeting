@@ -74,90 +74,216 @@ export function withoutRecordCan(body: unknown): unknown {
 }
 
 // ---------------------------------------------------------------------
-// D1 and D6 on the complaint workflow (plan 6.2, 6.3.3; P5)
+// The complaint workflow: D1 (P5), D8 and D9 (owner decisions A1-A3,
+// 5 Oct 2026, migration 0013). D6 (the approver may not approve what
+// they raised or resolved) is RETIRED with D8: its two routes no longer
+// exist, so its cases are D8's route removals.
 // ---------------------------------------------------------------------
 
 /**
- * What the D1 and D6 matchers need beyond the differing field itself.
- * Without it they match nothing.
+ * What the D1, D8 and D9 matchers need beyond the differing field
+ * itself. Without it they match nothing.
  */
 export interface IntendedWorld {
-  /** The run's cases by key, for `legacyDigest` (matrix.ts, legacy-complaint-actions.ts). */
-  runCases: Readonly<Record<string, { legacyDigest?: string }>>;
+  /** The run's cases by key: `legacyDigest`, `legacyWhy`, ids and statuses (matrix.ts). */
+  runCases: Readonly<Record<string, { legacyDigest?: string; legacyWhy?: string; status?: unknown; ids?: string[] }>>;
   /**
-   * D6's complaints: every complaint whose approver raised or resolved
-   * it, as "<user label>|<complaint id>" (the approver's case suffix)
-   * -> its status.
+   * The baseline's cases by key, for the matchers that judge a whole
+   * case by its two statuses (D2, D3, D4, D8, D9). Without it they match
+   * nothing.
    */
-  selfApprovals: ReadonlyMap<string, string>;
-  /**
-   * The baseline's cases by key, for the switch-over matchers (D2, D3,
-   * D4), which judge a whole case by its two statuses. Without it they
-   * match nothing.
-   */
-  baselineCases?: Readonly<Record<string, { status: unknown }>>;
+  baselineCases?: Readonly<Record<string, { status: unknown; ids?: string[] }>>;
   /** The switch-over's people and routes (D2, D4). Without it D2 and D4 match nothing. */
   switchOver?: SwitchWorld;
+  /** D8's and D9's facts, from the complaint world before migration 0013. Without it they match only route removals. */
+  approvals?: ApprovalsWorld;
 }
 
-export const D6_ACTION_ROUTES: readonly string[] = [
+/** legacy-approvals.ts's record, keyed by case label ("<user label>|<complaint id>"). */
+export interface ApprovalsWorld {
+  /** Complaint ids migration 0013 closed (they were waiting for approval). */
+  migrated: ReadonlySet<string>;
+  /** "label|complaintId": a complaints member named its HOD, not its manager (D8: reassign by designation gone). */
+  hodOnly: ReadonlySet<string>;
+  /** Person label -> complaint ids they newly see (D9). */
+  extras: ReadonlyMap<string, ReadonlySet<string>>;
+  /** Person label -> complaint ids they no longer see (D9). */
+  losses: ReadonlyMap<string, ReadonlySet<string>>;
+}
+
+/** D8: the routes A1 removed. Their route and every one of their cases are D8. */
+export const D8_REMOVED_ROUTES: readonly string[] = [
   'POST /api/complaints/:id/approve',
   'POST /api/complaints/:id/send-back',
 ];
-export const COMPLAINT_DETAIL_ROUTE = 'GET /api/complaints/:id';
-/** The `actions` entries D6 may turn from allowed to refused; every other entry must be unchanged. */
-const D6_ACTIONS = ['approve', 'sendBack'];
 
-/** "POST /api/x/:id [variant] |user|target" -> the route and "user|target". */
-function splitKey(key: string): { route: string; who: string } {
+/** D8: the case that asks for a tab A1 removed: 200 before, 400 now. */
+export const D8_GONE_CASES: readonly string[] = ['GET /api/complaints [tab-approval]'];
+
+/** D8: the response keys (a detail's `keys`, a list's `itemKeys`) 0013 dropped, per route. */
+export const D8_REMOVED_KEYS: Readonly<Record<string, readonly string[]>> = {
+  'GET /api/complaints/:id': ['approver', 'ceo', 'hod', 'requiresApproval'],
+  'GET /api/complaints/counts': ['approval'],
+  'GET /api/complaint-categories': ['approverDesignation', 'requiresApproval'],
+  'GET /api/complaint-categories/:id': ['approverDesignation', 'requiresApproval'],
+};
+
+/** D8: the detail's `actions` entries A1 removed. */
+const D8_ACTIONS = ['approve', 'sendBack'];
+
+export const COMPLAINT_DETAIL_ROUTE = 'GET /api/complaints/:id';
+const REASSIGN_CASE = 'POST /api/complaints/:id/reassign [to-another-supervisor]';
+
+/** "POST /api/x/:id [variant] |user|target" -> the route, the case (route + variant) and "user|target". */
+function splitKey(key: string): { route: string; kase: string; who: string } {
   const at = key.indexOf(' |');
   const head = at < 0 ? key : key.slice(0, at);
   const [method, path] = head.split(' ');
-  return { route: `${method} ${path}`, who: at < 0 ? '' : key.slice(at + 2) };
+  return { route: `${method} ${path}`, kase: head, who: at < 0 ? '' : key.slice(at + 2) };
+}
+
+/** "label|complaintId" -> its parts. */
+function whoParts(who: string): { label: string; target: string } {
+  const [label = '', target = ''] = who.split('|');
+  return { label, target };
 }
 
 /**
- * D6: the approver may not approve or send back a complaint they raised
- * (O10 Q11) or resolved (DECISIONS 19): 409 where today is 200, and the
- * detail's `actions` say so. Only on D6's complaints, only for their
- * approver, and only approve and send back.
+ * The digest of a read that differs only where an intended difference
+ * says: with D8 and D9 undone on the run's own body (legacy-approvals.ts),
+ * or, for a complaint detail with no such record, with `actions` as the
+ * baseline build computed it (D1: reasons stop naming a role; refusal
+ * wording is not compared, plan 6.2), the digest is the baseline's
+ * exactly. `legacyWhy` says which was needed.
  */
-function d6IdFor(d: Difference, world: IntendedWorld): string | null {
-  const { route, who } = splitKey(d.key);
-  if (!world.selfApprovals.has(who)) return null;
-  if (d.field === 'status' && D6_ACTION_ROUTES.includes(route)) {
-    return d.baseline === 200 && d.run === 409 ? 'D6' : null;
+function legacyDigestIdFor(d: Difference, world: IntendedWorld): string | null {
+  if (d.field !== 'digest') return null;
+  const c = world.runCases[d.key];
+  if (!c?.legacyDigest || c.legacyDigest !== d.baseline) return null;
+  return c.legacyWhy ?? null;
+}
+
+/** D8 on the keys of a detail or the item keys of a list: exactly the dropped keys gone (and D7's `can` added). */
+function d8KeysIdFor(d: Difference, route: string): string | null {
+  if (d.field !== 'keys' && d.field !== 'itemKeys') return null;
+  const removed = D8_REMOVED_KEYS[route];
+  if (!removed || !Array.isArray(d.baseline) || !Array.isArray(d.run)) return null;
+  const base = d.baseline as string[];
+  const run = d.run as string[];
+  if (!removed.every((k) => base.includes(k))) return null;
+  const expected = base.filter((k) => !removed.includes(k));
+  if (run.includes(D7_RECORD_KEY) && !base.includes(D7_RECORD_KEY)) expected.push(D7_RECORD_KEY);
+  return same(expected.sort(), run) ? 'D8' : null;
+}
+
+/**
+ * D8 on a complaint detail's `actions` flags: approve and send back are
+ * gone, and every other flag is unchanged, except reassign turning off
+ * on a complaint 0013 closed, or for a member who reached it only as its
+ * HOD (reassign at Own is the complaint's manager now, A2).
+ */
+function d8ActionsIdFor(d: Difference, a: ApprovalsWorld, who: string): string | null {
+  if (d.field !== 'actions') return null;
+  const base = d.baseline as Record<string, boolean> | undefined;
+  const run = d.run as Record<string, boolean> | undefined;
+  if (!base || !run) return null;
+  const expectedKeys = Object.keys(base).filter((k) => !D8_ACTIONS.includes(k)).sort();
+  if (!same(expectedKeys, Object.keys(run).sort())) return null;
+  const { target } = whoParts(who);
+  for (const k of expectedKeys) {
+    if (base[k] === run[k]) continue;
+    const reassignOff = k === 'reassign' && base[k] === true && run[k] === false;
+    if (!reassignOff || !(a.migrated.has(target) || a.hodOnly.has(who))) return null;
   }
-  if (d.field === 'actions' && route === COMPLAINT_DETAIL_ROUTE) {
-    const a = d.baseline as Record<string, boolean> | undefined;
-    const b = d.run as Record<string, boolean> | undefined;
-    if (!a || !b || !same(Object.keys(a).sort(), Object.keys(b).sort())) return null;
-    let changed = false;
-    for (const k of Object.keys(a)) {
-      if (a[k] === b[k]) continue;
-      if (!D6_ACTIONS.includes(k) || a[k] !== true || b[k] !== false) return null;
-      changed = true;
-    }
-    return changed ? 'D6' : null;
-  }
+  return 'D8';
+}
+
+/** D8 on an action's status: reassigning a complaint 0013 closed (200 -> 409), or as its HOD only (-> 403). */
+function d8ReassignIdFor(kase: string, who: string, st: { base: unknown; run: unknown }, a: ApprovalsWorld): string | null {
+  if (kase !== REASSIGN_CASE) return null;
+  const { target } = whoParts(who);
+  if (a.migrated.has(target) && st.base === 200 && st.run === 409) return 'D8';
+  if (a.hodOnly.has(who) && (st.base === 200 || st.base === 409) && st.run === 403) return 'D8';
+  return null;
+}
+
+const D9_SEES_NOW = new Set<unknown>([200, 403]);
+
+/**
+ * D9 on one case about one complaint: a member newly sees it (404 before;
+ * now the answer of someone who can see it: 200, or 403 for an action
+ * their Own scope does not reach), or no longer does (-> 404). Every
+ * field of such a case is D9.
+ */
+function d9CaseIdFor(who: string, st: { base: unknown; run: unknown }, a: ApprovalsWorld): string | null {
+  const { label, target } = whoParts(who);
+  if (a.extras.get(label)?.has(target)) return st.base === 404 && D9_SEES_NOW.has(st.run) ? 'D9' : null;
+  if (a.losses.get(label)?.has(target)) return D9_SEES_NOW.has(st.base) && st.run === 404 ? 'D9' : null;
   return null;
 }
 
 /**
- * A complaint detail whose body differs from the baseline ONLY in its
- * `actions` map: with `actions` as the baseline build would have
- * computed it, the digest is the baseline's exactly. The allowed flags
- * are compared on their own (the `actions` field, D6 only), so what is
- * left is refusal wording, which D1 says is not compared (reasons stop
- * naming a role, plan 6.2), and D6's own new sentence.
+ * D9 on a complaint list's ids and total: the ids gained are complaints
+ * the member newly sees, the ids lost ones they no longer see, and the
+ * total moves by exactly that.
  */
-function actionsOnlyIdFor(d: Difference, world: IntendedWorld): string | null {
-  if (d.field !== 'digest') return null;
-  const { route, who } = splitKey(d.key);
-  if (route !== COMPLAINT_DETAIL_ROUTE) return null;
-  const legacy = world.runCases[d.key]?.legacyDigest;
-  if (!legacy || legacy !== d.baseline) return null;
-  return world.selfApprovals.has(who) ? 'D6' : 'D1';
+function d9ListIdFor(d: Difference, world: IntendedWorld, route: string, who: string, a: ApprovalsWorld): string | null {
+  if (route !== 'GET /api/complaints' || (d.field !== 'ids' && d.field !== 'total')) return null;
+  const base = new Set(world.baselineCases?.[d.key]?.ids ?? []);
+  const run = new Set(world.runCases[d.key]?.ids ?? []);
+  const { label } = whoParts(who);
+  const extras = a.extras.get(label) ?? new Set<string>();
+  const losses = a.losses.get(label) ?? new Set<string>();
+  const gained = [...run].filter((id) => !base.has(id));
+  const lost = [...base].filter((id) => !run.has(id));
+  if (!gained.length && !lost.length) return null;
+  const ok =
+    gained.every((id) => extras.has(id.replace(/^id:/, ''))) && lost.every((id) => losses.has(id.replace(/^id:/, '')));
+  if (!ok) return null;
+  if (d.field === 'total') return (d.run as number) - (d.baseline as number) === gained.length - lost.length ? 'D9' : null;
+  return 'D9';
+}
+
+/** D8 or D9 for one difference, or null. */
+export function approvalsIdFor(d: Difference, world: IntendedWorld): string | null {
+  const { route, kase, who } = splitKey(d.key);
+  if (d.kind === 'route-only-in-baseline' || d.kind === 'case-only-in-baseline') {
+    return D8_REMOVED_ROUTES.includes(route) ? 'D8' : null;
+  }
+  if (d.kind !== 'field') return null;
+  const st = statuses(d, world);
+  if (D8_GONE_CASES.includes(kase)) return st?.base === 200 && st.run === 400 ? 'D8' : null;
+  const a = world.approvals;
+  if (a && st && st.base !== st.run) {
+    return d9CaseIdFor(who, st, a) ?? d8ReassignIdFor(kase, who, st, a);
+  }
+  return (
+    d8KeysIdFor(d, route) ??
+    legacyDigestIdFor(d, world) ??
+    (a && route === COMPLAINT_DETAIL_ROUTE ? d8ActionsIdFor(d, a, who) : null) ??
+    (a ? d9ListIdFor(d, world, route, who, a) : null)
+  );
+}
+
+/**
+ * Plan 6.3.2, every listed entry appears: D8 (the removed routes are in
+ * every baseline) and, for each member who newly sees a complaint, D9.
+ */
+export function missingApprovals(diffs: readonly Difference[], world: IntendedWorld): string[] {
+  const seen = new Set<string>();
+  const d9People = new Set<string>();
+  for (const d of diffs) {
+    const id = approvalsIdFor(d, world);
+    if (!id) continue;
+    seen.add(id);
+    if (id === 'D9') d9People.add(whoParts(splitKey(d.key).who).label);
+  }
+  const out: string[] = [];
+  if (!seen.has('D8')) out.push('expected intended difference D8 never appeared');
+  for (const [label, extras] of world.approvals?.extras ?? []) {
+    if (extras.size && !d9People.has(label)) out.push(`D9 lists ${label} (sees ${extras.size} more), but nothing changed for them`);
+  }
+  return out;
 }
 
 /**
@@ -186,8 +312,8 @@ export function intendedIdFor(d: Difference, world?: IntendedWorld): string | nu
   }
   const d5 = d5IdFor(d);
   if (d5) return d5;
-  if (d.kind === 'field' && world) {
-    const id = d6IdFor(d, world) ?? actionsOnlyIdFor(d, world);
+  if (world) {
+    const id = approvalsIdFor(d, world);
     if (id) return id;
   }
   if (d.kind !== 'field' || (d.field !== 'keys' && d.field !== 'itemKeys')) return null;
@@ -209,29 +335,6 @@ export interface Matched {
   unmatched: Difference[];
   /** Intended id -> how many differences it explained. */
   matched: Record<string, number>;
-}
-
-/**
- * D6's count (plan 6.3.2: a stated count must match): every complaint
- * waiting for approval whose approver raised or resolved it must show
- * the 200 -> 409 on BOTH approve and send back, for that approver.
- * Returns one line per one that does not.
- */
-export function missingD6(diffs: readonly Difference[], world: IntendedWorld): string[] {
-  const seen = new Set(
-    diffs.filter((d) => d6IdFor(d, world) === 'D6' && d.field === 'status').map((d) => {
-      const { route, who } = splitKey(d.key);
-      return `${route} |${who}`;
-    }),
-  );
-  const missing: string[] = [];
-  for (const [who, status] of world.selfApprovals) {
-    if (status !== 'awaiting_approval') continue;
-    for (const route of D6_ACTION_ROUTES) {
-      if (!seen.has(`${route} |${who}`)) missing.push(`D6 lists ${route} |${who}, but it did not change to 409`);
-    }
-  }
-  return missing;
 }
 
 export function matchIntended(diffs: readonly Difference[], world?: IntendedWorld): Matched {
@@ -352,15 +455,16 @@ export function switchOverIdFor(d: Difference, world: IntendedWorld): string | n
 
 /**
  * Against a PRE-SWITCH build's answers (a shadow-mode build, which
- * already carried D1, D5, D6 and D7): only D2, D3 and D4 may differ.
- * Anything else, including a difference that would be D1, D6 or D7
- * against the old baseline, is unmatched.
+ * already carried D1, D5, D6 and D7): only D2, D3 and D4 may differ, and
+ * D8 and D9, which came after that build (migration 0013). Anything
+ * else, including a difference that would be D1 or D7 against the old
+ * baseline, is unmatched.
  */
 export function matchSwitchOnly(diffs: readonly Difference[], world: IntendedWorld): Matched {
   const unmatched: Difference[] = [];
   const matched: Record<string, number> = {};
   for (const d of diffs) {
-    const id = switchOverIdFor(d, world);
+    const id = switchOverIdFor(d, world) ?? approvalsIdFor(d, world);
     if (id) matched[id] = (matched[id] ?? 0) + 1;
     else unmatched.push(d);
   }

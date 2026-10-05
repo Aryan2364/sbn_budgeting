@@ -11,13 +11,16 @@ import { SKIP_REASON, dbTestsEnabled, openScratchDatabase, type ScratchDb } from
  * 23 mapping, with the query guard in 'throw' mode (so any statement
  * that reads a guarded table without a scope marker fails its request).
  *
- *   - Own (complaints member) = raised by me or named on the snapshot,
- *     exactly today's member rule; All (complaints admin) = everything.
+ *   - Team (complaints member, owner decision A3) = raised by, supervised
+ *     or managed by me or anyone who reports up to me, or on a site my
+ *     team runs; All (complaints admin) = everything.
  *   - Selected sites reaches the complaints on the ticked site and never
  *     a site-less legacy complaint (O10 Q9); detail, photo, counts and
  *     summary all agree with the list.
- *   - Every row and detail carries `can`; reassign at Own is "manager or
- *     HOD" (O6), and acting outside it is 403 naming the permission.
+ *   - Every row and detail carries `can`; reassign at Own is the
+ *     complaint's manager (O6; no HOD since A2), and acting outside it is
+ *     403 naming the permission. The new supervisor must be able to work
+ *     on complaints, never "hold the Supervisor designation".
  *   - Raise reaches every site through its declared Pick at All (O5).
  *   - GET /pick/complaints/categories is pick-for-everyone and returns
  *     the declared fields only.
@@ -112,27 +115,31 @@ describe('complaints lane: scope through the routes (P3b)', { skip: dbTestsEnabl
     await db?.close();
   });
 
-  it('Own is "raised by me or named on it" and All is everything, on every tab', async () => {
+  it('Team is "my team raised, supervises or manages it, or runs its site" and All is everything, on every tab', async () => {
     const all = await sqlIds('select id from complaints');
     const members = ['raiser', 'supervisor', 'supervisor2', 'manager', 'approver', 'hod', 'ceo', 'staff_member'];
     for (const user of members) {
       const me = F.U[user as keyof typeof F.U];
-      const named = await sqlIds(
-        `select id from complaints
-         where $1 in (raised_by, supervisor_id, manager_id, hod_id, ceo_id, approver_id)`,
+      const team = await sqlIds(
+        `select c.id from complaints c
+         where exists (select 1 from reporting_closure rc
+                       where rc.ancestor_id = $1 and rc.descendant_id in (c.raised_by, c.supervisor_id, c.manager_id))
+            or c.site_id in (select s.id from sites s join reporting_closure rc
+                             on rc.ancestor_id = $1 and rc.descendant_id in (s.manager_id, s.supervisor_id))`,
         [me],
       );
-      assert.deepEqual(await listIds(user), named, `${user}: named on`);
+      assert.deepEqual(await listIds(user), team, `${user}: their team's`);
       const raised = await sqlIds('select id from complaints where raised_by = $1', [me]);
       assert.deepEqual(await listIds(user, 'raised'), raised, `${user}: raised tab`);
     }
     for (const user of ['complaints_admin', 'all_admin']) assert.deepEqual(await listIds(user), all, user);
   });
 
-  it('a site-less legacy complaint is reached by the people named on it and by All only', async () => {
+  it('a site-less legacy complaint is reached through its people (and their chain) and by All only', async () => {
     const legacy = F.K.legacy_location;
-    assert.ok((await listIds('raiser')).includes(legacy), 'raised it (Own)');
-    assert.ok((await listIds('supervisor')).includes(legacy), 'named on it (Own)');
+    assert.ok((await listIds('raiser')).includes(legacy), 'raised it');
+    assert.ok((await listIds('supervisor')).includes(legacy), 'named on it');
+    assert.ok((await listIds('hod')).includes(legacy), 'its supervisor reports up to them (Team)');
     assert.ok((await listIds('complaints_admin')).includes(legacy), 'All');
     assert.ok(!(await listIds('supervisor2')).includes(legacy), 'not named on it');
     assert.equal((await call('supervisor2', 'GET', `/complaints/${legacy}`)).status, 404);
@@ -169,7 +176,7 @@ describe('complaints lane: scope through the routes (P3b)', { skip: dbTestsEnabl
     for (const row of list.body.data) assert.deepEqual(row.can, {});
   });
 
-  it('rows and detail carry `can`; reassign at Own is manager or HOD, and acting outside it is 403', async () => {
+  it('rows and detail carry `can`; reassign at Own is the manager, and acting outside it is 403', async () => {
     const rowOf = async (user: string, id: string) =>
       ((await call(user, 'GET', '/complaints?pageSize=100')).body.data as Array<{ id: string; can: any }>).find(
         (r) => r.id === id,
@@ -178,12 +185,17 @@ describe('complaints lane: scope through the routes (P3b)', { skip: dbTestsEnabl
     const asSupervisor = await rowOf('supervisor', F.K.open);
     assert.equal(asSupervisor.can.comment, true);
     assert.equal(asSupervisor.can.work, true);
-    assert.equal(typeof asSupervisor.can.reassign, 'string', 'named on it, but not its manager or HOD');
+    assert.equal(typeof asSupervisor.can.reassign, 'string', 'named on it, but not its manager');
     assert.equal((await rowOf('manager', F.K.open)).can.reassign, true);
-    assert.equal((await rowOf('hod', F.K.open)).can.reassign, true);
-    assert.deepEqual((await rowOf('complaints_admin', F.K.open)).can, {
-      comment: true, work: true, approve: true, reassign: true,
-    });
+    // The HOD sees it through Team and may comment, but neither works on
+    // nor reassigns it: no designation reaches anything (A2).
+    const asHod = await rowOf('hod', F.K.open);
+    assert.equal(asHod.can.comment, true);
+    assert.equal(typeof asHod.can.work, 'string');
+    assert.equal(typeof asHod.can.reassign, 'string');
+    assert.equal((await call('hod', 'POST', `/complaints/${F.K.open}/start`, {})).status, 403);
+    assert.equal((await call('hod', 'POST', `/complaints/${F.K.open}/comments`, { note: 'Seen' })).status, 200);
+    assert.deepEqual((await rowOf('complaints_admin', F.K.open)).can, { comment: true, work: true, reassign: true });
 
     const detail = await call('supervisor', 'GET', `/complaints/${F.K.open}`);
     assert.equal(detail.status, 200);
@@ -203,6 +215,29 @@ describe('complaints lane: scope through the routes (P3b)', { skip: dbTestsEnabl
     });
     assert.equal(allowed.status, 200, JSON.stringify(allowed.body));
     assert.equal(allowed.body.supervisor.id, F.U.supervisor2);
+
+    // The new supervisor must be able to work on complaints and sign in;
+    // their designation is never read (A2).
+    const noWork = await call('manager', 'POST', `/complaints/${F.K.in_progress}/reassign`, {
+      supervisorId: F.U.budget_staff,
+      note: 'Moving it',
+    });
+    assert.equal(noWork.status, 422);
+    assert.match(noWork.body.message, /can't start or resolve complaints/);
+    const toRaiser = await call('manager', 'POST', `/complaints/${F.K.in_progress}/reassign`, {
+      supervisorId: F.U.raiser,
+      note: 'Moving it',
+    });
+    assert.equal(toRaiser.status, 200, 'a complaints member with no designation can take it');
+
+    // The reassign picker asks the people Pick for exactly those people.
+    const pick = await call('manager', 'GET', '/pick/platform/people?canReceive=true&holds=complaints.complaints.work');
+    assert.equal(pick.status, 200, JSON.stringify(pick.body));
+    const picked = (pick.body as Array<{ id: string }>).map((p) => p.id);
+    assert.ok(picked.includes(F.U.raiser) && picked.includes(F.U.supervisor2));
+    assert.ok(!picked.includes(F.U.budget_staff), 'no complaints work');
+    assert.ok(!picked.includes(F.U.no_login), 'cannot sign in');
+    assert.equal((await call('manager', 'GET', '/pick/platform/people?holds=complaints.nope')).status, 400);
 
     // Outside the view scope, an action is the same 404 as a missing complaint.
     assert.equal(
@@ -250,14 +285,8 @@ describe('complaints lane: scope through the routes (P3b)', { skip: dbTestsEnabl
       ['Information', 'Tree damage', 'Water supply'],
     );
     for (const option of active.body) {
-      assert.deepEqual(Object.keys(option).sort(), [
-        'approverDesignation', 'id', 'isActive', 'name', 'requiresApproval',
-      ]);
+      assert.deepEqual(Object.keys(option).sort(), ['id', 'isActive', 'name']);
     }
-    assert.deepEqual(
-      active.body.find((c: { name: string }) => c.name === 'Tree damage').approverDesignation,
-      { id: F.D.project_director, name: 'Project Director' },
-    );
 
     const everything = await call('budget_staff', 'GET', '/pick/complaints/categories?includeInactive=true');
     assert.equal(everything.body.length, 4);

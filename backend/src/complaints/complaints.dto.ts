@@ -6,7 +6,7 @@ import { IsOptional, IsString, IsUUID, MaxLength, MinLength } from 'class-valida
  *
  * Multipart fields arrive as strings, so every text field is trimmed
  * here and "required" is checked as "non-blank after trimming". The
- * required-note rules (resolve, send back, reassign, comment) live in
+ * required-note rules (resolve, reassign, comment) live in
  * the service, after the permission check, so a person who may not act
  * is told that rather than "add a note".
  */
@@ -67,6 +67,6 @@ export class ResolveDto {
 }
 
 export class ReassignDto extends NoteDto {
-  @IsUUID('all', { message: 'Choose the new supervisor from the list' })
+  @IsUUID('all', { message: 'Choose who will work on it from the list' })
   supervisorId!: string;
 }

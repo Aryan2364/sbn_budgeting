@@ -55,6 +55,8 @@ const all = (...keys: PermissionKey[]): Array<readonly [PermissionKey, Scope]> =
   keys.map((k) => [k, 'all'] as const);
 const own = (...keys: PermissionKey[]): Array<readonly [PermissionKey, Scope]> =>
   keys.map((k) => [k, 'own'] as const);
+const team = (...keys: PermissionKey[]): Array<readonly [PermissionKey, Scope]> =>
+  keys.map((k) => [k, 'team'] as const);
 
 export const SEED_ROLES: readonly SeedRole[] = [
   {
@@ -140,7 +142,6 @@ export const SEED_ROLES: readonly SeedRole[] = [
       'complaints.complaints.raise',
       'complaints.complaints.comment',
       'complaints.complaints.work',
-      'complaints.complaints.approve',
       'complaints.complaints.reassign',
       'complaints.categories.manage',
     ),
@@ -153,17 +154,15 @@ export const SEED_ROLES: readonly SeedRole[] = [
       'What a complaints member could do before roles: raise complaints, and work on the ones that name them.',
     systemKey: null,
     heldBy: { module: 'complaints', role: 'member' },
-    // C1: all at Own. Raise still reaches every site through its
-    // declared Pick at All (O5); reassign at Own is today's rule (the
-    // manager or HOD named on the complaint).
-    grants: own(
-      'complaints.complaints.view',
-      'complaints.complaints.raise',
-      'complaints.complaints.comment',
-      'complaints.complaints.work',
-      'complaints.complaints.approve',
-      'complaints.complaints.reassign',
-    ),
+    // Owner decision, 5 Oct 2026 (migration 0013): view and comment at
+    // Team, so who sees a complaint follows the reports_to chain; work
+    // and reassign stay at Own (C1). Raise still reaches every site
+    // through its declared Pick at All (O5); reassign at Own is the
+    // complaint's manager. There is no approve key.
+    grants: [
+      ...team('complaints.complaints.view', 'complaints.complaints.comment'),
+      ...own('complaints.complaints.raise', 'complaints.complaints.work', 'complaints.complaints.reassign'),
+    ],
   },
 ];
 

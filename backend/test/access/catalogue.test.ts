@@ -91,7 +91,6 @@ describe('access catalogue', () => {
       'budget.reports.view',
       'complaints.complaints.raise',
       'complaints.complaints.work',
-      'complaints.complaints.approve',
       'complaints.complaints.reassign',
       'complaints.categories.manage',
       'platform.people.pick',
@@ -100,6 +99,7 @@ describe('access catalogue', () => {
     ];
     for (const key of expected) assert.ok(isPermissionKey(key), key);
     assert.ok(!isPermissionKey('complaints.complaints.reassign_any'), 'O6: there is no reassign_any');
+    assert.ok(!isPermissionKey('complaints.complaints.approve'), 'A1 (5 Oct 2026): complaints have no approval');
     assert.ok(!isPermissionKey('platform.access.view'), 'R12: there is no platform.access.view');
     assert.ok(!isPermissionKey('complaints.amounts.see'), 'Complaints has no see amounts');
   });
@@ -237,11 +237,17 @@ describe('seed roles', () => {
     assert.deepEqual(legacyLevelsFor(adminGrants()), { platform: 'admin', budget: 'admin', complaints: 'admin' });
   });
 
-  it('Complaints member holds every complaint action at Own (C1)', () => {
+  it('Complaints member views and comments at Team, and raises, works and reassigns at Own (C1, A3)', () => {
     const member = SEED_ROLES.find((r) => r.seed === 'complaints_member')!;
     assert.deepEqual(
       [...member.grants].map(([k, s]) => `${k}:${s}`).sort(),
-      ['approve', 'comment', 'raise', 'reassign', 'view', 'work'].map((a) => `complaints.complaints.${a}:own`),
+      [
+        'complaints.complaints.comment:team',
+        'complaints.complaints.raise:own',
+        'complaints.complaints.reassign:own',
+        'complaints.complaints.view:team',
+        'complaints.complaints.work:own',
+      ],
     );
   });
 

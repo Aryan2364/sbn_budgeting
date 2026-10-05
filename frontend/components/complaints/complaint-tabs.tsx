@@ -14,14 +14,11 @@ import { SectionTabs } from "@/components/ui/section-tabs"
  * together with search, filters and page in a single replace, and a
  * tab switch clears that toolbar state (33.4) — hence `onValueChange`.
  *
- * Tabs are never hidden (logged in CONTRACT §9): whether a person could
- * ever be an approver depends on categories and reporting lines the
- * screen cannot see, so every tab is shown to everyone and an empty one
- * says why it is empty.
+ * Tabs are never hidden (logged in CONTRACT §9): every tab is shown to
+ * everyone and an empty one says why it is empty.
  */
 export const COMPLAINT_TABS: { value: ComplaintTab; label: string }[] = [
   { value: "assigned", label: "Assigned to me" },
-  { value: "approval", label: "Awaiting my approval" },
   { value: "raised", label: "Raised by me" },
   { value: "all", label: "All" },
 ]

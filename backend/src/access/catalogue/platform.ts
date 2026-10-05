@@ -13,13 +13,14 @@ import type { ModuleCatalogue } from './types';
  *
  * The Picks (pick/platform-pick.controller.ts, R11.7):
  *   /pick/platform/people        id, name, designationName (O10 Q7);
- *                                narrowing filters designationId and
- *                                canReceive (active and can sign in),
- *                                as the reassign dialog uses them.
- *   /pick/platform/designations  id, name, seedKey (the reassign dialog
- *                                finds the Supervisor designation, the
- *                                category form the HOD default, by it),
- *                                isActive (with includeInactive=true).
+ *                                narrowing filters designationId,
+ *                                canReceive (active and can sign in) and
+ *                                holds (holds that permission key; the
+ *                                reassign dialog asks for
+ *                                complaints.complaints.work).
+ *   /pick/platform/designations  id, name, isActive (with
+ *                                includeInactive=true). No logic
+ *                                branches on a designation (owner, 5 Oct 2026).
  *   /pick/platform/locations     id, name, isActive (likewise).
  * GET /users/picker stays an alias of /pick/platform/people until P11.
  */
@@ -43,7 +44,7 @@ export const platformCatalogue = {
       key: 'designations',
       label: 'Designations',
       record: 'master',
-      pick: { everyone: true, fields: ['id', 'name', 'seedKey', 'isActive'] },
+      pick: { everyone: true, fields: ['id', 'name', 'isActive'] },
       actions: [{ key: 'manage', label: 'manage designations', short: 'Manage' }],
     },
     {

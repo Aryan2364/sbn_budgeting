@@ -28,9 +28,9 @@ const PHOTO_TIMEOUT_MS = 30_000
 // Shapes, mirroring CONTRACT sections 3 and 10
 // ---------------------------------------------------------------
 
-export type ComplaintStatus = "open" | "in_progress" | "awaiting_approval" | "closed"
+export type ComplaintStatus = "open" | "in_progress" | "closed"
 
-export type ComplaintTab = "assigned" | "approval" | "raised" | "all"
+export type ComplaintTab = "assigned" | "raised" | "all"
 
 export interface PersonRef {
   id: string
@@ -67,7 +67,7 @@ export function complaintPlace(row: Pick<ComplaintRow, "site" | "location">): st
   return row.site?.name ?? row.location?.name ?? "No site"
 }
 
-export type ActionName ="start" | "resolve" | "approve" | "sendBack" | "reassign" | "comment"
+export type ActionName = "start" | "resolve" | "reassign" | "comment"
 
 export interface ActionState {
   allowed: boolean
@@ -79,8 +79,6 @@ export type EventKind =
   | "raised"
   | "started"
   | "resolved"
-  | "approved"
-  | "sent_back"
   | "closed"
   | "reassigned"
   | "comment"
@@ -107,11 +105,7 @@ export interface ComplaintEvent {
 export interface ComplaintDetail extends ComplaintRow {
   complainantPhone: string
   locationNote: string | null
-  requiresApproval: boolean
   manager: PersonRef | null
-  hod: PersonRef | null
-  ceo: PersonRef | null
-  approver: PersonRef | null
   startedAt: string | null
   resolvedAt: string | null
   closedAt: string | null
@@ -125,7 +119,6 @@ export interface ComplaintDetail extends ComplaintRow {
 
 export interface ComplaintCounts {
   assigned: number
-  approval: number
   raised: number
   all: number
 }
@@ -163,18 +156,13 @@ export interface ComplaintCategory {
   name: string
   sortOrder: number
   isActive: boolean
-  requiresApproval: boolean
-  approverDesignation: { id: string; name: string } | null
   /** DELETE is refused while this is above 0. */
   complaintCount: number
 }
 
 export interface ComplaintCategoryBody {
   name: string
-  sortOrder?: number
   isActive?: boolean
-  requiresApproval: boolean
-  approverDesignationId?: string | null
 }
 
 export interface NotificationItem {
@@ -289,12 +277,6 @@ export const complaintsApi = {
       { resolutionNote },
       { name: "photos", files: photos },
     ),
-
-  approve: (id: string, note?: string) =>
-    api.post<ComplaintDetail>(`/complaints/${id}/approve`, note ? { note } : {}),
-
-  sendBack: (id: string, note: string) =>
-    api.post<ComplaintDetail>(`/complaints/${id}/send-back`, { note }),
 
   reassign: (id: string, supervisorId: string, note: string) =>
     api.post<ComplaintDetail>(`/complaints/${id}/reassign`, { supervisorId, note }),

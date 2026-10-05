@@ -38,8 +38,8 @@ import { SKIP_REASON, dbTestsEnabled, openScratchDatabase, type ScratchDb } from
  *   E1 S1 by supA · E2 S2 by supB · E3 S3 by office
  *   E4 S1 by NOBODY (legacy null creator) · E5 S5 by mgrA
  *
- *   K1 S1   raised outsider; supA, mgrA, hod, ceo
- *   K2 S2   raised office;   supB, mgrB, hod, ceo
+ *   K1 S1   raised outsider; supA, mgrA
+ *   K2 S2   raised office;   supB, mgrB
  *   K3 —    LEGACY, no site; raised supB; supB, mgrB
  *   K4 S3   raised outsider; supervisor outsider
  *   K5 S5   raised supA;     supervisor outsider
@@ -132,7 +132,7 @@ async function seedGraph(db: ScratchDb['client']): Promise<void> {
   await expense('E5', 'S5', USERS.mgrA);
 
   await db.query(
-    `insert into complaint_categories (id, name, sort_order, is_active, requires_approval) values ($1, 'Scope', 1, true, false)`,
+    `insert into complaint_categories (id, name, sort_order, is_active) values ($1, 'Scope', 1, true)`,
     [CATEGORY],
   );
   const complaint = async (
@@ -140,20 +140,20 @@ async function seedGraph(db: ScratchDb['client']): Promise<void> {
     n: number,
     s: keyof typeof SITES | null,
     raisedBy: string,
-    people: [string, string | null, string | null, string | null],
+    people: [string, string | null],
   ): Promise<void> => {
     await db.query(
       `insert into complaints (id, number, site_id, location_id, category_id, complainant_name, complainant_phone,
-         description, status, requires_approval, raised_by, supervisor_id, manager_id, hod_id, ceo_id, approver_id)
-       values ($1, $2, $3, $4, $5, 'C', '9825012345', $6, 'open', false, $7, $8, $9, $10, $11, null)`,
+         description, status, raised_by, supervisor_id, manager_id)
+       values ($1, $2, $3, $4, $5, 'C', '9825012345', $6, 'open', $7, $8, $9)`,
       [COMPLAINTS[key], 900 + n, s ? SITES[s] : null, s ? null : LOCATION, CATEGORY, `complaint ${key}`, raisedBy, ...people],
     );
   };
-  await complaint('K1', 1, 'S1', USERS.outsider, [USERS.supA, USERS.mgrA, USERS.hod, USERS.ceo]);
-  await complaint('K2', 2, 'S2', USERS.office, [USERS.supB, USERS.mgrB, USERS.hod, USERS.ceo]);
-  await complaint('K3', 3, null, USERS.supB, [USERS.supB, USERS.mgrB, null, null]);
-  await complaint('K4', 4, 'S3', USERS.outsider, [USERS.outsider, null, null, null]);
-  await complaint('K5', 5, 'S5', USERS.supA, [USERS.outsider, null, null, null]);
+  await complaint('K1', 1, 'S1', USERS.outsider, [USERS.supA, USERS.mgrA]);
+  await complaint('K2', 2, 'S2', USERS.office, [USERS.supB, USERS.mgrB]);
+  await complaint('K3', 3, null, USERS.supB, [USERS.supB, USERS.mgrB]);
+  await complaint('K4', 4, 'S3', USERS.outsider, [USERS.outsider, null]);
+  await complaint('K5', 5, 'S5', USERS.supA, [USERS.outsider, null]);
   await db.query('commit');
 }
 
@@ -224,16 +224,17 @@ const EXPECTED: Record<CaseName, Expected> = {
     units: { supA: ['E1', 'E2', 'E4'], mgrA: ['E1', 'E4', 'E5'], hod: [], office: ['E3'], outsider: [], mgrB: ['E2'] },
   },
   complaint: {
-    own: { supA: ['K1', 'K5'], mgrA: ['K1'], hod: ['K1', 'K2'], office: ['K2'], outsider: ['K1', 'K4', 'K5'], mgrB: ['K2', 'K3'] },
+    // Nobody is named a complaint's HOD any more (A2): the HOD reaches them through Team only.
+    own: { supA: ['K1', 'K5'], mgrA: ['K1'], hod: [], office: ['K2'], outsider: ['K1', 'K4', 'K5'], mgrB: ['K2', 'K3'] },
     // K3 has no site: Team reaches it only through its people (supB, mgrB are in hod's team).
     team: { supA: ['K1', 'K5'], mgrA: ['K1', 'K5'], hod: ['K1', 'K2', 'K3', 'K5'], office: ['K2'], outsider: ['K1', 'K4', 'K5'], mgrB: ['K2', 'K3'] },
     // Site-less K3 is reached by Selected sites only through Own (O10 Q9): supA ticks S2 but never sees K3.
-    units: { supA: ['K1', 'K2', 'K5'], mgrA: ['K1'], hod: ['K1', 'K2'], office: ['K2', 'K4'], outsider: ['K1', 'K4', 'K5'], mgrB: ['K2', 'K3'] },
+    units: { supA: ['K1', 'K2', 'K5'], mgrA: ['K1'], hod: [], office: ['K2', 'K4'], outsider: ['K1', 'K4', 'K5'], mgrB: ['K2', 'K3'] },
   },
   reassign: {
-    own: { supA: [], mgrA: ['K1'], hod: ['K1', 'K2'], office: [], outsider: [], mgrB: ['K2', 'K3'] },
+    own: { supA: [], mgrA: ['K1'], hod: [], office: [], outsider: [], mgrB: ['K2', 'K3'] },
     team: { supA: ['K1', 'K5'], mgrA: ['K1', 'K5'], hod: ['K1', 'K2', 'K3', 'K5'], office: ['K2'], outsider: ['K1', 'K4', 'K5'], mgrB: ['K2', 'K3'] },
-    units: { supA: ['K1', 'K2'], mgrA: ['K1'], hod: ['K1', 'K2'], office: ['K4'], outsider: [], mgrB: ['K2', 'K3'] },
+    units: { supA: ['K1', 'K2'], mgrA: ['K1'], hod: [], office: ['K4'], outsider: [], mgrB: ['K2', 'K3'] },
   },
   person: {
     own: { supA: ['supA'], mgrA: ['mgrA'], hod: ['hod'], office: ['office'], outsider: ['outsider'], mgrB: ['mgrB'] },
@@ -428,7 +429,7 @@ describe('scope filter: fixture graph (P3a)', { skip: dbTestsEnabled ? false : S
     await assert.rejects(assertRecordAccess(pool, ctxOf('supA', grants), check), (e: unknown) => {
       const err = e as { getStatus(): number; getResponse(): Record<string, string> };
       assert.equal(err.getStatus(), 403);
-      assert.equal(err.getResponse().reason, 'You can reassign complaints only if you are their manager or HOD.');
+      assert.equal(err.getResponse().reason, 'You can reassign complaints only if you are their manager.');
       return true;
     });
   });

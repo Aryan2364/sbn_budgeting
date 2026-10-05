@@ -76,8 +76,9 @@ describe('access mapping re-sync', { skip: dbTestsEnabled ? false : SKIP_REASON 
     );
     assert.equal(await count(db.client, 'select count(*) from user_roles where granted_by is not null'), 0);
 
-    // Admin is computed: no rows. Complaints member: everything at Own,
-    // plus the declared Picks at All (C1, O5).
+    // Admin is computed: no rows. Complaints member: view and comment at
+    // Team (A3), raise, work and reassign at Own (C1), plus the declared
+    // Picks at All (O5).
     assert.equal(await count(db.client, 'select count(*) from role_permissions where role_id = $1', [R.admin]), 0);
     const member = (
       await db.client.query<{ k: string }>(
@@ -87,11 +88,10 @@ describe('access mapping re-sync', { skip: dbTestsEnabled ? false : SKIP_REASON 
     ).rows.map((r) => r.k);
     assert.deepEqual(member, [
       'budget.sites.pick:all',
-      'complaints.complaints.approve:own',
-      'complaints.complaints.comment:own',
+      'complaints.complaints.comment:team',
       'complaints.complaints.raise:own',
       'complaints.complaints.reassign:own',
-      'complaints.complaints.view:own',
+      'complaints.complaints.view:team',
       'complaints.complaints.work:own',
       'platform.people.pick:all',
     ]);

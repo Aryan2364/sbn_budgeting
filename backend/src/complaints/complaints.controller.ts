@@ -24,10 +24,11 @@ import {
  * can't see is a 404 everywhere, so its existence never leaks.
  *
  * Access plan P2b, P9: each handler carries its declaration (`@Can`),
- * which the permission guard decides. The key says only that the person may do this KIND of thing; who is the
- * supervisor or the approver on THIS complaint stays in permissions.ts
- * (the workflow layer, plan 6.2). RESOLUTIONS C1: `approve` covers
- * approve and send back; `work` covers start and resolve.
+ * which the permission guard decides. The key says only that the person
+ * may do this KIND of thing; who is the supervisor on THIS complaint
+ * stays in permissions.ts (the workflow layer, plan 6.2). RESOLUTIONS C1:
+ * `work` covers start and resolve. There is no approval step (owner
+ * decision, 5 Oct 2026): resolving closes a complaint.
  *
  * Access plan P3b: which complaints a caller reaches is decided in the
  * data query by the shared scope filter (`@CurrentAccess()` into the
@@ -136,30 +137,6 @@ export class ComplaintsController {
     @UploadedFiles() files?: UploadedPhoto[],
   ): Promise<ComplaintDetail> {
     return this.complaints.resolve(user, access, id, body.resolutionNote, files);
-  }
-
-  @Post(':id/approve')
-  @Can('complaints.complaints.approve')
-  @HttpCode(200)
-  approve(
-    @CurrentUser() user: AuthUser,
-    @CurrentAccess() access: AccessContext,
-    @Param('id', new ParseUUIDPipe()) id: string,
-    @Body() body: NoteDto,
-  ): Promise<ComplaintDetail> {
-    return this.complaints.approve(user, access, id, body.note);
-  }
-
-  @Post(':id/send-back')
-  @Can('complaints.complaints.approve')
-  @HttpCode(200)
-  sendBack(
-    @CurrentUser() user: AuthUser,
-    @CurrentAccess() access: AccessContext,
-    @Param('id', new ParseUUIDPipe()) id: string,
-    @Body() body: NoteDto,
-  ): Promise<ComplaintDetail> {
-    return this.complaints.sendBack(user, access, id, body.note);
   }
 
   @Post(':id/reassign')

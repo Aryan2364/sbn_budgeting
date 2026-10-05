@@ -7,6 +7,7 @@ import { testTxIdle } from '../support/test-tx';
 import { ROUTES, World, resolveQueries, type BodyContext, type Person, type Variant } from './cases';
 import { USER_LABEL } from './fixtures';
 import { withoutAdditiveKeys, withoutRecordCan } from './intended';
+import { LegacyUndo, UNDONE_ROUTES, type LegacyWorld, type Why } from './legacy-approvals';
 import { legacyActions, type LegacyViewer } from './legacy-complaint-actions';
 import { screenMatrix, type ScreenMatrix } from './legacy-screen-rules';
 import { sampleFor, type Sample } from './sampling';
@@ -38,12 +39,17 @@ export interface CaseResult {
   bytes?: number;
   digest?: string;
   /**
-   * A body with an `actions` map (the complaint detail) only: its digest
-   * with `actions` as the baseline build would have computed it
-   * (legacy-complaint-actions.ts). Not compared itself; intended.ts uses
-   * it to prove a digest difference lies in `actions` alone (D1, D6).
+   * Not compared itself; intended.ts uses it to prove a digest
+   * difference lies only where an intended difference says:
+   *   - a read D8 or D9 changes (legacy-approvals.ts UNDONE_ROUTES): the
+   *     digest of this run's body with D8 and D9 undone (`legacyWhy`
+   *     says which was needed);
+   *   - otherwise a body with an `actions` map (the complaint detail):
+   *     its digest with `actions` as the baseline build would have
+   *     computed it (legacy-complaint-actions.ts), D1.
    */
   legacyDigest?: string;
+  legacyWhy?: Why | 'D1';
   error?: string;
 }
 
@@ -175,6 +181,9 @@ async function send(
   return { status: res.status, contentType, body: parsed, bytes: buf.length };
 }
 
+/** Undoes D8 and D9 on one case's body, when the run has the world before 0013. */
+type UndoFor = ((value: unknown) => Promise<{ value: unknown; why: Why } | null>) | null;
+
 async function runCase(
   harness: HarnessApp,
   token: string | null,
@@ -183,6 +192,7 @@ async function runCase(
   variant: Variant,
   ctx: BodyContext,
   legacyViewer: LegacyViewer | null,
+  undo: UndoFor,
 ): Promise<CaseResult> {
   const query = { ...(variant.query ?? {}) };
   const built: Built = { method, path, query };
@@ -223,12 +233,17 @@ async function runCase(
       out.actions = Object.fromEntries(
         Object.keys(actions).sort().map((k) => [k, Boolean(actions[k]?.allowed)]),
       );
-      if (legacyViewer) {
-        const body = res.body as Parameters<typeof legacyActions>[1] & Record<string, unknown>;
-        out.legacyDigest = digest(
-          withoutRecordCan(withoutAdditiveKeys(path, { ...body, actions: legacyActions(legacyViewer, body) })),
-        );
-      }
+    }
+    const undone = undo ? await undo(res.body) : null;
+    if (undone) {
+      out.legacyDigest = digest(withoutRecordCan(withoutAdditiveKeys(path, undone.value)));
+      out.legacyWhy = undone.why;
+    } else if (out.actions && legacyViewer) {
+      const body = res.body as Parameters<typeof legacyActions>[1] & Record<string, unknown>;
+      out.legacyDigest = digest(
+        withoutRecordCan(withoutAdditiveKeys(path, { ...body, actions: legacyActions(legacyViewer, body) })),
+      );
+      out.legacyWhy = 'D1';
     }
     return out;
   }
@@ -260,6 +275,11 @@ async function runCase(
   if (first && first.aggregates && typeof first.aggregates === 'object') {
     out.aggregates = first.aggregates as Record<string, string>;
   }
+  const undone = undo ? await undo(sortedRows) : null;
+  if (undone) {
+    out.legacyDigest = digest(withoutRecordCan(undone.value));
+    out.legacyWhy = undone.why;
+  }
   return out;
 }
 
@@ -271,6 +291,10 @@ function fill(path: string, params: Record<string, string>): string {
 export interface RunOptions {
   /** Only routes whose "METHOD /path" contains this text. */
   only?: string;
+  /** Each person's sample (by id, '' signed out), drawn before migration 0013; else sampled now. */
+  samples?: ReadonlyMap<string, Sample>;
+  /** The complaint world before migration 0013, for the D8 and D9 reconstructions. */
+  legacy?: LegacyWorld;
   onProgress?: (done: number, user: string) => void;
 }
 
@@ -282,6 +306,8 @@ export async function runMatrix(
 ): Promise<MatrixRun> {
   const world = new World(db);
   await resolveQueries(world);
+  const undoer = options.legacy ? new LegacyUndo(options.legacy, db) : null;
+  const undoable = new Set<string>(UNDONE_ROUTES);
   const users = await loadUsers(db);
   const routeKeys = routes.map((r) => `${r.method} ${r.path}`);
   const selected = routeKeys.filter((k) => !options.only || k.includes(options.only));
@@ -290,7 +316,7 @@ export async function runMatrix(
   let userIndex = 0;
   for (const user of users) {
     userIndex += 1;
-    const sample: Sample = await sampleFor(db, user.id);
+    const sample: Sample = options.samples?.get(user.id ?? '') ?? (await sampleFor(db, user.id));
     const token = user.person ? harness.mintToken(user.person) : null;
     // Today's complaints level, for the frozen `actions` (legacy-complaint-actions.ts).
     const legacyViewer: LegacyViewer | null = user.id
@@ -321,6 +347,11 @@ export async function runMatrix(
       }
 
       for (const variant of spec.variants) {
+        const routeVariant = `${routeKey}${variant.name ? ` [${variant.name}]` : ''}`;
+        const undo: UndoFor =
+          undoer && legacyViewer && undoable.has(routeVariant)
+            ? (value) => undoer.undo(routeVariant, legacyViewer, value)
+            : null;
         for (const target of targets) {
           const key =
             `${routeKey}${variant.name ? ` [${variant.name}]` : ''} |${user.label}` +
@@ -330,7 +361,7 @@ export async function runMatrix(
               world,
               user: user.person,
               params: target.params,
-            }, legacyViewer);
+            }, legacyViewer, undo);
             if (target.classes.length > 0) result.classes = target.classes;
             cases[key] = result;
           } catch (error) {

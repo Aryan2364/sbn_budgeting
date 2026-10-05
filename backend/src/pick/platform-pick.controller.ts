@@ -2,7 +2,9 @@ import { BadRequestException, Controller, Get, Inject, Query } from '@nestjs/com
 import type { Pool } from 'pg';
 
 import { type AccessContext, CurrentAccess } from '../access/access-context';
+import { isPermissionKey } from '../access/catalogue';
 import { PickOf } from '../access/decorators';
+import { RoleMapService } from '../access/role-map.service';
 import type { Param } from '../access/scope';
 import { PG_POOL } from '../db/db.module';
 import { designationFilter, type PersonOption } from '../users/users.controller';
@@ -45,8 +47,6 @@ function likePattern(search: string): string {
 export interface DesignationOption {
   id: string;
   name: string;
-  /** The stable identity routing reads ('supervisor', 'hod', ...); null for the rest. */
-  seedKey: string | null;
   isActive: boolean;
 }
 
@@ -58,7 +58,10 @@ export interface LocationOption {
 
 @Controller('pick/platform')
 export class PlatformPickController {
-  constructor(@Inject(PG_POOL) private readonly pool: Pool) {}
+  constructor(
+    @Inject(PG_POOL) private readonly pool: Pool,
+    private readonly roleMap: RoleMapService,
+  ) {}
 
   /**
    * People to choose from: `{ id, name, designationName }` (O10 Q7),
@@ -70,7 +73,10 @@ export class PlatformPickController {
    * shows (kit 27.1). Narrowing filters (plan 5.3.3):
    *   designationId  one designation's people (`none`: nobody's yet);
    *   canReceive     `true`: only people who can take a complaint over,
-   *                  i.e. active and able to sign in (plan 6.2).
+   *                  i.e. active and able to sign in (plan 6.2);
+   *   holds          a permission key: only people one of whose roles
+   *                  grants it at some scope (reassign asks for
+   *                  complaints.complaints.work, who can start and resolve).
    */
   @PickOf('platform.people')
   @Get('people')
@@ -79,10 +85,16 @@ export class PlatformPickController {
     @Query('q') q?: unknown,
     @Query('designationId') designationId?: unknown,
     @Query('canReceive') canReceive?: unknown,
+    @Query('holds') holds?: unknown,
   ): Promise<PersonOption[]> {
     const search = one(q, 'q')?.trim();
     const designation = one(designationId, 'designationId');
     const receivers = flag(canReceive, 'canReceive');
+    const key = one(holds, 'holds');
+    if (key !== undefined && !isPermissionKey(key)) {
+      throw new BadRequestException(`holds must be a permission key, like complaints.complaints.work.`);
+    }
+    const holders = key === undefined ? null : this.roleMap.rolesHolding(key);
     return runPickQuery<PersonOption>(this.pool, access, {
       section: 'platform.people',
       from: 'users u left join designations d on d.id = u.designation_id',
@@ -93,6 +105,9 @@ export class PlatformPickController {
         const out: string[] = [];
         if (designation) out.push(designationFilter(designation, param));
         if (receivers) out.push('u.active and u.can_login');
+        if (holders) {
+          out.push(`exists (select 1 from user_roles hur where hur.user_id = u.id and hur.role_id = any(${param(holders)}::uuid[]))`);
+        }
         // Searched here rather than through runPickQuery's `q`, which
         // matches the name only: the designation is on the option too.
         if (search) {
@@ -124,7 +139,7 @@ export class PlatformPickController {
         section: 'platform.designations',
         from: 'designations d',
         alias: 'd',
-        select: 'd.id, d.name, d.seed_key as "seedKey", d.is_active as "isActive"',
+        select: 'd.id, d.name, d.is_active as "isActive"',
         nameSql: 'd.name',
         where: () => (all ? [] : ['d.is_active']),
       },

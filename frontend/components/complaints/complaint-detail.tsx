@@ -32,12 +32,7 @@ import { toast } from "@/components/ui/sonner"
 import { RecordBreadcrumb } from "@/components/forms/record-breadcrumb"
 import { PageHeader, PageScroller } from "@/components/templates/page"
 import { DetailColumns, DetailField, DetailFieldList } from "@/components/templates/detail-page"
-import {
-  ApproveDialog,
-  ReassignDialog,
-  ResolveDialog,
-  SendBackDialog,
-} from "@/components/complaints/action-dialogs"
+import { ReassignDialog, ResolveDialog } from "@/components/complaints/action-dialogs"
 import { PhotoGrid } from "@/components/complaints/photos"
 import { ageLabel, ComplaintStatusBadge } from "@/components/complaints/status"
 import { Timeline } from "@/components/complaints/timeline"
@@ -60,17 +55,14 @@ import { Timeline } from "@/components/complaints/timeline"
  *
  * Which actions are shown depends only on the status (the next steps
  * of the work); whether each is usable depends only on `actions`.
- * Approve and Send back are never shown for a category that needs no
- * approval: they do not exist for it (26 rule 1 applied to an action
- * that can never apply, rather than one this person may not take).
+ * Resolving closes the complaint.
  */
 
-type DialogName = "resolve" | "approve" | "sendBack" | "reassign"
+type DialogName = "resolve" | "reassign"
 
 const STEPS: Record<ComplaintStatus, ActionName[]> = {
   open: ["start", "resolve", "reassign"],
   in_progress: ["resolve", "reassign"],
-  awaiting_approval: ["approve", "sendBack", "reassign"],
   closed: [],
 }
 
@@ -78,7 +70,6 @@ const STEPS: Record<ComplaintStatus, ActionName[]> = {
 const PRIMARY: Record<ComplaintStatus, ActionName | null> = {
   open: "resolve",
   in_progress: "resolve",
-  awaiting_approval: "approve",
   closed: null,
 }
 
@@ -87,14 +78,12 @@ const PRIMARY: Record<ComplaintStatus, ActionName | null> = {
  * Kit 26.5 rule 2: a record action is enabled only when the person holds
  * its key AND the complaint's own answer is yes. The complaint's answer
  * is still its `actions` map until P5 merges it into `can`; whether this
- * person is the supervisor or the approver here is the workflow's call,
- * never the browser's.
+ * person is the supervisor here is the workflow's call, never the
+ * browser's.
  */
 const ACTION_KEY: Record<ActionName, PermissionKey> = {
   start: "complaints.complaints.work",
   resolve: "complaints.complaints.work",
-  approve: "complaints.complaints.approve",
-  sendBack: "complaints.complaints.approve",
   reassign: "complaints.complaints.reassign",
   comment: "complaints.complaints.comment",
 }
@@ -102,8 +91,6 @@ const ACTION_KEY: Record<ActionName, PermissionKey> = {
 const LABEL: Record<ActionName, string> = {
   start: "Start work",
   resolve: "Resolve",
-  approve: "Approve",
-  sendBack: "Send back",
   reassign: "Reassign",
   comment: "Add comment",
 }
@@ -250,9 +237,7 @@ export function ComplaintDetailPage({ id }: { id: string }) {
     )
   }
 
-  const steps = STEPS[detail.status].filter(
-    (name) => detail.requiresApproval || (name !== "approve" && name !== "sendBack"),
-  )
+  const steps = STEPS[detail.status]
   const raisePhotos = detail.photos.filter((p) => p.stage === "raise")
   const resolvePhotos = detail.photos.filter((p) => p.stage === "resolve")
 
@@ -449,17 +434,6 @@ export function ComplaintDetailPage({ id }: { id: string }) {
                 <dl className="flex flex-col gap-4">
                   <Routed label="Supervisor" person={detail.supervisor} />
                   <Routed label="Manager" person={detail.manager} />
-                  <Routed label="HOD" person={detail.hod} />
-                  <Routed label="CEO" person={detail.ceo} />
-                  <DetailField label="Approver">
-                    {detail.requiresApproval ? (
-                      (detail.approver?.name ?? "Nobody")
-                    ) : (
-                      <span className="font-normal text-text-secondary">
-                        No approval needed for {detail.category.name}
-                      </span>
-                    )}
-                  </DetailField>
                 </dl>
               </CardContent>
             </Card>
@@ -485,10 +459,6 @@ export function ComplaintDetailPage({ id }: { id: string }) {
 
       {dialog === "resolve" ? (
         <ResolveDialog complaint={detail} onClose={() => setDialog(null)} onDone={apply} onRefresh={refresh} />
-      ) : dialog === "approve" ? (
-        <ApproveDialog complaint={detail} onClose={() => setDialog(null)} onDone={apply} onRefresh={refresh} />
-      ) : dialog === "sendBack" ? (
-        <SendBackDialog complaint={detail} onClose={() => setDialog(null)} onDone={apply} onRefresh={refresh} />
       ) : dialog === "reassign" ? (
         <ReassignDialog complaint={detail} onClose={() => setDialog(null)} onDone={apply} onRefresh={refresh} />
       ) : null}
@@ -508,20 +478,9 @@ function when(value: string | null): React.ReactNode {
   return value ? formatDateTime(value) : <span className="font-normal text-text-secondary">Not yet</span>
 }
 
-/** ", with copies to Suresh (manager), Anita (HOD) and the CEO". */
+/** ", with a copy to Suresh (manager)". */
 function copies(detail: ComplaintDetail): string {
-  const seen = new Set([detail.supervisor.id, detail.raisedBy.id])
-  const parts: string[] = []
-  for (const [person, role] of [
-    [detail.manager, "manager"],
-    [detail.hod, "HOD"],
-    [detail.ceo, "CEO"],
-  ] as const) {
-    if (!person || seen.has(person.id)) continue
-    seen.add(person.id)
-    parts.push(`${person.name} (${role})`)
-  }
-  if (parts.length === 0) return ""
-  const list = parts.length === 1 ? parts[0] : `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`
-  return `, with copies to ${list}`
+  const manager = detail.manager
+  if (!manager || manager.id === detail.supervisor.id || manager.id === detail.raisedBy.id) return ""
+  return `, with a copy to ${manager.name} (manager)`
 }

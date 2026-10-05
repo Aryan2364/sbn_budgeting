@@ -245,7 +245,7 @@ describe('platform scope through the real routes (P3b)', { skip: dbTestsEnabled 
   it('designations and locations Picks: everyone, active only unless includeInactive, declared fields', async () => {
     const d = await call('/pick/platform/designations?q=Pick', 'outsider');
     assert.equal(d.status, 200);
-    assert.deepEqual(d.body, [{ id: SUPERVISOR, name: 'Pick Supervisor', seedKey: null, isActive: true }]);
+    assert.deepEqual(d.body, [{ id: SUPERVISOR, name: 'Pick Supervisor', isActive: true }]);
     const dAll = await call('/pick/platform/designations?q=Pick&includeInactive=true', 'outsider');
     assert.deepEqual(dAll.body.map((r: { name: string; isActive: boolean }) => [r.name, r.isActive]), [
       ['Pick Retired', false], ['Pick Supervisor', true],
@@ -258,10 +258,10 @@ describe('platform scope through the real routes (P3b)', { skip: dbTestsEnabled 
     assert.deepEqual(lAll.body.map((r: { name: string }) => r.name), ['Pick North', 'Pick Old Place']);
   });
 
-  it('designations Pick: carries the routing seed keys the screens find their defaults by', async () => {
+  it('designations Pick: a label only, with no seed key for a screen to branch on (A2)', async () => {
     const res = await call('/pick/platform/designations', 'outsider');
-    const keys = res.body.map((r: { seedKey: string | null }) => r.seedKey).filter(Boolean);
-    assert.ok(keys.includes('supervisor') && keys.includes('hod'), keys.join(','));
+    assert.equal(res.status, 200);
+    for (const row of res.body) assert.deepEqual(Object.keys(row).sort(), ['id', 'isActive', 'name']);
   });
 
   // ---- the people list and record -------------------------------------

@@ -48,8 +48,8 @@ export const RECORD_TYPES: readonly RecordType[] = [
   'person',
 ];
 
-/** The six people a complaint names (Own, plan 6.1.4). */
-const COMPLAINT_PEOPLE = ['raised_by', 'supervisor_id', 'manager_id', 'hod_id', 'ceo_id', 'approver_id'] as const;
+/** The people a complaint names (Own, plan 6.1.4): its raiser, and the site's supervisor and manager. */
+const COMPLAINT_PEOPLE = ['raised_by', 'supervisor_id', 'manager_id'] as const;
 
 /** A column name from the catalogue; refused if it is anything but a bare identifier. */
 function column(name: string): string {
@@ -75,7 +75,7 @@ function setsFor(me: string) {
 type Sets = ReturnType<typeof setsFor>;
 type NarrowScope = Exclude<Scope, 'all'>;
 
-/** The action's extra "mine" columns (complaint reassign: manager_id, hod_id). */
+/** The action's narrower "mine" columns (complaint reassign: manager_id). */
 function ownColumnsOf(key: PermissionKey): readonly string[] | undefined {
   const info = keyInfo(key);
   const action = key.split('.')[2];
@@ -133,7 +133,7 @@ function predicate(
 
     case 'complaint': {
       const people = COMPLAINT_PEOPLE.map((c) => `${a}.${c}`);
-      // An action may narrow what makes a complaint "mine" (reassign: manager or HOD, O6).
+      // An action may narrow what makes a complaint "mine" (reassign: its manager, O6).
       const mine = (ownColumns ?? COMPLAINT_PEOPLE).map((c) => `${a}.${column(c)}`);
       // coalesce: `x in (a, null)` is null, not false, when nothing matches.
       const own = `coalesce(${me} in (${mine.join(', ')}), false)`;
@@ -141,7 +141,7 @@ function predicate(
         case 'own':
           return own;
         case 'team':
-          // Any of the six in my team, or the complaint's site is a team site.
+          // Any of its people in my team, or the complaint's site is a team site.
           return `(${people.map((p) => `${p} in ${sets.TEAM}`).join(' or ')} or ${a}.site_id in ${sets.TEAM_UNITS})`;
         case 'units':
           // Site-less legacy complaints match Own and All only (O10 Q9).
@@ -284,7 +284,7 @@ export function recordReason(ctx: AccessContext, key: PermissionKey, record: Rec
   const ownColumns = record === 'complaint' ? ownColumnsOf(key) : undefined;
   const own =
     ownColumns && ownColumns.length
-      ? `if you are their ${ownColumns.map((c) => c.replace(/_id$/, '').replace('hod', 'HOD')).join(' or ')}`
+      ? `if you are their ${ownColumns.map((c) => c.replace(/_id$/, '')).join(' or ')}`
       : OWN_PHRASE[record];
   const phrases: string[] = [];
   if (held.has('own')) phrases.push(own);

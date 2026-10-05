@@ -11,7 +11,6 @@ import {
   complaintsApi,
   type ComplaintSiteOption,
 } from "@/lib/complaints-api"
-import type { CategoryPick } from "@/lib/api"
 import { useCan } from "@/lib/permissions"
 import { errorMessage, useSession } from "@/components/shell/session"
 import { Banner, BannerAction, BannerDescription, BannerTitle } from "@/components/ui/banner"
@@ -79,7 +78,7 @@ const PHONE_TEXT = "max-sm:text-base"
 const GU = {
   // Page
   title: "ફરિયાદ નોંધાવો",
-  meta: "આ ફરિયાદ સીધી સાઇટના સુપરવાઇઝરને જશે. તેની નકલ તેમના મેનેજર, HOD અને CEO ને પણ જશે.",
+  meta: "આ ફરિયાદ સીધી સાઇટના સુપરવાઇઝરને જશે. તેની નકલ તેમના મેનેજરને પણ જશે.",
   breadcrumbLabel: "પેજનો માર્ગ",
 
   // Masters failed to load
@@ -121,8 +120,6 @@ const GU = {
     `${site} માટે સુપરવાઇઝર નથી, તેથી ફરિયાદ નહીં પહોંચે. બીજી સાઇટ પસંદ કરો.`,
 
   // Category field
-  needsApproval: (approver: string) => `આ ફરિયાદ બંધ કરવા માટે ${approver} ની મંજૂરી જોઈશે.`,
-  closesDirectly: "સુપરવાઇઝર કામ પૂરું કરે એટલે ફરિયાદ સીધી બંધ થઈ જશે.",
   categoryPlaceholder: "ફરિયાદનો પ્રકાર પસંદ કરો",
   categorySearch: "ફરિયાદનો પ્રકાર શોધો",
   categoryNoMatch: "આ નામનો કોઈ ફરિયાદનો પ્રકાર મળ્યો નથી. બીજું નામ લખીને શોધો.",
@@ -309,9 +306,6 @@ export function RaiseComplaintForm() {
   const categoryOptions = categories.map((c) => ({ value: c.id, label: c.name }))
 
   const site: ComplaintSiteOption | undefined = sites.find((s) => s.id === values.siteId)
-  const category: CategoryPick | undefined = categories.find(
-    (c) => c.id === values.categoryId,
-  )
 
   // ---- submit -------------------------------------------------------
   async function submit(event: React.FormEvent) {
@@ -510,13 +504,6 @@ export function RaiseComplaintForm() {
                   required
                   htmlFor="raise-categoryId"
                   error={errors.categoryId}
-                  hint={
-                    category
-                      ? category.requiresApproval
-                        ? GU.needsApproval(category.approverDesignation?.name ?? "HOD")
-                        : GU.closesDirectly
-                      : undefined
-                  }
                 >
                   <Choice
                     id="raise-categoryId"

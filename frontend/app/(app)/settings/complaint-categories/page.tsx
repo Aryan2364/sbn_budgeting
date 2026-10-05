@@ -2,7 +2,7 @@
 
 import * as React from "react"
 
-import { pick, type DesignationPick, type Matchable } from "@/lib/api"
+import type { Matchable } from "@/lib/api"
 import { formatNumber } from "@/lib/format"
 import {
   categoriesApi,
@@ -36,17 +36,14 @@ import {
   MasterSection,
   useMasterRows,
 } from "@/components/forms/master-section"
-import { Choice } from "@/components/complaints/choice"
 
 /**
  * Settings → Complaint categories (CONTRACT §3, plan 3.5). The
  * cost-heads pattern: a paged master list, one Add/Edit dialog
  * (section 4 rule 1), and a delete checked before it is offered.
  *
- * Each category says whether closing a complaint in it needs approval,
- * and from which designation (HOD when none is chosen — the server's
- * default). A category that complaints already use is deactivated,
- * never deleted (15.2): its delete is disabled with the reason, or,
+ * A category that complaints already use is deactivated, never
+ * deleted (15.2): its delete is disabled with the reason, or,
  * while it is still active, opens the explanation with Deactivate as
  * its action.
  *
@@ -73,7 +70,6 @@ export default function ComplaintCategoriesSettingsPage() {
   )
   const exportColumns: ExportColumn<ComplaintCategory>[] = [
     { header: "Name", cell: (row) => row.name },
-    { header: "Approval", cell: (row) => approvalText(row) },
     {
       header: "Complaints",
       cell: (row) => formatNumber(row.complaintCount),
@@ -87,7 +83,7 @@ export default function ComplaintCategoriesSettingsPage() {
     <>
       <MasterSection<ComplaintCategory & Matchable>
         title="Complaint categories"
-        description="Every complaint is raised in a category. The category decides whether closing it needs someone's approval."
+        description="Every complaint is raised in a category."
         createLabel="Add category"
         canEdit={canEdit}
         cannotEditReason={reasonFor("complaints.categories.manage")}
@@ -102,11 +98,6 @@ export default function ComplaintCategoriesSettingsPage() {
         exportList={{ title: "Complaint categories", columns: exportColumns, fetchPage: exportFetchPage }}
         columns={[
           { key: "name", label: "Name", render: (row) => <Truncate>{row.name}</Truncate> },
-          {
-            key: "approval",
-            label: "Approval",
-            render: (row) => <Truncate>{approvalText(row)}</Truncate>,
-          },
           {
             key: "complaintCount",
             label: "Complaints",
@@ -145,12 +136,7 @@ export default function ComplaintCategoriesSettingsPage() {
             ? {
                 label: "Deactivate category",
                 run: async () => {
-                  await categoriesApi.update(row.id, {
-                    name: row.name,
-                    isActive: false,
-                    requiresApproval: row.requiresApproval,
-                    approverDesignationId: row.approverDesignation?.id ?? null,
-                  })
+                  await categoriesApi.update(row.id, { name: row.name, isActive: false })
                 },
                 done: `${row.name} deactivated`,
               }
@@ -183,12 +169,6 @@ export default function ComplaintCategoriesSettingsPage() {
   )
 }
 
-function approvalText(row: ComplaintCategory): string {
-  return row.requiresApproval
-    ? `Needs approval by ${row.approverDesignation?.name ?? "HOD"}`
-    : "No approval needed"
-}
-
 /** Add and Edit, one dialog (section 4 rule 1). */
 function CategoryDialog({
   category,
@@ -204,13 +184,10 @@ function CategoryDialog({
     () => ({
       name: category?.name ?? "",
       isActive: category?.isActive ?? true,
-      requiresApproval: category?.requiresApproval ?? true,
-      approverDesignationId: category?.approverDesignation?.id ?? "",
     }),
     [category],
   )
   const [values, setValues] = React.useState(saved)
-  const [designations, setDesignations] = React.useState<DesignationPick[] | null>(null)
   const [saving, setSaving] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
   const [nameError, setNameError] = React.useState<string | null>(null)
@@ -221,34 +198,6 @@ function CategoryDialog({
     mode: isEdit ? "edit" : "create",
   })
 
-  React.useEffect(() => {
-    let cancelled = false
-    // Choosing, not listing: the designations Pick (access plan P7
-    // inventory 10), which every signed-in person holds. The full list
-    // is Settings › Designations, under manage (D3).
-    // Retired ones too, so a category whose approver was retired still
-    // reads it; the options below offer active ones plus that one.
-    pick
-      .designations({ includeInactive: true })
-      .then((rows) => {
-        if (!cancelled) setDesignations(rows)
-      })
-      .catch(() => {
-        if (!cancelled) setDesignations([])
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [])
-
-  // The default approver, shown rather than left blank, so "HOD unless
-  // changed" is visible on the form.
-  const hod = designations?.find((d) => d.seedKey === "hod")
-  const approverId = values.approverDesignationId || hod?.id || ""
-  const approverOptions = (designations ?? [])
-    .filter((d) => d.isActive || d.id === approverId)
-    .map((d) => ({ value: d.id, label: d.name }))
-
   const checkName = (name = values.name) => (name.trim() ? null : "Enter the category name")
 
   async function save() {
@@ -258,8 +207,6 @@ function CategoryDialog({
 
     const body: ComplaintCategoryBody = {
       name: values.name.trim(),
-      requiresApproval: values.requiresApproval,
-      approverDesignationId: values.requiresApproval ? approverId || null : null,
       ...(isEdit ? { isActive: values.isActive } : {}),
     }
     setSaving(true)
@@ -315,44 +262,6 @@ function CategoryDialog({
                 />
                 <InlineFieldError>{nameError}</InlineFieldError>
               </div>
-
-              <div className="flex items-start gap-3">
-                <Switch
-                  id="category-approval"
-                  checked={values.requiresApproval}
-                  onCheckedChange={(checked: boolean) =>
-                    setValues((v) => ({ ...v, requiresApproval: checked }))
-                  }
-                />
-                <div className="min-w-0">
-                  <Label htmlFor="category-approval">Closing needs approval</Label>
-                  <p className="mt-1 text-label text-text-secondary">
-                    {values.requiresApproval
-                      ? "When the supervisor resolves a complaint, it waits for the approver below before it closes."
-                      : "The supervisor's resolve closes the complaint straight away."}
-                  </p>
-                </div>
-              </div>
-
-              {values.requiresApproval ? (
-                <div className="flex flex-col gap-2">
-                  <Label htmlFor="category-approver" required>
-                    Approved by
-                  </Label>
-                  <Choice
-                    id="category-approver"
-                    options={approverOptions}
-                    value={approverId}
-                    onValueChange={(v) => setValues((s) => ({ ...s, approverDesignationId: v }))}
-                    placeholder={designations === null ? "Loading designations" : "Choose a designation"}
-                    searchPlaceholder="Search designations"
-                    disabled={designations === null}
-                  />
-                  <p className="text-label text-text-secondary">
-                    The first person with this designation above the supervisor approves it.
-                  </p>
-                </div>
-              ) : null}
 
               {isEdit ? (
                 <div className="flex items-start gap-3">

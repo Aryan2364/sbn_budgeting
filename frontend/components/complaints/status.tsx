@@ -1,5 +1,5 @@
 import * as React from "react"
-import { CircleCheckIcon, CircleDotIcon, ClockIcon, HourglassIcon } from "lucide-react"
+import { CircleCheckIcon, CircleDotIcon, ClockIcon } from "lucide-react"
 
 import type { ComplaintStatus } from "@/lib/complaints-api"
 import { formatNumber } from "@/lib/format"
@@ -14,7 +14,6 @@ import { Badge } from "@/components/ui/badge"
  * |-------------------|---------|--------------------------------------------|
  * | Open              | warning | Waiting for the supervisor — "Pending".    |
  * | In progress       | neutral | EXCEPTION, recorded below.                 |
- * | Awaiting approval | warning | "Needs review", the 2.4 column verbatim.   |
  * | Closed            | success | "Completed", the 2.4 column verbatim.      |
  *
  * **Recorded exception (2.4), fe-complaints, 30 Sep 2026.** Label
@@ -34,21 +33,11 @@ export const STATUS_META: Record<
 > = {
   open: { label: "Open", variant: "warning", icon: <CircleDotIcon /> },
   in_progress: { label: "In progress", variant: "neutral", icon: <ClockIcon /> },
-  awaiting_approval: {
-    label: "Awaiting approval",
-    variant: "warning",
-    icon: <HourglassIcon />,
-  },
   closed: { label: "Closed", variant: "success", icon: <CircleCheckIcon /> },
 }
 
 /** In the order the work moves. Filters and the dashboard use it. */
-export const STATUS_ORDER: ComplaintStatus[] = [
-  "open",
-  "in_progress",
-  "awaiting_approval",
-  "closed",
-]
+export const STATUS_ORDER: ComplaintStatus[] = ["open", "in_progress", "closed"]
 
 export function statusLabel(status: string): string {
   return STATUS_META[status as ComplaintStatus]?.label ?? status

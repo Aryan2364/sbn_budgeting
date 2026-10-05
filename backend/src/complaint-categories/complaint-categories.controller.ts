@@ -1,11 +1,9 @@
 import {
   Body, ConflictException, Controller, Delete, Get, HttpCode, Inject, Param, ParseUUIDPipe,
-  Patch, Post, Query, UnprocessableEntityException,
+  Patch, Post, Query,
 } from '@nestjs/common';
-import {
-  IsBoolean, IsOptional, IsString, IsUUID, MinLength, ValidateIf,
-} from 'class-validator';
-import type { Pool, PoolClient } from 'pg';
+import { IsBoolean, IsOptional, IsString, MinLength } from 'class-validator';
+import type { Pool } from 'pg';
 
 import { Can } from '../access/decorators';
 import {
@@ -27,15 +25,6 @@ export class ComplaintCategoryDto {
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
-
-  @IsBoolean({ message: 'Say whether closing a complaint in this category needs approval' })
-  requiresApproval!: boolean;
-
-  /** Omitted on create, or null: the HOD designation (CONTRACT section 3). */
-  @IsOptional()
-  @ValidateIf((_o, v) => v !== null)
-  @IsUUID('all', { message: 'Choose the approver designation from the list' })
-  approverDesignationId?: string | null;
 }
 
 export interface ComplaintCategoryRow {
@@ -44,8 +33,6 @@ export interface ComplaintCategoryRow {
   /** Internal and never shown or set by anyone; kept so the row shape is unchanged. */
   sortOrder: number;
   isActive: boolean;
-  requiresApproval: boolean;
-  approverDesignation: { id: string; name: string } | null;
   /** DELETE refuses while this is above 0, so the screen can say so first. */
   complaintCount: number;
 }
@@ -64,7 +51,6 @@ export class ComplaintCategoriesController {
 
   private static readonly FROM = `
     complaint_categories cc
-    left join designations ad on ad.id = cc.approver_designation_id
     left join lateral (
       select count(*)::int as complaint_count from complaints c
       /*scope-exempt: a master's usage count on the full category list (complaints.categories.manage, All only, D3); no complaint is returned*/
@@ -73,9 +59,6 @@ export class ComplaintCategoriesController {
 
   private static readonly SELECT = `
     cc.id, cc.name, cc.sort_order as "sortOrder", cc.is_active as "isActive",
-    cc.requires_approval as "requiresApproval",
-    case when ad.id is null then null
-         else json_build_object('id', ad.id, 'name', ad.name) end as "approverDesignation",
     u.complaint_count as "complaintCount"`;
 
   @Get()
@@ -92,13 +75,10 @@ export class ComplaintCategoriesController {
         from: S.FROM,
         select: S.SELECT,
         titleField: { sql: 'cc.name', label: 'Name' },
-        // The approver designation is searchable because an admin asks
-        // "which categories go to the CEO?".
-        searchFields: [{ sql: 'ad.name', label: 'Approver' }],
+        searchFields: [],
         sortable: {
           name: 'cc.name',
           isActive: 'cc.is_active',
-          requiresApproval: 'cc.requires_approval',
           complaintCount: 'u.complaint_count',
         },
         defaultSort: { key: 'name', direction: 'asc' },
@@ -125,48 +105,30 @@ export class ComplaintCategoriesController {
   @Post()
   @Can('complaints.categories.manage')
   async create(@Body() body: ComplaintCategoryDto): Promise<ComplaintCategoryRow> {
-    const approverId = body.approverDesignationId ?? (await this.hodDesignationId(this.pool));
     const id = await this.translate(body, async () => {
       const { rows } = await this.pool.query<{ id: string }>(
-        `insert into complaint_categories
-           (name, sort_order, is_active, requires_approval, approver_designation_id)
-         values ($1, (select coalesce(max(sort_order), 0) + 1 from complaint_categories),
-                 coalesce($2, true), $3, $4)
+        `insert into complaint_categories (name, sort_order, is_active)
+         values ($1, (select coalesce(max(sort_order), 0) + 1 from complaint_categories), coalesce($2, true))
          returning id`,
-        [body.name.trim(), body.isActive ?? null, body.requiresApproval, approverId],
+        [body.name.trim(), body.isActive ?? null],
       );
       return rows[0]!.id;
     });
     return this.get(id);
   }
 
-  /**
-   * An omitted approverDesignationId keeps the current one; an explicit
-   * null resets it to the HOD default.
-   */
   @Patch(':id')
   @Can('complaints.categories.manage')
   async update(
     @Param('id', new ParseUUIDPipe()) id: string,
     @Body() body: ComplaintCategoryDto,
   ): Promise<ComplaintCategoryRow> {
-    const approverId =
-      body.approverDesignationId === undefined
-        ? undefined
-        : (body.approverDesignationId ?? (await this.hodDesignationId(this.pool)));
     await this.translate(body, () =>
       findOneOrFail(
         this.pool,
-        `update complaint_categories
-         set name = $1,
-             is_active = coalesce($2, is_active),
-             requires_approval = $3,
-             approver_designation_id = case when $4::boolean then $5::uuid else approver_designation_id end
-         where id = $6 returning id`,
-        [
-          body.name.trim(), body.isActive ?? null, body.requiresApproval,
-          approverId !== undefined, approverId ?? null, id,
-        ],
+        `update complaint_categories set name = $1, is_active = coalesce($2, is_active)
+         where id = $3 returning id`,
+        [body.name.trim(), body.isActive ?? null, id],
         'complaint category',
       ),
     );
@@ -197,29 +159,12 @@ export class ComplaintCategoriesController {
     }
   }
 
-  private async hodDesignationId(db: Pool | PoolClient): Promise<string> {
-    const { rows } = await db.query<{ id: string }>(
-      `select id from designations where seed_key = 'hod'`,
-    );
-    if (!rows[0]) {
-      throw new UnprocessableEntityException(
-        'There is no HOD designation to default the approver to. Choose an approver designation.',
-      );
-    }
-    return rows[0].id;
-  }
-
   private async translate<T>(body: ComplaintCategoryDto, run: () => Promise<T>): Promise<T> {
     try {
       return await run();
     } catch (error) {
       if (isPgError(error, PG_UNIQUE_VIOLATION)) {
         throw new ConflictException(`There is already a complaint category called "${body.name.trim()}".`);
-      }
-      if (isPgError(error, PG_FOREIGN_KEY_VIOLATION)) {
-        throw new UnprocessableEntityException(
-          'That approver designation no longer exists. Choose another one.',
-        );
       }
       throw error;
     }

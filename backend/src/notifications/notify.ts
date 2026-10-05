@@ -10,16 +10,13 @@ import type { PoolClient } from 'pg';
  *   - nobody is notified twice for one action (first kind listed wins,
  *     so list the most specific recipient first);
  *   - the person who took the action is never notified of it;
- *   - null recipients (no manager, no hod) are skipped.
+ *   - null recipients (no manager) are skipped.
  */
 
 export type NotificationKind =
   | 'assigned'         // you are the supervisor now
-  | 'copied'           // you are the manager / hod / ceo on a new complaint
-  | 'approval_needed'  // resolved, waiting for you to approve
-  | 'closed'           // your complaint was closed
-  | 'approved'         // the approver closed a complaint you resolved or raised
-  | 'sent_back'        // the approver returned your fix
+  | 'copied'           // you are the manager on a new complaint
+  | 'closed'           // your complaint was resolved, which closes it
   | 'reassigned_away'; // the complaint moved from you to someone else
 
 export interface Recipient {
