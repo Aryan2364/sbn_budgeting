@@ -615,6 +615,7 @@ function PersonDialog({
   const unsaved = useUnsavedChanges({
     changed: isChanged(values, saved) || rolesChanged,
     noun: "person",
+    mode: isEdit ? "edit" : "create",
   })
 
   const set = <K extends keyof PersonValues>(key: K, value: PersonValues[K]) =>

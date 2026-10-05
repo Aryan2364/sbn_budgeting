@@ -144,12 +144,16 @@ const GU = {
     `${site ?? "આ સાઇટ"} માટે હજી કોઈ સુપરવાઇઝર નથી, તેથી આ ફરિયાદ કોઈને પહોંચશે નહીં. બીજી સાઇટ પસંદ કરો.`,
 }
 
-/** The leave-without-saving dialog. */
+/**
+ * The leave warning, in its create wording: nothing exists until the
+ * complaint is submitted, and there is no draft to save
+ * (KIT-PENDING-leave-warning.md).
+ */
 const GU_UNSAVED: UnsavedChangesText = {
-  title: "સાચવ્યા વગર બહાર જવું છે?",
-  description: () => "આ ફરિયાદમાં તમે ભરેલી માહિતી જતી રહેશે.",
-  stay: "અહીં જ રહો",
-  leave: "સાચવ્યા વગર બહાર જાઓ",
+  title: "આ ફરિયાદ છોડી દેવી છે?",
+  description: "તમે ભરેલી માહિતી જતી રહેશે.",
+  stay: "ભરવાનું ચાલુ રાખો",
+  leave: "છોડી દો",
 }
 
 /** The photo upload's own words (it stays English on other screens). */
@@ -282,6 +286,7 @@ export function RaiseComplaintForm() {
   const unsaved = useUnsavedChanges({
     changed: !done && (isChanged(values, initial) || photos.length > 0),
     noun: "complaint",
+    mode: "create",
     text: GU_UNSAVED,
   })
 

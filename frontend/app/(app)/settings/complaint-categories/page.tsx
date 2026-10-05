@@ -215,7 +215,11 @@ function CategoryDialog({
   const [error, setError] = React.useState<string | null>(null)
   const [nameError, setNameError] = React.useState<string | null>(null)
 
-  const unsaved = useUnsavedChanges({ changed: isChanged(values, saved) && !saving, noun: "category" })
+  const unsaved = useUnsavedChanges({
+    changed: isChanged(values, saved) && !saving,
+    noun: "category",
+    mode: isEdit ? "edit" : "create",
+  })
 
   React.useEffect(() => {
     let cancelled = false

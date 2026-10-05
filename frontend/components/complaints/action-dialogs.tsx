@@ -123,7 +123,9 @@ function ActionFrame({
   onRefresh: () => void
   children: React.ReactNode
 }) {
-  const unsaved = useUnsavedChanges({ changed: changed && !saving, noun: "complaint" })
+  // Nothing is kept until the action is submitted, so the create
+  // wording: "Leave this form?" (KIT-PENDING-leave-warning.md).
+  const unsaved = useUnsavedChanges({ changed: changed && !saving, noun: "form", mode: "create" })
   const setOpen = (open: boolean) => {
     if (!open) onClose()
   }

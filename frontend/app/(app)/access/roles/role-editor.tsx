@@ -318,7 +318,12 @@ export function RoleEditor({ roleId, fromId }: { roleId?: string; fromId?: strin
   }, [sourceId, isEdit, attempt])
 
   const changed = !readOnly && isChanged(values, saved)
-  const unsaved = useUnsavedChanges({ changed: changed && !saving, noun: "role" })
+  // New and Duplicate are create: nothing exists until Save.
+  const unsaved = useUnsavedChanges({
+    changed: changed && !saving,
+    noun: "role",
+    mode: isEdit ? "edit" : "create",
+  })
 
   async function submit(event: React.FormEvent) {
     event.preventDefault()
