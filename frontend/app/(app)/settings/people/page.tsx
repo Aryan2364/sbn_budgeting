@@ -16,8 +16,9 @@ import {
   type PersonPick,
   type PersonBody,
 } from "@/lib/api"
-import { reasonFor, useCan } from "@/lib/permissions"
-import { ACCESS_PATHS } from "@/lib/access-api"
+import { reasonFor, useCan, usePermissions } from "@/lib/permissions"
+import { ACCESS_PATHS, accessApi, byRoleOrder, type Named } from "@/lib/access-api"
+import { useAnswer } from "@/components/access/url-list"
 import { formatNumber } from "@/lib/format"
 import { errorMessage, useSession } from "@/components/shell/session"
 import { toast } from "@/components/ui/sonner"
@@ -47,7 +48,9 @@ import {
 import { Switch } from "@/components/ui/switch"
 import { Truncate } from "@/components/ui/truncate"
 import { isChanged, useUnsavedChanges } from "@/components/ui/unsaved-changes"
+import { MultiSelect } from "@/components/ui/multi-select"
 import { PermissionTooltip } from "@/components/ui/permission-tooltip"
+import { TextLink } from "@/components/ui/text-link"
 import type { ExportColumn } from "@/lib/pdf-export"
 import { FormError } from "@/components/forms/form-error"
 import { FilterChip } from "@/components/forms/expense-filter"
@@ -99,10 +102,11 @@ const loadDesignations = () => pick.designations({ includeInactive: true })
  * ONE list of people. Office staff sign in; a supervisor in the field
  * may sign in by phone; a manager named on a site may never sign in at
  * all. What each person is (designation) and who they report to live
- * here. What they may do does not: roles and selected sites are set on
- * the Access screens (kit 40.6 rule 9, access plan P10), which this
- * dialog links to. The old per-module selects are gone with the
- * compatibility shim they fed.
+ * here, and so do their roles, for someone who manages access (owner
+ * request, 5 Oct 2026; a departure from kit 40.6 rule 9 recorded in
+ * KIT-PENDING-person-roles.md). Selected sites stay on the Access
+ * screens, which this dialog links to. The old per-module selects are
+ * gone with the compatibility shim they fed.
  *
  * People have no locations (removed 1 Oct 2026, user decision):
  * complaints route by the budget site, which names its own supervisor
@@ -515,7 +519,10 @@ function valuesOf(person: Person | null): PersonValues {
   }
 }
 
-type FieldKey = "name" | "email" | "phone" | "reportsTo" | "password"
+type FieldKey = "name" | "email" | "phone" | "reportsTo" | "roles" | "password"
+
+/** The same roles, in any order. */
+const sameRoles = (a: string[], b: string[]) => isChanged([...a].sort(), [...b].sort()) === false
 
 function PersonDialog({
   person,
@@ -529,17 +536,19 @@ function PersonDialog({
   onSaved: () => void
 }) {
   const isEdit = person !== null
+  const personId = person?.id
   /**
-   * Who they report to is an access change (O8, access plan P6): the
-   * server needs access.rights.manage for it on top of editing people.
-   * Without it the field is shown, disabled, with the reason (kit 26 rule
-   * 2), and never sent, so the rest of the person still saves. While the
-   * answer is unknown: disabled, no reason (kit 26.1). Roles are not on
-   * this dialog at all; the Access link below goes to them.
+   * Who they report to and their roles are access changes (O8, access
+   * plan P6): the server needs access.rights.manage for them on top of
+   * adding or editing people. Without it both fields are shown,
+   * disabled, with the reason (kit 26 rule 2), and never sent, so the
+   * rest of the person still saves. While the answer is unknown:
+   * disabled, no reason (kit 26.1).
    */
   const canManageAccess = useCan("access.rights.manage")
   const manageAccessReason = reasonFor("access.rights.manage")
   const accessLocked = canManageAccess !== true
+  const { refresh: refreshPermissions } = usePermissions()
   const saved = React.useMemo(() => valuesOf(person), [person])
   const [values, setValues] = React.useState<PersonValues>(saved)
   const [saving, setSaving] = React.useState(false)
@@ -547,12 +556,53 @@ function PersonDialog({
   const [fieldErrors, setFieldErrors] = React.useState<Partial<Record<FieldKey, string | null>>>({})
 
   /**
+   * Roles (owner request, 5 Oct 2026; KIT-PENDING-person-roles.md). The
+   * access API answers only someone who manages access, so nothing is
+   * asked for anyone else, or while that is not known (kit 26.1). The
+   * choices: every role, job roles first, then "+" add-ons (kit 40.2
+   * rule 4). On Edit the roles they hold start chosen; on Add, none.
+   */
+  const manages = canManageAccess === true
+  const roleList = useAnswer(manages ? "roles" : null, () => accessApi.listRoles({ pageSize: 100 }))
+  const heldAccess = useAnswer(manages && personId ? `person:${personId}` : null, () =>
+    accessApi.getPerson(personId ?? ""),
+  )
+  const savedRoleIds = React.useMemo<string[] | null>(() => {
+    if (!isEdit) return []
+    return heldAccess.value ? [...heldAccess.value.roles].sort(byRoleOrder).map((r) => r.id) : null
+  }, [isEdit, heldAccess.value])
+  const [roleIds, setRoleIds] = React.useState<string[] | null>(isEdit ? null : [])
+  // Their held roles start chosen once they arrive (set during render, so
+  // the field never shows empty first).
+  if (roleIds === null && savedRoleIds !== null) setRoleIds(savedRoleIds)
+  const rolesState: "loading" | "ready" | "failed" = !manages
+    ? "loading"
+    : roleList.state === "failed" || (isEdit && heldAccess.state === "failed")
+      ? "failed"
+      : roleList.state === "ready" && roleIds !== null
+        ? "ready"
+        : "loading"
+  const rolesChanged =
+    rolesState === "ready" && roleIds !== null && savedRoleIds !== null && !sameRoles(roleIds, savedRoleIds)
+  const roleOptions = React.useMemo(() => {
+    const roles: Named[] = [...(roleList.value?.data ?? [])]
+    // A held role past the first 100 still shows by name.
+    for (const r of heldAccess.value?.roles ?? []) if (!roles.some((x) => x.id === r.id)) roles.push(r)
+    const options: Record<string, string> = {}
+    for (const r of roles.sort(byRoleOrder)) options[r.id] = r.name
+    return options
+  }, [roleList.value, heldAccess.value])
+  function retryRoles() {
+    roleList.refresh()
+    heldAccess.refresh()
+  }
+
+  /**
    * Reports to searches the people Pick on the server as the user types
    * (access plan P8): 145+ people outgrow one answer of 50, so the list
    * is never loaded whole. Not the person themselves: nobody reports to
    * themselves.
    */
-  const personId = person?.id
   const searchReportsTo = React.useCallback(
     (query: string): Promise<SearchOption[]> =>
       pick.people({ q: query }).then((rows: PersonPick[]) =>
@@ -562,7 +612,10 @@ function PersonDialog({
       ),
     [personId],
   )
-  const unsaved = useUnsavedChanges({ changed: isChanged(values, saved), noun: "person" })
+  const unsaved = useUnsavedChanges({
+    changed: isChanged(values, saved) || rolesChanged,
+    noun: "person",
+  })
 
   const set = <K extends keyof PersonValues>(key: K, value: PersonValues[K]) =>
     setValues((v) => ({ ...v, [key]: value }))
@@ -602,11 +655,21 @@ function PersonDialog({
   /**
    * Server refusals that belong to one field are shown on that field
    * (section 7.1), not in the banner: a reports-to cycle on Reports to,
-   * a bad or taken phone on Phone, a taken email on Email.
+   * a bad or taken phone on Phone, a taken email on Email, and, when
+   * roles were sent, a role that no longer exists (422) or the
+   * last-holder rule (409, kit 40.11) on Roles.
    */
-  function place(caught: unknown): boolean {
+  function place(caught: unknown, sentRoles: boolean): boolean {
     if (!(caught instanceof ApiError)) return false
     const message = caught.message
+    if (
+      sentRoles &&
+      ((caught.status === 422 && /role/i.test(message)) ||
+        (caught.status === 409 && /manage access/i.test(message)))
+    ) {
+      setFieldErrors((c) => ({ ...c, roles: message }))
+      return true
+    }
     if (caught.status === 422 && /report/i.test(message)) {
       setFieldErrors((c) => ({ ...c, reportsTo: message }))
       return true
@@ -636,6 +699,10 @@ function PersonDialog({
     setFieldErrors(found)
     if (Object.values(found).some(Boolean)) return
 
+    // Roles only when they can be sent and say something: on Add, any
+    // chosen; on Edit, a different set (the server ignores the same set).
+    const sendRoles =
+      rolesState === "ready" && roleIds !== null && (isEdit ? rolesChanged : roleIds.length > 0)
     setSaving(true)
     setError(null)
     try {
@@ -649,15 +716,19 @@ function PersonDialog({
         ...(canManageAccess === true
           ? { reportsToId: values.reportsToId === NONE ? null : values.reportsToId }
           : {}),
+        ...(sendRoles ? { roleIds } : {}),
         canLogin: values.canLogin,
         ...(values.canLogin && values.password.trim() ? { password: values.password.trim() } : {}),
       }
       if (isEdit) await api.patch(`/users/${person.id}`, body)
       else await api.post("/users", body)
+      // Kit 26.4 rule 2: an access change may change what the signed-in
+      // person can do (they may have edited themselves).
+      if (sendRoles) refreshPermissions()
       toast.success(isEdit ? "Person saved" : "Person added")
       onSaved()
     } catch (caught) {
-      if (!place(caught)) setError(errorMessage(caught))
+      if (!place(caught, sendRoles)) setError(errorMessage(caught))
     } finally {
       setSaving(false)
     }
@@ -740,7 +811,8 @@ function PersonDialog({
             </section>
 
             <section className="flex flex-col gap-4">
-              <h3 className="text-card-heading font-medium text-text-primary">Role</h3>
+              {/* What they are in the organisation, not what they may do: that is Access, below. */}
+              <h3 className="text-card-heading font-medium text-text-primary">Job</h3>
               <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
                 <div className="flex min-w-0 flex-col gap-2">
                   <Label htmlFor="person-designation">Designation</Label>
@@ -785,27 +857,56 @@ function PersonDialog({
 
             <section className="flex flex-col gap-4">
               <h3 className="text-card-heading font-medium text-text-primary">Access</h3>
-              <p className="text-label text-text-secondary">
-                {isEdit
-                  ? "What they can do comes from their roles, set under Access."
-                  : "Once they are added, give them roles under Access › People."}
-              </p>
+              {/* Roles: for someone who manages access, a multi-select;
+                  for anyone else the same field, disabled, with the
+                  reason; while that is not known, disabled with no
+                  reason (kit 26.1). The field never changes size. */}
+              <div className="flex min-w-0 flex-col gap-2">
+                <Label htmlFor="person-roles">Roles</Label>
+                <PermissionTooltip allowed={canManageAccess} reason={manageAccessReason}>
+                  <MultiSelect
+                    id="person-roles"
+                    options={roleOptions}
+                    value={manages ? (roleIds ?? []) : []}
+                    onValueChange={(next) => {
+                      setRoleIds(next)
+                      setFieldErrors((c) => ({ ...c, roles: null }))
+                    }}
+                    placeholder={rolesState === "loading" && manages ? "Loading roles" : "Choose roles"}
+                    searchPlaceholder="Search roles"
+                    emptyMessage="No roles match that search."
+                    disabled={rolesState !== "ready"}
+                    invalid={Boolean(fieldErrors.roles)}
+                    describedBy="person-roles-help"
+                  />
+                </PermissionTooltip>
+                {rolesState === "failed" ? (
+                  <div className="flex flex-wrap items-center gap-3">
+                    <p className="text-label text-text-primary">We could not load the roles.</p>
+                    <Button type="button" variant="secondary" size="sm" onClick={retryRoles}>
+                      Try again
+                    </Button>
+                  </div>
+                ) : (
+                  <p id="person-roles-help" className="text-label text-text-secondary">
+                    {rolesState === "ready" && roleIds !== null && roleIds.length === 0
+                      ? "No roles, so they can do nothing."
+                      : "What they can do comes from their roles."}
+                  </p>
+                )}
+                <InlineFieldError>{fieldErrors.roles}</InlineFieldError>
+              </div>
+              {/* Selected sites, and the rest of their access, stay on
+                  their access page. Plain text with the reason for
+                  someone who cannot open it (kit 6.6 rule 4, 26). */}
               {isEdit ? (
                 <div>
                   <PermissionTooltip allowed={canManageAccess} reason={manageAccessReason}>
-                    {canManageAccess === true ? (
-                      <Button
-                        variant="secondary"
-                        nativeButton={false}
-                        render={<Link href={ACCESS_PATHS.person(person.id)} />}
-                      >
-                        Edit access
-                      </Button>
-                    ) : (
-                      <Button type="button" variant="secondary" disabled>
-                        Edit access
-                      </Button>
-                    )}
+                    <TextLink
+                      render={manages ? <Link href={ACCESS_PATHS.person(person.id)} /> : undefined}
+                    >
+                      More access settings <span aria-hidden>→</span>
+                    </TextLink>
                   </PermissionTooltip>
                 </div>
               ) : null}

@@ -6,7 +6,7 @@ import {
 import { hash } from 'bcryptjs';
 import { Transform } from 'class-transformer';
 import {
-  IsBoolean, IsEmail, IsIn, IsObject, IsOptional, IsString, IsUUID, MinLength,
+  IsArray, IsBoolean, IsEmail, IsIn, IsObject, IsOptional, IsString, IsUUID, MinLength,
 } from 'class-validator';
 import type { Pool, PoolClient } from 'pg';
 
@@ -68,6 +68,17 @@ export class UserDto {
   @IsOptional()
   @IsObject()
   modules?: Record<string, unknown>;
+
+  /**
+   * The person's roles, exactly (absent = unchanged). Saved in the same
+   * transaction as the rest of the form, through AccessWrite like the
+   * Access › People page, so the lock, the last-holder rule and the
+   * history all apply. Needs access.rights.manage.
+   */
+  @IsOptional()
+  @IsArray()
+  @IsUUID('all', { each: true, message: 'Choose roles from the list' })
+  roleIds?: string[];
 
   /**
    * The budget role under its old name. The budget people screen sent
@@ -347,8 +358,10 @@ export class UsersController {
     const modules = parseModules(body);
     // Access parts of a new person (O8, plan 5.3.4): their module levels
     // (the compatibility shim, as seed roles) and who they report to.
+    assertRolesOrModules(body);
     const givesModules = Object.values(modules).some((role) => role !== null && role !== undefined);
-    if (givesModules || body.reportsToId) assertCanManageAccess(access);
+    const givesRoles = (body.roleIds?.length ?? 0) > 0;
+    if (givesModules || givesRoles || body.reportsToId) assertCanManageAccess(access);
     assertLoginCredentials(body.canLogin, email, phone, Boolean(body.password));
     await this.assertReferences(body);
     await this.assertUnique(email, phone, null);
@@ -362,11 +375,13 @@ export class UsersController {
         [name, email, phone, body.designationId ?? null, passwordHash, canLogin],
       );
       const newId = rows[0]!.id;
-      if (givesModules || body.reportsToId) {
+      if (givesModules || givesRoles || body.reportsToId) {
         const write = await this.access.begin(client, actorOf(me));
         // Today's level rows, then the seed roles they mean (plan 5.5).
         await applyModules(client, newId, modules);
         await write.applyModulesPatch({ id: newId, name }, modules);
+        // Roles chosen on the form: exactly these, after the shim.
+        if (givesRoles) await write.setRoles({ id: newId, name }, body.roleIds!);
         if (body.reportsToId) await write.setReportsTo(newId, body.reportsToId);
         await write.finish();
       }
@@ -407,6 +422,7 @@ export class UsersController {
       'person',
     );
 
+    assertRolesOrModules(body);
     if (body.name !== undefined && !body.name.trim()) {
       throw new BadRequestException('Enter the person’s name');
     }
@@ -422,7 +438,17 @@ export class UsersController {
     const changesModules = Object.keys(modules).length > 0;
     const changesActive = body.active !== undefined && body.active !== existing.active;
     const changesReportsTo = body.reportsToId !== undefined && (body.reportsToId ?? null) !== existing.reportsTo;
-    if (changesModules || changesActive || changesReportsTo) assertCanManageAccess(access);
+    // The form resends the roles it shows: only a different set is a change.
+    let changesRoles = false;
+    if (body.roleIds !== undefined) {
+      const { rows: held } = await this.pool.query<{ roleId: string }>(
+        'select role_id as "roleId" from user_roles where user_id = $1',
+        [id],
+      );
+      const want = new Set(body.roleIds);
+      changesRoles = want.size !== held.length || held.some((r) => !want.has(r.roleId));
+    }
+    if (changesModules || changesActive || changesReportsTo || changesRoles) assertCanManageAccess(access);
     // Turning off the sign-in of the last person who can manage access is
     // refused like removing their Admin (D5): it runs under the access lock.
     const turnsOffSignIn = existing.canLogin && !canLogin;
@@ -434,7 +460,7 @@ export class UsersController {
     const passwordHash = body.password ? await hash(body.password, 12) : null;
     await this.inTransaction(async (client) => {
       const write =
-        changesModules || changesActive || changesReportsTo || turnsOffSignIn
+        changesModules || changesActive || changesReportsTo || changesRoles || turnsOffSignIn
           ? await this.access.begin(client, actorOf(me))
           : null;
       await client.query(
@@ -458,6 +484,8 @@ export class UsersController {
         await applyModules(client, id, modules);
         await write.applyModulesPatch(person, modules);
       }
+      // Roles chosen on the form: exactly these (the last-holder rule runs in finish()).
+      if (changesRoles) await write.setRoles(person, body.roleIds!);
       if (changesActive) await write.setActive(id, body.active!);
       // Checks the chain as it stands for a loop, then rebuilds the closure.
       if (changesReportsTo) await write.setReportsTo(id, body.reportsToId ?? null);
@@ -662,6 +690,18 @@ function assertLoginCredentials(
     throw new BadRequestException(
       'Someone who signs in needs a password. Set one, or turn off sign-in.',
     );
+  }
+}
+
+/**
+ * Roles and the old module levels are two ways of saying the same thing.
+ * One request may use one of them, never both: applying both would leave
+ * a level row the roles no longer mean (the dual-write only rewrites
+ * modules whose derived level changed).
+ */
+function assertRolesOrModules(body: UserDto): void {
+  if (body.roleIds !== undefined && (body.modules !== undefined || body.role !== undefined)) {
+    throw new BadRequestException('Send the roles or the module levels, not both.');
   }
 }
 

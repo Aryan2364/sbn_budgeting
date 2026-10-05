@@ -532,7 +532,11 @@ export const pick = {
     ),
 }
 
-/** `POST/PATCH /users`: a person's details. Their roles are set on the Access screens (kit 40.6 rule 9). */
+/**
+ * `POST/PATCH /users`: a person's details, and (owner request, 5 Oct
+ * 2026; KIT-PENDING-person-roles.md) their roles. Selected sites stay on
+ * the Access screens.
+ */
 export interface PersonBody {
   name: string
   email?: string | null
@@ -540,6 +544,11 @@ export interface PersonBody {
   designationId?: string | null
   /** An access change (O8): sent only by someone who holds access.rights.manage. */
   reportsToId?: string | null
+  /**
+   * Their roles, exactly; left out = unchanged. An access change too
+   * (access.rights.manage), saved in the same transaction as the rest.
+   */
+  roleIds?: string[]
   canLogin: boolean
   password?: string
 }
