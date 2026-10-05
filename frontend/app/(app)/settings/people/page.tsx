@@ -616,6 +616,8 @@ function PersonDialog({
     changed: isChanged(values, saved) || rolesChanged,
     noun: "person",
     mode: isEdit ? "edit" : "create",
+    // "Leave this person?" reads oddly; adding a person is an action, not a record.
+    text: isEdit ? undefined : { title: "Stop adding this person?" },
   })
 
   const set = <K extends keyof PersonValues>(key: K, value: PersonValues[K]) =>
