@@ -16,9 +16,17 @@ import {
 import { CATALOGUE, type PermissionKey, type Scope } from "@/lib/permission-keys"
 import { reasonFor, usePermissions } from "@/lib/permissions"
 import { errorMessage } from "@/components/shell/session"
-import { Banner, BannerDescription, BannerTitle } from "@/components/ui/banner"
+import { Banner, BannerDescription } from "@/components/ui/banner"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import {
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -73,11 +81,118 @@ const SCOPE_MEANINGS =
 /** Kit 40.3 rule 14. */
 const SYSTEM_ROLE_BANNER = "This role always holds every permission, in every module, at All. It cannot be changed."
 
+// ---------------------------------------------------------------------
+// Pending banner rule 5: a save's other changes are a toast, not a banner
+// ---------------------------------------------------------------------
+
 /**
- * A new role's save answer travels to its own page here, so the notices
- * are shown after the address changes from /new to the role's own.
+ * The save toast, when the save also added or removed other permissions
+ * (the Picks and see amounts of 40.5): it says how many, stays until
+ * closed, and its Details opens the list in SaveDetailsDialog.
+ *
+ * Module state, not component state, because a new role's toast is
+ * raised on /new and its Details is pressed on the role's own page,
+ * after the address has changed and the editor has been replaced.
  */
-const pendingNotices = new Map<string, string[]>()
+let detailsToast: string | number | null = null
+let details: { open: boolean; notices: string[] } = { open: false, notices: [] }
+const detailsListeners = new Set<() => void>()
+let mountedEditors = 0
+
+function setDetails(next: typeof details) {
+  details = next
+  for (const listener of detailsListeners) listener()
+}
+
+function subscribeDetails(listener: () => void) {
+  detailsListeners.add(listener)
+  return () => {
+    detailsListeners.delete(listener)
+  }
+}
+
+function otherChangesSentence(n: number): string {
+  return n === 1 ? "1 other permission changed too." : `${n} other permissions changed too.`
+}
+
+/** Kit 40.3 rule 6 and pending banner rule 5: one toast per save. */
+function toastSaved(role: RoleDetail, notices: string[]) {
+  if (detailsToast !== null) toast.dismiss(detailsToast)
+  detailsToast = null
+  if (notices.length === 0) {
+    toast.success(savedSentence(role))
+    return
+  }
+  detailsToast = toast.success(savedSentence(role), {
+    description: otherChangesSentence(notices.length),
+    // The list is behind Details, so the toast waits to be closed.
+    duration: Infinity,
+    action: {
+      label: "Details",
+      onClick: (event) => {
+        // Keep the toast: Details can be opened again until it is closed.
+        event.preventDefault()
+        setDetails({ open: true, notices })
+      },
+    },
+    onDismiss: () => {
+      detailsToast = null
+    },
+  })
+}
+
+/**
+ * The list behind the save toast's Details. Rendered by every editor;
+ * when the last one goes (the user left the role editor), the toast goes
+ * too, so its Details is never a button that does nothing. The check
+ * waits a tick: /new handing over to the role's own page, and React's
+ * development double mount, both unmount one editor and mount the next.
+ */
+function SaveDetailsDialog() {
+  const shown = React.useSyncExternalStore(subscribeDetails, () => details, () => details)
+
+  React.useEffect(() => {
+    mountedEditors += 1
+    return () => {
+      mountedEditors -= 1
+      window.setTimeout(() => {
+        if (mountedEditors > 0) return
+        if (detailsToast !== null) toast.dismiss(detailsToast)
+        detailsToast = null
+        setDetails({ open: false, notices: [] })
+      }, 0)
+    }
+  }, [])
+
+  return (
+    <Dialog
+      open={shown.open}
+      onOpenChange={(open) => {
+        if (!open) setDetails({ ...details, open: false })
+      }}
+    >
+      <DialogContent size="md">
+        <DialogHeader>
+          <DialogTitle>Other permissions this save changed</DialogTitle>
+        </DialogHeader>
+        <DialogBody>
+          <ul className="flex flex-col gap-2 text-body text-text-primary">
+            {shown.notices.map((notice) => (
+              <li key={notice} className="min-w-0 break-words">
+                {notice}
+              </li>
+            ))}
+          </ul>
+        </DialogBody>
+        <DialogFooter>
+          <Button type="button" variant="secondary" onClick={() => setDetails({ ...details, open: false })}>
+            Close
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
 
 interface FormValues {
   name: string
@@ -162,10 +277,6 @@ export function RoleEditor({ roleId, fromId }: { roleId?: string; fromId?: strin
   const [nameError, setNameError] = React.useState<string | null>(null)
   const [saveError, setSaveError] = React.useState<string | null>(null)
   const [saving, setSaving] = React.useState(false)
-  const [notices, setNotices] = React.useState<string[]>(() => (roleId ? (pendingNotices.get(roleId) ?? []) : []))
-  React.useEffect(() => {
-    if (roleId) pendingNotices.delete(roleId)
-  }, [roleId])
   const [deleting, setDeleting] = React.useState(false)
 
   const role = load.state === "ready" ? load.role : null
@@ -230,18 +341,17 @@ export function RoleEditor({ roleId, fromId }: { roleId?: string; fromId?: strin
       const result = isEdit ? await accessApi.updateRole(roleId, body) : await accessApi.createRole(body)
       // Kit 26.4 rule 2: a save on the access screens asks for permissions again.
       refresh()
-      toast.success(savedSentence(result.role))
+      toastSaved(result.role, result.notices)
       if (isEdit) {
         const form = { name: result.role.name, description: result.role.description, ticks: ticksOf(result.role, false) }
         setValues(form)
         setSaved(form)
         setLoad({ state: "ready", role: result.role })
-        setNotices(result.notices)
         setSaving(false)
       } else {
-        // Nothing unsaved now: the new role's own page shows it, notices included.
+        // Nothing unsaved now. The toast, and its Details, outlive the
+        // change of address to the role's own page.
         setSaved(values)
-        pendingNotices.set(result.role.id, result.notices)
         router.replace(ACCESS_PATHS.role(result.role.id))
       }
     } catch (caught) {
@@ -346,18 +456,6 @@ export function RoleEditor({ roleId, fromId }: { roleId?: string; fromId?: strin
             <>
               <FormError message={saveError} />
 
-              {notices.length > 0 ? (
-                <Banner variant="neutral" className="mt-6">
-                  <InfoIcon />
-                  <BannerTitle>This save also changed</BannerTitle>
-                  <BannerDescription>
-                    {notices.map((notice) => (
-                      <p key={notice}>{notice}</p>
-                    ))}
-                  </BannerDescription>
-                </Banner>
-              ) : null}
-
               <form id="role-form" onSubmit={submit} noValidate className="mt-8 flex flex-col gap-6">
                 <Card>
                   <CardHeader>
@@ -407,7 +505,9 @@ export function RoleEditor({ roleId, fromId }: { roleId?: string; fromId?: strin
                 <p className="text-label text-text-secondary">{SCOPE_MEANINGS}</p>
 
                 {readOnly ? (
-                  <Banner variant="neutral">
+                  // Pending banner rule 3: it explains why nothing here can
+                  // be changed, so it has no close. Rule 1: one line.
+                  <Banner variant="neutral" layout="line">
                     <InfoIcon />
                     <BannerDescription>{SYSTEM_ROLE_BANNER}</BannerDescription>
                   </Banner>
@@ -458,6 +558,8 @@ export function RoleEditor({ roleId, fromId }: { roleId?: string; fromId?: strin
       )}
 
       {unsaved.warning}
+
+      <SaveDetailsDialog />
 
       {deleting && role ? (
         <DeleteRecordDialog

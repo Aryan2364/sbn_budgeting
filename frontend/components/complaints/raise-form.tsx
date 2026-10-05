@@ -109,11 +109,16 @@ const GU = {
   sitePlaceholder: "સાઇટ પસંદ કરો",
   siteSearch: "સાઇટ શોધો",
   siteNoMatch: "આ નામની કોઈ સાઇટ મળી નથી. બીજું નામ લખીને શોધો.",
-  noSupervisorTitle: (site: string) => `${site} માટે હજી કોઈ સુપરવાઇઝર નથી`,
-  /** Follows the title; the next step is added after it. */
-  noSupervisorCause: "તેથી આ ફરિયાદ કોઈને પહોંચશે નહીં.",
-  noSupervisorAdmin: "સાઇટના ફોર્મમાં સુપરવાઇઝર નક્કી કરો, પછી ફરિયાદ નોંધાવો.",
-  noSupervisorOthers: "એડમિનને સુપરવાઇઝર નક્કી કરવા કહો, અથવા બીજી સાઇટ પસંદ કરો.",
+  /**
+   * At most two lines in the half-width site field (pending banner
+   * rule 1). Someone who can edit sites reads the cause, and the "Open
+   * site" button beside it is the next step. Anyone else has no button,
+   * so the next step is in the sentence.
+   */
+  noSupervisorAdmin: (site: string) =>
+    `${site} માટે સુપરવાઇઝર નથી, તેથી ફરિયાદ કોઈને નહીં પહોંચે.`,
+  noSupervisorOthers: (site: string) =>
+    `${site} માટે સુપરવાઇઝર નથી, તેથી ફરિયાદ નહીં પહોંચે. બીજી સાઇટ પસંદ કરો.`,
 
   // Category field
   needsApproval: (approver: string) => `આ ફરિયાદ બંધ કરવા માટે ${approver} ની મંજૂરી જોઈશે.`,
@@ -390,7 +395,10 @@ export function RaiseComplaintForm() {
             <PageHeader className="mt-4" title={GU.title} meta={GU.meta} />
 
             <div ref={bannerRef}>
-              {failure ? (
+              {/* Pending banner rule 4: one banner per page. While the
+                  site has no supervisor, its banner in the site field is
+                  the one that matters, and Submit cannot be pressed. */}
+              {failure && !noSupervisor ? (
                 <Banner variant="danger" className="mt-6">
                   <CircleAlertIcon />
                   <BannerTitle>
@@ -464,14 +472,16 @@ export function RaiseComplaintForm() {
                     emptyMessage={GU.siteNoMatch}
                     className="max-w-none sm:max-w-field-max"
                   />
+                  {/* Pending banner rule 3: it explains the disabled Submit,
+                      so it has no close. All Gujarati, built here; the
+                      server's English sentence is not shown. */}
                   {noSupervisor ? (
-                    <Banner variant="warning" className="mt-2">
+                    <Banner variant="warning" layout="line" className="mt-2">
                       <TriangleAlertIcon />
-                      <BannerTitle>{GU.noSupervisorTitle(site.name)}</BannerTitle>
-                      <BannerDescription>
-                        {/* All Gujarati, built here; the server's English sentence is not shown. */}
-                        {GU.noSupervisorCause}{" "}
-                        {canEditSites ? GU.noSupervisorAdmin : GU.noSupervisorOthers}
+                      <BannerDescription wrap>
+                        {canEditSites
+                          ? GU.noSupervisorAdmin(site.name)
+                          : GU.noSupervisorOthers(site.name)}
                       </BannerDescription>
                       {canEditSites ? (
                         <BannerAction>

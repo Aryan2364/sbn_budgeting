@@ -23,7 +23,7 @@ import { pick, query, type LocationPick } from "@/lib/api"
 import { formatNumber } from "@/lib/format"
 import { recordAnswer, UNIT, useCan } from "@/lib/permissions"
 import { Count } from "@/components/ui/badge"
-import { Banner, BannerAction, BannerTitle } from "@/components/ui/banner"
+import { Banner, BannerAction, BannerClose, BannerTitle } from "@/components/ui/banner"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -66,6 +66,7 @@ import {
 import { TextLink } from "@/components/ui/text-link"
 import { Truncate } from "@/components/ui/truncate"
 import { FilterChip } from "@/components/forms/expense-filter"
+import { useClosableBanner } from "@/components/shell/closable-banner"
 import {
   ListDataArea,
   ListPagination,
@@ -137,6 +138,11 @@ function PeopleTab() {
   const rows = result?.data ?? []
   const total = result?.total ?? 0
 
+  // Pending banner rule 2: closable, back when more sites go uncovered.
+  const uncovered = result?.uncoveredUnits ?? []
+  const uncoveredBanner = useClosableBanner("uncovered-sites", uncovered.length)
+  const showUncovered = uncovered.length > 0 && !uncoveredBanner.hidden
+
   const units = useAllUnits()
   const roles = useAnswer("roles", () => accessApi.listRoles({ pageSize: 100 }))
   const locations = useAnswer("locations", () => pick.locations({ includeInactive: true }))
@@ -160,11 +166,11 @@ function PeopleTab() {
       </AccessHeaderMeta>
 
       {/* Kit 40.8 and 11.1 zone 1b: decided by the server, sent with the list. */}
-      {result && result.uncoveredUnits.length > 0 ? (
-        <UncoveredBanner units={result.uncoveredUnits} />
+      {showUncovered ? (
+        <UncoveredBanner units={uncovered} onClose={uncoveredBanner.dismiss} />
       ) : null}
 
-      <ListToolbar className={result && result.uncoveredUnits.length > 0 ? "mt-4" : undefined}>
+      <ListToolbar className={showUncovered ? "mt-4" : undefined}>
         <ListSearch
           label="Search people"
           placeholder="Search people"
@@ -382,25 +388,27 @@ function PersonTableRow({
 // Kit 40.8: sites nobody covers
 // ---------------------------------------------------------------------
 
-function UncoveredBanner({ units }: { units: Named[] }) {
+function UncoveredBanner({ units, onClose }: { units: Named[]; onClose: () => void }) {
   const [open, setOpen] = React.useState(false)
   const n = units.length
-  const named = units.slice(0, 3).map((u) => u.name).join(", ")
-  const more = n > 3 ? ` …and ${formatNumber(n - 3)} more.` : "."
-  const noun = n === 1 ? UNIT.one : UNIT.many
+  // Pending banner rule 1 (overrides kit 40.8): the count and one
+  // action, on one line. The names are in the dialog Review opens.
+  const sentence =
+    n === 1
+      ? `1 ${UNIT.one} has nobody covering it.`
+      : `${formatNumber(n)} ${UNIT.many} have nobody covering them.`
 
   return (
     <>
-      <Banner variant="warning" className="mt-6 shrink-0">
+      <Banner variant="warning" layout="line" className="mt-6 shrink-0">
         <TriangleAlertIcon />
-        <BannerTitle>
-          {`${formatNumber(n)} ${noun} ${n === 1 ? "has" : "have"} nobody covering ${n === 1 ? "it" : "them"}: ${named}${more}`}
-        </BannerTitle>
+        <BannerTitle>{sentence}</BannerTitle>
         <BannerAction>
           <Button type="button" variant="secondary" size="sm" onClick={() => setOpen(true)}>
             Review {UNIT.many}
           </Button>
         </BannerAction>
+        <BannerClose onClick={onClose} />
       </Banner>
 
       <Dialog open={open} onOpenChange={setOpen}>

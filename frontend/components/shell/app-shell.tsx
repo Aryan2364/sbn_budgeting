@@ -63,9 +63,12 @@ function PermissionsFailedBanner() {
   if (status !== "failed") return null
   return (
     <div className="no-print shrink-0 px-6 pt-4">
-      <Banner variant="danger">
+      {/* Pending banner rule 3: it explains why every control is
+          disabled, so it has no close. Rule 1: one line, the action is
+          the button. */}
+      <Banner variant="danger" layout="line">
         <OctagonXIcon />
-        <BannerDescription>We could not load what you can do here. Try again.</BannerDescription>
+        <BannerDescription>We could not load what you can do here.</BannerDescription>
         <BannerAction>
           <Button variant="secondary" size="sm" onClick={refresh}>
             Try again

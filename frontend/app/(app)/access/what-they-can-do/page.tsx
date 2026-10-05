@@ -150,8 +150,10 @@ function WhatTheyCanDo() {
         ) : (
           <div className="flex flex-col gap-6">
             {/* Rule 10: the view still shows what would apply. */}
+            {/* Pending banner rule 3: no close, it explains why none of
+                this applies. Rule 1: one line. */}
             {!person.active ? (
-              <Banner variant="neutral">
+              <Banner variant="neutral" layout="line">
                 <InfoIcon />
                 <BannerDescription>
                   {`${person.name} is inactive, so none of this applies until they are activated.`}

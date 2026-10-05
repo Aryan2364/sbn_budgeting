@@ -37,8 +37,9 @@ import {
 } from "@/components/forms/expense-filter"
 import { reasonFor, useCan, useCanAll, useCanSeeAmounts } from "@/lib/permissions"
 import { errorMessage } from "@/components/shell/session"
+import { useClosableBanner } from "@/components/shell/closable-banner"
 import { Badge } from "@/components/ui/badge"
-import { Banner, BannerDescription, BannerTitle } from "@/components/ui/banner"
+import { Banner, BannerClose, BannerTitle } from "@/components/ui/banner"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import {
@@ -671,23 +672,9 @@ function SiteDetail({ params }: { params: Promise<{ id: string }> }) {
       {/*
         Question 5: over-allocation warns and never blocks. It stays
         true until somebody changes a number, so section 7.1 makes it a
-        banner rather than a toast that vanishes. Section 7.2 rule 1
-        gives it an icon as well as a colour.
+        banner rather than a toast that vanishes.
       */}
-      {over && project ? (
-        <Banner variant="warning" className="mt-6">
-          <TriangleAlertIcon />
-          <BannerTitle>
-            {project.name} is over its planned tree count
-          </BannerTitle>
-          <BannerDescription>
-            Its sites cover {formatNumber(project.allocatedTrees)} trees against a
-            plan of {formatNumber(project.plannedTrees)} —{" "}
-            {formatNumber(project.allocatedTrees - project.plannedTrees)} over.
-            Nothing is blocked; adjust a tree count if that is wrong.
-          </BannerDescription>
-        </Banner>
-      ) : null}
+      {over && project ? <OverPlanBanner project={project} /> : null}
 
       {/* Kit 26.7: without the Budget card, the summary takes its place. */}
       <DetailColumns
@@ -932,5 +919,25 @@ function SiteDetail({ params }: { params: Promise<{ id: string }> }) {
         />
       ) : null}
     </PageScroller>
+  )
+}
+
+/**
+ * Question 5: over-allocation warns and never blocks. Pending banner
+ * rules 1 and 2: one line, with the icon of section 7.2 rule 1, and
+ * closable per project; it returns if the project goes further over.
+ */
+function OverPlanBanner({ project }: { project: Project }) {
+  const over = project.allocatedTrees - project.plannedTrees
+  const { hidden, dismiss } = useClosableBanner(`over-plan.${project.id}`, over)
+  if (hidden) return null
+  return (
+    <Banner variant="warning" layout="line" className="mt-6">
+      <TriangleAlertIcon />
+      <BannerTitle>
+        {`${project.name} is ${formatNumber(over)} ${over === 1 ? "tree" : "trees"} over its plan.`}
+      </BannerTitle>
+      <BannerClose onClick={dismiss} />
+    </Banner>
   )
 }

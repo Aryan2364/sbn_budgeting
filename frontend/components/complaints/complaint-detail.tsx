@@ -309,8 +309,41 @@ export function ComplaintDetailPage({ id }: { id: string }) {
         </div>
       ) : null}
 
+      {/* Pending banner rule 4: at most one banner. A failed action is
+          the most pressing, then a change someone else made; the closed
+          banner explains why nothing can be changed, and the "raised"
+          note is the least of them. */}
       <div className="mt-6 flex flex-col gap-4 empty:hidden">
-        {justRaised ? (
+        {actionError ? (
+          <Banner variant="danger">
+            <CircleAlertIcon />
+            <BannerTitle>That did not go through</BannerTitle>
+            <BannerDescription>{actionError}</BannerDescription>
+          </Banner>
+        ) : stale ? (
+          <Banner variant="warning">
+            <CircleAlertIcon />
+            <BannerTitle>Someone else changed this complaint</BannerTitle>
+            <BannerDescription>{stale}</BannerDescription>
+            <BannerAction>
+              <Button type="button" variant="secondary" size="sm" onClick={refresh}>
+                <RefreshCwIcon />
+                Refresh complaint
+              </Button>
+            </BannerAction>
+          </Banner>
+        ) : detail.status === "closed" ? (
+          // Pending banner rule 3: it explains why the record is locked,
+          // so it has no close. Rule 1: one line.
+          <Banner layout="line">
+            <LockIcon />
+            <BannerDescription>
+              {`${detail.closedBy ? `Closed by ${detail.closedBy.name}` : "Closed"}${
+                detail.closedAt ? ` on ${formatDateTime(detail.closedAt)}` : ""
+              }. It can no longer be changed, but anyone it was sent to can still comment.`}
+            </BannerDescription>
+          </Banner>
+        ) : justRaised ? (
           <Banner variant="success">
             <CircleCheckIcon />
             <BannerTitle>{detail.reference} raised</BannerTitle>
@@ -323,37 +356,6 @@ export function ComplaintDetailPage({ id }: { id: string }) {
                 Close
               </Button>
             </BannerAction>
-          </Banner>
-        ) : null}
-        {stale ? (
-          <Banner variant="warning">
-            <CircleAlertIcon />
-            <BannerTitle>Someone else changed this complaint</BannerTitle>
-            <BannerDescription>{stale}</BannerDescription>
-            <BannerAction>
-              <Button type="button" variant="secondary" size="sm" onClick={refresh}>
-                <RefreshCwIcon />
-                Refresh complaint
-              </Button>
-            </BannerAction>
-          </Banner>
-        ) : null}
-        {actionError ? (
-          <Banner variant="danger">
-            <CircleAlertIcon />
-            <BannerTitle>That did not go through</BannerTitle>
-            <BannerDescription>{actionError}</BannerDescription>
-          </Banner>
-        ) : null}
-        {detail.status === "closed" ? (
-          <Banner>
-            <LockIcon />
-            <BannerTitle>This complaint is closed</BannerTitle>
-            <BannerDescription>
-              {detail.closedBy ? `${detail.closedBy.name} closed it` : "It was closed"}
-              {detail.closedAt ? ` on ${formatDateTime(detail.closedAt)}` : ""}. It can no longer be
-              changed, but anyone it was sent to can still comment.
-            </BannerDescription>
           </Banner>
         ) : null}
       </div>
