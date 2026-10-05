@@ -3,8 +3,10 @@ import type { AddressInfo } from 'node:net';
 import { after, before, describe, it } from 'node:test';
 
 import type { INestApplication } from '@nestjs/common';
+import { Client } from 'pg';
 
 import { describeKeys, type Grant, type Scope } from '../../src/access/catalogue';
+import { takeAccessLock } from '../../src/access/last-holder';
 import { legacyLevelsFor as levelsP6, rolesForModulesPatch } from '../../src/access/legacy-levels';
 import { SEED_ROLES, SEED_ROLE_IDS } from '../../src/access/seed-roles';
 import { legacyLevelsFor as levelsP1 } from '../../src/db/map-access-levels';
@@ -369,19 +371,65 @@ describe('access write API through the real routes (P6)', { skip: dbTestsEnabled
   });
 
   it('the last-holder race: two admins removing each other at once, exactly one succeeds', async () => {
-    for (let round = 0; round < 3; round += 1) {
-      assert.equal(await managers(), 2);
-      const [a, b] = await Promise.all([
-        call(`/access/people/${U.all_admin}/active`, U.platform_admin, { method: 'PUT', body: { active: false } }),
-        call(`/access/people/${U.platform_admin}/active`, U.all_admin, { method: 'PUT', body: { active: false } }),
-      ]);
-      assert.deepEqual([a.status, b.status].sort(), [200, 409], `${a.status} ${b.status}`);
-      assert.equal(await managers(), 1);
-      // Put the one who lost back, as the one left.
-      const left = a.status === 200 ? U.platform_admin : U.all_admin;
-      const gone = a.status === 200 ? U.all_admin : U.platform_admin;
-      assert.equal((await call(`/access/people/${gone}/active`, left, { method: 'PUT', body: { active: true } })).status, 200);
+    // The race must be forced, not hoped for. Fired together without a
+    // gate, one request can finish its write before the other has even
+    // been authenticated; that one then fails sign-in (401, its sender is
+    // no longer active), which is correct, but never reaches the lock
+    // this test is about. So the test holds the access lock itself until
+    // BOTH writes are inside their transactions waiting on it: both have
+    // passed sign-in and the route check, and only the lock decides.
+    const gate = new Client({ connectionString: process.env.TEST_DATABASE_URL });
+    await gate.connect();
+    const waiting = (): Promise<number> =>
+      count(gate, `select count(*) from pg_locks where locktype = 'advisory' and not granted and database =
+                   (select oid from pg_database where datname = current_database())`);
+    try {
+      for (let round = 0; round < 3; round += 1) {
+        assert.equal(await managers(), 2);
+        await gate.query('begin');
+        await takeAccessLock(gate);
+        let settled: { status: number; body: any } | undefined;
+        const note = (res: { status: number; body: any }) => ((settled ??= res), res);
+        const race = Promise.all([
+          call(`/access/people/${U.all_admin}/active`, U.platform_admin, { method: 'PUT', body: { active: false } }).then(note),
+          call(`/access/people/${U.platform_admin}/active`, U.all_admin, { method: 'PUT', body: { active: false } }).then(note),
+        ]);
+        try {
+          for (const deadline = Date.now() + 10_000; (await waiting()) < 2; ) {
+            assert.equal(settled, undefined, `a request finished before reaching the lock: ${JSON.stringify(settled)}`);
+            assert.ok(Date.now() < deadline, 'both writes should be waiting on the access lock');
+            await new Promise((r) => setTimeout(r, 5));
+          }
+        } finally {
+          await gate.query('commit');
+        }
+        const [a, b] = await race;
+        assert.deepEqual([a.status, b.status].sort(), [200, 409], `${a.status} ${b.status}`);
+        const loser = a.status === 409 ? a : b;
+        assert.match(loser.body.reason, /is the only person who can manage access/);
+        assert.equal(await managers(), 1);
+        // Put the one who lost back, as the one left.
+        const left = a.status === 200 ? U.platform_admin : U.all_admin;
+        const gone = a.status === 200 ? U.all_admin : U.platform_admin;
+        assert.equal((await call(`/access/people/${gone}/active`, left, { method: 'PUT', body: { active: true } })).status, 200);
+      }
+    } finally {
+      await gate.end();
     }
+  });
+
+  it('the race lost before sign-in: a person already deactivated gets 401, and the last holder stays', async () => {
+    // The other ordering of the same two requests: one write commits
+    // before the other request is authenticated. Its sender is no longer
+    // active, so it is refused at sign-in, never reaching the write.
+    assert.equal(await managers(), 2);
+    const first = await call(`/access/people/${U.all_admin}/active`, U.platform_admin, { method: 'PUT', body: { active: false } });
+    assert.equal(first.status, 200);
+    const second = await call(`/access/people/${U.platform_admin}/active`, U.all_admin, { method: 'PUT', body: { active: false } });
+    assert.equal(second.status, 401);
+    assert.equal(await managers(), 1);
+    assert.equal((await call(`/access/people/${U.all_admin}/active`, U.platform_admin, { method: 'PUT', body: { active: true } })).status, 200);
+    assert.equal(await managers(), 2);
   });
 
   it('reports_to with roles and sites: one request, one transaction; audited; the closure rebuilt; no version bump', async () => {
