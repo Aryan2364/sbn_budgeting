@@ -67,6 +67,7 @@ describe('complaints workflow layer through the routes (P5, A1-A3)', { skip: dbT
 
   const raise = (user: string, siteId: string = F.S.a, categoryId: string = F.CC.pd_approval) =>
     call(user, 'POST', '/complaints', {
+      title: 'Workflow test',
       siteId,
       categoryId,
       complainantName: 'Workflow Test',

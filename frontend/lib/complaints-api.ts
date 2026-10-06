@@ -48,9 +48,12 @@ export interface ComplaintRow {
   site: { id: string; name: string } | null
   /** The complaint's own location (older complaints), else the site's location, else null. */
   location: { id: string; name: string } | null
-  /** Full text; the UI truncates. */
-  description: string
-  complainantName: string
+  /** The complaint's short title (1-120 characters): its main line everywhere. */
+  title: string
+  /** Full text, or null when none was given (optional from 6 Oct 2026). The UI truncates. */
+  description: string | null
+  /** Null when none was given (optional from 6 Oct 2026). */
+  complainantName: string | null
   raisedAt: string
   raisedBy: PersonRef
   supervisor: PersonRef
@@ -103,7 +106,8 @@ export interface ComplaintEvent {
 }
 
 export interface ComplaintDetail extends ComplaintRow {
-  complainantPhone: string
+  /** Null when none was given (optional from 6 Oct 2026). */
+  complainantPhone: string | null
   locationNote: string | null
   manager: PersonRef | null
   startedAt: string | null
@@ -193,12 +197,15 @@ export interface ComplaintListParams {
 }
 
 export interface RaiseComplaintBody {
+  /** Required, 1-120 characters. */
+  title: string
   siteId: string
   categoryId: string
-  complainantName: string
-  complainantPhone: string
+  /** Optional: leave out (undefined) when none was given. */
+  complainantName?: string
+  complainantPhone?: string
   locationNote?: string
-  description: string
+  description?: string
 }
 
 // ---------------------------------------------------------------

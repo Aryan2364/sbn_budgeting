@@ -6,7 +6,7 @@ import type { DiscoveredRoute, HarnessApp } from '../support/app';
 import { testTxIdle } from '../support/test-tx';
 import { ROUTES, World, resolveQueries, type BodyContext, type Person, type Variant } from './cases';
 import { USER_LABEL } from './fixtures';
-import { withoutAdditiveKeys, withoutRecordCan } from './intended';
+import { withoutAdditiveKeys, withoutComplaintTitle, withoutRecordCan } from './intended';
 import { LegacyUndo, UNDONE_ROUTES, type LegacyWorld, type Why } from './legacy-approvals';
 import { legacyActions, type LegacyViewer } from './legacy-complaint-actions';
 import { screenMatrix, type ScreenMatrix } from './legacy-screen-rules';
@@ -216,12 +216,12 @@ async function runCase(
     if (!res.contentType.includes('json')) {
       return { status: res.status, contentType: res.contentType.split(';')[0], bytes: res.bytes };
     }
-    // D7 (intended.ts): keys a route gains, and every record's `can`, are
-    // left out of the digest, so the rest must match.
+    // D7 (intended.ts): keys a route gains, every record's `can`, and a
+    // complaint's `title` are left out of the digest, so the rest must match.
     const out: CaseResult = {
       status: res.status,
       keys: keysOf(res.body),
-      digest: digest(withoutRecordCan(withoutAdditiveKeys(path, res.body))),
+      digest: digest(withoutComplaintTitle(path, withoutRecordCan(withoutAdditiveKeys(path, res.body)))),
     };
     const rows = rowsOf(res.body);
     if (rows) {
@@ -236,12 +236,15 @@ async function runCase(
     }
     const undone = undo ? await undo(res.body) : null;
     if (undone) {
-      out.legacyDigest = digest(withoutRecordCan(withoutAdditiveKeys(path, undone.value)));
+      out.legacyDigest = digest(withoutComplaintTitle(path, withoutRecordCan(withoutAdditiveKeys(path, undone.value))));
       out.legacyWhy = undone.why;
     } else if (out.actions && legacyViewer) {
       const body = res.body as Parameters<typeof legacyActions>[1] & Record<string, unknown>;
       out.legacyDigest = digest(
-        withoutRecordCan(withoutAdditiveKeys(path, { ...body, actions: legacyActions(legacyViewer, body) })),
+        withoutComplaintTitle(
+          path,
+          withoutRecordCan(withoutAdditiveKeys(path, { ...body, actions: legacyActions(legacyViewer, body) })),
+        ),
       );
       out.legacyWhy = 'D1';
     }
@@ -268,8 +271,9 @@ async function runCase(
     ids,
     keys: keysOf(first),
     itemKeys: unionItemKeys(all),
-    // D7 (intended.ts): each row's `can` is left out, so the rest must match.
-    digest: digest(withoutRecordCan(sortedRows)),
+    // D7 (intended.ts): each row's `can` (and a complaint row's `title`)
+    // is left out, so the rest must match.
+    digest: digest(withoutComplaintTitle(path, withoutRecordCan(sortedRows))),
   };
   if (first && typeof first.total === 'number') out.total = first.total;
   if (first && first.aggregates && typeof first.aggregates === 'object') {
@@ -277,7 +281,7 @@ async function runCase(
   }
   const undone = undo ? await undo(sortedRows) : null;
   if (undone) {
-    out.legacyDigest = digest(withoutRecordCan(undone.value));
+    out.legacyDigest = digest(withoutComplaintTitle(path, withoutRecordCan(undone.value)));
     out.legacyWhy = undone.why;
   }
   return out;

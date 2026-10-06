@@ -430,11 +430,35 @@ export const ROUTES: Record<string, RouteSpec> = {
       {
         name: '',
         json: async ({ world }) => ({
+          // Required from 6 Oct 2026 (owner; migration 0014). A request
+          // field, so the baseline's answer (201 to whoever may raise) holds.
+          title: 'Raised by the access harness',
           siteId: await world.routableSite(),
           categoryId: await world.raisableCategory(),
           complainantName: 'Harness Complainant',
           complainantPhone: '9825012345',
           description: 'Raised by the access harness',
+        }),
+      },
+      // D11 (owner, 6 Oct 2026): the complainant's name, phone and the
+      // description are optional. Left out, and sent blank.
+      {
+        name: 'without-optional-fields',
+        json: async ({ world }) => ({
+          title: 'Raised by the access harness, title only',
+          siteId: await world.routableSite(),
+          categoryId: await world.raisableCategory(),
+        }),
+      },
+      {
+        name: 'optional-fields-blank',
+        json: async ({ world }) => ({
+          title: 'Raised by the access harness, blanks',
+          siteId: await world.routableSite(),
+          categoryId: await world.raisableCategory(),
+          complainantName: '  ',
+          complainantPhone: '',
+          description: '',
         }),
       },
     ],

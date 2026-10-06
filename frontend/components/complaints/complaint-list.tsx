@@ -64,8 +64,12 @@ import { useComplaintMasters } from "@/components/complaints/use-masters"
  * own toolbar state (33.4): switching tab clears search and filters.
  *
  * Search covers what the API's runListQuery searches for complaints
- * (reference, description, complainant, site, location, category and
- * the people on it). Long free text is the API's to exclude, not ours.
+ * (reference, title, description, complainant, site, location, category
+ * and the people on it). Long free text is the API's to exclude, not ours.
+ *
+ * A complaint's main line is its title (owner, 6 Oct 2026), so the title
+ * is the row's link (11.1.2); the description, which is optional, sits
+ * under it only when there is one.
  *
  * A complaint is filed against a site (CONTRACT §10); one raised before
  * sites has none and shows its location in the Site column instead.
@@ -464,8 +468,10 @@ function SortHeader({
 /**
  * From 768px. Column widths come from the col-* tokens (17.1); the
  * free-text columns (the complaint, the site) take what is left and
- * truncate. The category sits under the site; the supervisor is
- * secondary and drops below 1024.
+ * truncate. The complaint is its title (the row's link), with the
+ * description under it when there is one, or where a search matched. The
+ * category sits under the site; the supervisor is secondary and drops
+ * below 1024.
  */
 function ComplaintTable({
   rows,
@@ -500,14 +506,13 @@ function ComplaintTable({
       <TableBody>
         {rows.map((row) => (
           <TableRow key={row.id}>
-            <TableCell>
-              <TableRowLink render={<Link href={`/complaints/${row.id}`} />} className="font-medium tabular-nums">
-                {row.reference}
-              </TableRowLink>
-            </TableCell>
+            <TableCell className="tabular-nums">{row.reference}</TableCell>
             <TableCell>
               <span className="flex min-w-0 flex-col">
-                <Truncate>{row.description}</Truncate>
+                {/* 11.1.2: the record's name is a real link, and the row opens it. */}
+                <TableRowLink render={<Link href={`/complaints/${row.id}`} />} className="block min-w-0 font-medium">
+                  <Truncate>{row.title}</Truncate>
+                </TableRowLink>
                 {row.matchedField ? (
                   <span className="flex min-w-0 gap-1 text-meta text-text-secondary">
                     <span className="shrink-0">{row.matchedField}:</span>
@@ -515,6 +520,8 @@ function ComplaintTable({
                       {row.matchedValue ?? ""}
                     </Truncate>
                   </span>
+                ) : row.description ? (
+                  <Truncate className="text-meta text-text-secondary">{row.description}</Truncate>
                 ) : null}
               </span>
             </TableCell>
@@ -541,8 +548,9 @@ function ComplaintTable({
 
 /**
  * Below 768px: one record card per complaint, the whole card a link.
- * Five pieces of information at most (11.6): reference and status,
- * the description clamped to two lines, where and what, and age.
+ * Five pieces of information at most (11.6): title and status, the
+ * description clamped to two lines (only when there is one), where and
+ * what, and reference, raised date and age.
  */
 function ComplaintCards({ rows }: { rows: Array<ComplaintRow & Matchable> }) {
   const router = useRouter()
@@ -554,7 +562,7 @@ function ComplaintCards({ rows }: { rows: Array<ComplaintRow & Matchable> }) {
           <li key={row.id}>
             <Card variant="record">
               <CardHeader>
-                <CardTitle className="tabular-nums">
+                <CardTitle className="min-w-0">
                   <CardLink
                     href={href}
                     onClick={(event) => {
@@ -565,18 +573,21 @@ function ComplaintCards({ rows }: { rows: Array<ComplaintRow & Matchable> }) {
                       router.push(href)
                     }}
                   >
-                    {row.reference}
+                    <span className="line-clamp-2 break-words">{row.title}</span>
                   </CardLink>
                 </CardTitle>
                 <ComplaintStatusBadge status={row.status} />
               </CardHeader>
               <CardContent className="flex flex-col gap-2 pt-0">
-                <p className="line-clamp-2 text-body text-text-primary">{row.description}</p>
+                {row.description ? (
+                  <p className="line-clamp-2 text-body text-text-primary">{row.description}</p>
+                ) : null}
                 <p className="min-w-0 truncate text-label text-text-secondary">
                   {complaintPlace(row)} · {row.category.name}
                 </p>
                 <p className="text-meta text-text-muted">
-                  Raised {formatDate(row.raisedAt)} · Age {ageLabel(row.ageDays).toLowerCase()}
+                  <span className="tabular-nums">{row.reference}</span> · Raised {formatDate(row.raisedAt)} · Age{" "}
+                  {ageLabel(row.ageDays).toLowerCase()}
                 </p>
               </CardContent>
             </Card>

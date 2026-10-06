@@ -275,11 +275,13 @@ export function ComplaintDetailPage({ id }: { id: string }) {
     <PageScroller className="max-sm:[&>div]:px-4">
       <RecordBreadcrumb trail={[{ label: "Complaints", href: "/complaints" }]} current={detail.reference} />
 
+      {/* 11.2: the record's name is the page title. A complaint's name is
+          its title (owner, 6 Oct 2026); the reference leads the meta line. */}
       <PageHeader
         className="mt-4"
-        title={<span className="tabular-nums">{detail.reference}</span>}
+        title={<span className="break-words">{detail.title}</span>}
         badges={<ComplaintStatusBadge status={detail.status} />}
-        meta={`${detail.category.name} · ${complaintPlace(detail)} · Raised ${formatDateTime(detail.raisedAt)} by ${detail.raisedBy.name}`}
+        meta={`${detail.reference} · ${detail.category.name} · ${complaintPlace(detail)} · Raised ${formatDateTime(detail.raisedAt)} by ${detail.raisedBy.name}`}
         actions={
           steps.length > 0 ? (
             <div className="hidden flex-wrap items-center gap-2 sm:flex">{actionButtons(false)}</div>
@@ -354,19 +356,34 @@ export function ComplaintDetailPage({ id }: { id: string }) {
                 <CardTitle>Complaint</CardTitle>
               </CardHeader>
               <CardContent className="flex flex-col gap-6">
-                <p className="text-body break-words whitespace-pre-wrap text-text-primary">
-                  {detail.description}
-                </p>
+                {/* Description, complainant and phone are optional (owner,
+                    6 Oct 2026). One that was not given says so plainly,
+                    the way "Where exactly" always has. */}
+                {detail.description ? (
+                  <p className="text-body break-words whitespace-pre-wrap text-text-primary">
+                    {detail.description}
+                  </p>
+                ) : (
+                  <p className="text-body text-text-secondary">No description was added.</p>
+                )}
                 <DetailFieldList>
-                  <DetailField label="Complainant">{detail.complainantName}</DetailField>
+                  <DetailField label="Complainant">
+                    {detail.complainantName ?? (
+                      <span className="font-normal text-text-secondary">No name was given</span>
+                    )}
+                  </DetailField>
                   <DetailField label="Phone number">
-                    <a
-                      href={`tel:${detail.complainantPhone.replace(/[^\d+]/g, "")}`}
-                      className="tap-area inline-flex items-center gap-1 rounded-sm text-primary-text underline underline-offset-2 outline-none focus-visible:outline-2 focus-visible:[outline-style:solid] focus-visible:outline-offset-2 focus-visible:outline-primary-ring"
-                    >
-                      <PhoneIcon className="size-4" aria-hidden="true" />
-                      {detail.complainantPhone}
-                    </a>
+                    {detail.complainantPhone ? (
+                      <a
+                        href={`tel:${detail.complainantPhone.replace(/[^\d+]/g, "")}`}
+                        className="tap-area inline-flex items-center gap-1 rounded-sm text-primary-text underline underline-offset-2 outline-none focus-visible:outline-2 focus-visible:[outline-style:solid] focus-visible:outline-offset-2 focus-visible:outline-primary-ring"
+                      >
+                        <PhoneIcon className="size-4" aria-hidden="true" />
+                        {detail.complainantPhone}
+                      </a>
+                    ) : (
+                      <span className="font-normal text-text-secondary">No phone number was given</span>
+                    )}
                   </DetailField>
                   <DetailField label="Where exactly" className="sm:col-span-2">
                     {detail.locationNote ? (

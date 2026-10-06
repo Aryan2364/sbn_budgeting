@@ -14,7 +14,25 @@ import { IsOptional, IsString, IsUUID, MaxLength, MinLength } from 'class-valida
 const trim = ({ value }: { value: unknown }): unknown =>
   typeof value === 'string' ? value.trim() : value;
 
+/** Trimmed, and a blank string (or null) becomes null: "none", which @IsOptional then accepts. */
+const blankToNull = ({ value }: { value: unknown }): unknown => {
+  if (value === null || value === undefined) return null;
+  if (typeof value !== 'string') return value;
+  const t = value.trim();
+  return t === '' ? null : t;
+};
+
 export class RaiseComplaintDto {
+  /**
+   * The complaint's short title, its main line everywhere (owner
+   * decision, 6 Oct 2026). Required: 1-120 characters after trimming.
+   */
+  @Transform(trim)
+  @IsString({ message: 'Enter a short title for the complaint' })
+  @MinLength(1, { message: 'Enter a short title for the complaint' })
+  @MaxLength(120, { message: 'Keep the title to 120 characters or fewer' })
+  title!: string;
+
   /**
    * The budget site the complaint is about (client decision, 1 Oct 2026,
    * CONTRACT section 10). It replaced `locationId`.
@@ -25,17 +43,21 @@ export class RaiseComplaintDto {
   @IsUUID('all', { message: 'Choose the category from the list' })
   categoryId!: string;
 
-  @Transform(trim)
-  @IsString({ message: "Enter the complainant's name" })
-  @MinLength(1, { message: "Enter the complainant's name" })
-  @MaxLength(200)
-  complainantName!: string;
+  // Optional from 6 Oct 2026 (owner): description, complainant's name and
+  // phone. Blank means none and is stored as null. A phone that IS given
+  // must still be a full 10-digit number (checked in the service).
 
-  @Transform(trim)
-  @IsString({ message: "Enter the complainant's phone number" })
-  @MinLength(1, { message: "Enter the complainant's phone number" })
+  @IsOptional()
+  @Transform(blankToNull)
+  @IsString()
+  @MaxLength(200)
+  complainantName?: string | null;
+
+  @IsOptional()
+  @Transform(blankToNull)
+  @IsString()
   @MaxLength(40)
-  complainantPhone!: string;
+  complainantPhone?: string | null;
 
   @IsOptional()
   @Transform(trim)
@@ -43,11 +65,11 @@ export class RaiseComplaintDto {
   @MaxLength(500)
   locationNote?: string;
 
-  @Transform(trim)
-  @IsString({ message: 'Describe the complaint' })
-  @MinLength(1, { message: 'Describe the complaint' })
+  @IsOptional()
+  @Transform(blankToNull)
+  @IsString()
   @MaxLength(5000)
-  description!: string;
+  description?: string | null;
 }
 
 export class NoteDto {

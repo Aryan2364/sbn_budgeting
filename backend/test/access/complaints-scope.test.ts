@@ -256,6 +256,7 @@ describe('complaints lane: scope through the routes (P3b)', { skip: dbTestsEnabl
 
     // Raise needs no tie to the site: the raiser leads none of them.
     const raised = await call('raiser', 'POST', '/complaints', {
+      title: 'Scope test',
       siteId: F.S.b,
       categoryId: F.CC.no_approval,
       complainantName: 'Scope Test',
@@ -267,6 +268,7 @@ describe('complaints lane: scope through the routes (P3b)', { skip: dbTestsEnabl
 
     // A site nobody can receive at is still refused by routing (L3), not by scope.
     const nobody = await call('raiser', 'POST', '/complaints', {
+      title: 'Scope test',
       siteId: F.S.c_no_people,
       categoryId: F.CC.no_approval,
       complainantName: 'Scope Test',

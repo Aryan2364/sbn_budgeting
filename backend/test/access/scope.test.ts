@@ -144,8 +144,8 @@ async function seedGraph(db: ScratchDb['client']): Promise<void> {
   ): Promise<void> => {
     await db.query(
       `insert into complaints (id, number, site_id, location_id, category_id, complainant_name, complainant_phone,
-         description, status, raised_by, supervisor_id, manager_id)
-       values ($1, $2, $3, $4, $5, 'C', '9825012345', $6, 'open', $7, $8, $9)`,
+         title, description, status, raised_by, supervisor_id, manager_id)
+       values ($1, $2, $3, $4, $5, 'C', '9825012345', $6, $6, 'open', $7, $8, $9)`,
       [COMPLAINTS[key], 900 + n, s ? SITES[s] : null, s ? null : LOCATION, CATEGORY, `complaint ${key}`, raisedBy, ...people],
     );
   };

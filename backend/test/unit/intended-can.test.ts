@@ -19,8 +19,14 @@ describe('intended difference D7: every list row and detail gains `can`', () => 
   });
 
   it('matches rows or a detail gaining exactly `can`', () => {
-    assert.equal(intendedIdFor(keysDiff('itemKeys', ['id', 'status'], ['can', 'id', 'status'])), 'D7');
-    assert.equal(intendedIdFor(keysDiff('keys', ['actions', 'id'], ['actions', 'can', 'id'], 'GET /api/complaints/:id')), 'D7');
+    assert.equal(intendedIdFor(keysDiff('itemKeys', ['id', 'name'], ['can', 'id', 'name'], 'GET /api/sites')), 'D7');
+    assert.equal(intendedIdFor(keysDiff('keys', ['id', 'name'], ['can', 'id', 'name'], 'GET /api/sites/:id')), 'D7');
+    // Complaints also gain `title` (migration 0014; intended-title.test.ts).
+    assert.equal(intendedIdFor(keysDiff('itemKeys', ['id', 'status'], ['can', 'id', 'status', 'title'])), 'D7');
+    assert.equal(
+      intendedIdFor(keysDiff('keys', ['actions', 'id'], ['actions', 'can', 'id', 'title'], 'GET /api/complaints/:id')),
+      'D7',
+    );
   });
 
   it('matches nothing else', () => {

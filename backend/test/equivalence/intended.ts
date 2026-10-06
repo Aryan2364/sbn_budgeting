@@ -171,7 +171,7 @@ function d8KeysIdFor(d: Difference, route: string): string | null {
   const base = d.baseline as string[];
   const run = d.run as string[];
   if (!removed.every((k) => base.includes(k))) return null;
-  const expected = base.filter((k) => !removed.includes(k));
+  const expected = withTitle(route, base.filter((k) => !removed.includes(k)));
   if (run.includes(D7_RECORD_KEY) && !base.includes(D7_RECORD_KEY)) expected.push(D7_RECORD_KEY);
   return same(expected.sort(), run) ? 'D8' : null;
 }
@@ -304,6 +304,118 @@ function d5IdFor(d: Difference): string | null {
 }
 
 // ---------------------------------------------------------------------
+// The complaint title (owner decision, 6 Oct 2026; migration 0014).
+//
+// D7 (additive, like `can`): a complaint list row and a complaint detail
+// gain `title`, the complaint's short title. Additive only:
+//   - a GET's `keys` (the detail) or `itemKeys` (the list rows) may gain
+//     exactly `title` (beside D7's `can` and D8's removals) and nothing
+//     else, on exactly these two routes;
+//   - the digest is taken with `title` removed from those two routes'
+//     bodies only (matrix.ts), so every other field, description and
+//     complainant included, must still match the baseline exactly.
+// The baseline has no `title` key on either route, so stripping it hides
+// nothing the old build sent.
+//
+// D11: the complainant's name, phone and description are optional. A
+// raise that leaves them out (or sends them blank) is answered as the
+// full raise is, where the old build refused it (400). The baseline has
+// no such case, so they are cases ADDED to the run, matched by name, and
+// only when their status equals the same person's full raise in the run.
+// ---------------------------------------------------------------------
+
+/** D7: the key complaint rows and details gain (migration 0014). */
+export const D7_TITLE_KEY = 'title';
+
+/** D7: the routes (method + template) whose records gain `title`. */
+export const D7_TITLE_ROUTES: readonly string[] = ['GET /api/complaints', 'GET /api/complaints/:id'];
+
+/** The request paths of those two routes: `/api/complaints` and `/api/complaints/<uuid>`. */
+const TITLE_PATH = /^\/api\/complaints(?:\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})?$/i;
+
+function withoutTitleKey(value: unknown): unknown {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) if (k !== D7_TITLE_KEY) out[k] = v;
+  return out;
+}
+
+/**
+ * The body with D7's `title` removed, for the digest: from a complaint
+ * detail, or from each complaint row, on the two titled routes only.
+ * Any other path's body is returned untouched.
+ */
+export function withoutComplaintTitle(path: string, body: unknown): unknown {
+  if (!TITLE_PATH.test(path)) return body;
+  if (Array.isArray(body)) return body.map(withoutTitleKey);
+  const out = withoutTitleKey(body);
+  if (!out || typeof out !== 'object') return out;
+  const o = out as Record<string, unknown>;
+  for (const k of ['data', 'rows', 'items']) if (Array.isArray(o[k])) o[k] = (o[k] as unknown[]).map(withoutTitleKey);
+  return o;
+}
+
+/** Keys as the run should have them on `route`: plus `title` on a titled route. */
+function withTitle(route: string, keys: readonly string[]): string[] {
+  return D7_TITLE_ROUTES.includes(route) && !keys.includes(D7_TITLE_KEY) ? [...keys, D7_TITLE_KEY] : [...keys];
+}
+
+/**
+ * D7 for a titled route's `keys` / `itemKeys` that gained exactly `title`
+ * (against a build that already sent `can`, e.g. a pre-switch snapshot).
+ */
+function titleOnlyIdFor(d: Difference): string | null {
+  if (d.kind !== 'field' || (d.field !== 'keys' && d.field !== 'itemKeys')) return null;
+  const { route } = splitKey(d.key);
+  if (!D7_TITLE_ROUTES.includes(route)) return null;
+  if (!Array.isArray(d.baseline) || !Array.isArray(d.run)) return null;
+  const base = d.baseline as string[];
+  if (base.includes(D7_TITLE_KEY)) return null;
+  return same(withTitle(route, base).sort(), d.run) ? 'D7' : null;
+}
+
+/** D11: the full raise case each D11 case is judged against. */
+export const D11_RAISE_CASE = 'POST /api/complaints';
+
+/** D11: the raise cases with no complainant name, phone or description (cases.ts). */
+export const D11_CASES: readonly string[] = [
+  'POST /api/complaints [without-optional-fields]',
+  'POST /api/complaints [optional-fields-blank]',
+];
+
+/**
+ * D11 for one difference: one of D11's cases, ADDED to the run, whose
+ * status is the same person's full raise status in this run (201 to
+ * whoever may raise; the same refusal to whoever may not). Nothing else:
+ * not a field difference, not a case missing from the run, not another
+ * route's case.
+ */
+export function optionalFieldsIdFor(d: Difference, world?: IntendedWorld): string | null {
+  if (d.kind !== 'case-only-in-run' || !world) return null;
+  const { kase, who } = splitKey(d.key);
+  if (!D11_CASES.includes(kase)) return null;
+  const full = world.runCases[`${D11_RAISE_CASE} |${who}`];
+  const run = world.runCases[d.key];
+  if (!full || !run || full.status === undefined) return null;
+  return run.status === full.status ? 'D11' : null;
+}
+
+/**
+ * Plan 6.3.2, every listed entry appears: D11's cases are in every run,
+ * and in each, someone who may raise must have had it succeed (201).
+ */
+export function missingOptionalFields(diffs: readonly Difference[], world: IntendedWorld): string[] {
+  const out: string[] = [];
+  for (const kase of D11_CASES) {
+    const hits = diffs.filter((d) => splitKey(d.key).kase === kase && optionalFieldsIdFor(d, world) === 'D11');
+    if (!hits.some((d) => world.runCases[d.key]?.status === 201)) {
+      out.push(`D11 lists ${kase}, but no raise without the optional fields succeeded`);
+    }
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------
 // D10 (owner decision, 6 Oct 2026): two report routes no screen calls
 // are removed. GET /reports/variance/periods (static period labels; the
 // frontend keeps its own, lib/periods.ts) and GET /reports/variance/
@@ -349,6 +461,8 @@ export function intendedIdFor(d: Difference, world?: IntendedWorld): string | nu
   if (d5) return d5;
   const d10 = removedRouteIdFor(d);
   if (d10) return d10;
+  const d11 = optionalFieldsIdFor(d, world);
+  if (d11) return d11;
   if (world) {
     const id = approvalsIdFor(d, world);
     if (id) return id;
@@ -359,8 +473,13 @@ export function intendedIdFor(d: Difference, world?: IntendedWorld): string | nu
   if (method !== 'GET' || !path) return null;
   if (!Array.isArray(d.baseline) || !Array.isArray(d.run)) return null;
   const base = d.baseline as string[];
-  // Rows or a detail gaining exactly `can` (the per-record answers).
-  if (!base.includes(D7_RECORD_KEY) && same([...base, D7_RECORD_KEY].sort(), d.run)) return 'D7';
+  // Rows or a detail gaining exactly `can` (the per-record answers), and
+  // `title` on the two complaint routes (migration 0014).
+  if (!base.includes(D7_RECORD_KEY) && same(withTitle(`${method} ${path}`, [...base, D7_RECORD_KEY]).sort(), d.run)) {
+    return 'D7';
+  }
+  const titled = titleOnlyIdFor(d);
+  if (titled) return titled;
   if (d.field !== 'keys') return null;
   const extra = D7_ADDITIVE_KEYS[path];
   if (!extra) return null;
@@ -494,7 +613,8 @@ export function switchOverIdFor(d: Difference, world: IntendedWorld): string | n
  * Against a PRE-SWITCH build's answers (a shadow-mode build, which
  * already carried D1, D5, D6 and D7): only D2, D3 and D4 may differ, and
  * D8, D9 and D10, which came after that build (migration 0013; the
- * removed report routes). Anything
+ * removed report routes), and the complaint title's D7 (`title` only)
+ * and D11 (migration 0014). Anything
  * else, including a difference that would be D1 or D7 against the old
  * baseline, is unmatched.
  */
@@ -502,7 +622,12 @@ export function matchSwitchOnly(diffs: readonly Difference[], world: IntendedWor
   const unmatched: Difference[] = [];
   const matched: Record<string, number> = {};
   for (const d of diffs) {
-    const id = switchOverIdFor(d, world) ?? approvalsIdFor(d, world) ?? removedRouteIdFor(d);
+    const id =
+      switchOverIdFor(d, world) ??
+      approvalsIdFor(d, world) ??
+      removedRouteIdFor(d) ??
+      titleOnlyIdFor(d) ??
+      optionalFieldsIdFor(d, world);
     if (id) matched[id] = (matched[id] ?? 0) + 1;
     else unmatched.push(d);
   }

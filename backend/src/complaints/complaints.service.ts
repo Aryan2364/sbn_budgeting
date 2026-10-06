@@ -47,8 +47,12 @@ export interface ComplaintRow {
   site: PersonRef | null;
   /** The complaint's own location (older rows), else the site's, else null. */
   location: PersonRef | null;
-  description: string;
-  complainantName: string;
+  /** The complaint's short title, its main line everywhere (owner, 6 Oct 2026). */
+  title: string;
+  /** Optional from 6 Oct 2026 (owner): null when none was given. */
+  description: string | null;
+  /** Optional from 6 Oct 2026 (owner): null when none was given. */
+  complainantName: string | null;
   raisedAt: string;
   raisedBy: PersonRef;
   supervisor: PersonRef;
@@ -69,7 +73,8 @@ export interface ComplaintRow {
 }
 
 export interface ComplaintDetail extends ComplaintRow {
-  complainantPhone: string;
+  /** Optional from 6 Oct 2026 (owner): null when none was given. */
+  complainantPhone: string | null;
   locationNote: string | null;
   manager: PersonRef | null;
   startedAt: string | null;
@@ -183,7 +188,7 @@ const ROW_SELECT = `
   json_build_object('id', cc.id, 'name', cc.name) as category,
   ${personOrNull('st')} as site,
   ${personOrNull('l')} as location,
-  c.description, c.complainant_name as "complainantName",
+  c.title, c.description, c.complainant_name as "complainantName",
   c.raised_at as "raisedAt", ${person('rb')} as "raisedBy", ${person('sv')} as supervisor,
   ${AGE_DAYS_SQL} as "ageDays",
   (select count(*)::int from complaint_photos p where p.complaint_id = c.id) as "photoCount"`;
@@ -350,7 +355,9 @@ export class ComplaintsService {
         can: CAN_ACTIONS,
         from: ROW_FROM,
         select: ROW_SELECT,
-        titleField: { sql: REFERENCE_SQL, label: 'Reference' },
+        // The row's main line is the reference and the title together
+        // (owner, 6 Oct 2026), so a hit on either needs no "matched in" note.
+        titleField: { sql: `(${REFERENCE_SQL} || ' ' || c.title)`, label: 'Title' },
         // Every text a person would search a complaint by. The resolution
         // note is left out on purpose: it is not on the row, and a match
         // on text the list never shows looks like a wrong result.
@@ -578,7 +585,9 @@ export class ComplaintsService {
     files: UploadedPhoto[] | undefined,
   ): Promise<ComplaintDetail> {
     const photos = checkPhotos(files, { min: 0, max: MAX_PHOTOS });
-    if (body.complainantPhone.replace(/\D/g, '').length < 10) {
+    // Optional (owner, 6 Oct 2026): none is null; one that is given must
+    // still be a full number.
+    if (body.complainantPhone && body.complainantPhone.replace(/\D/g, '').length < 10) {
       throw new UnprocessableEntityException(
         `"${body.complainantPhone}" is not a full phone number. Enter all 10 digits, like 98250 12345.`,
       );
@@ -627,13 +636,13 @@ export class ComplaintsService {
         // and the number is burned, as the sequence always allowed.
         const { rows } = await client.query<{ id: string; reference: string; year: number }>(
           `insert into complaints as c
-             (site_id, category_id, complainant_name, complainant_phone, location_note,
+             (site_id, category_id, title, complainant_name, complainant_phone, location_note,
               description, raised_by, supervisor_id, manager_id)
-           values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+           values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
            returning c.id, ${REFERENCE_SQL} as reference, ${RAISED_YEAR_SQL} as year`,
           [
-            site.id, category.id, body.complainantName, body.complainantPhone,
-            body.locationNote || null, body.description, user.id,
+            site.id, category.id, body.title, body.complainantName || null, body.complainantPhone || null,
+            body.locationNote || null, body.description || null, user.id,
             routing.supervisor.id, routing.manager?.id ?? null,
           ],
         );
@@ -656,7 +665,9 @@ export class ComplaintsService {
         });
 
         const what = `${category.name} at ${site.name}`;
-        await notify(client, created.id, user.id, short(body.description), [
+        // The notification quotes the complaint by its title, its heading
+        // everywhere (owner, 6 Oct 2026); the description is optional.
+        await notify(client, created.id, user.id, short(body.title), [
           { userId: routing.supervisor.id, kind: 'assigned', title: `New complaint ${created.reference} for you: ${what}` },
           { userId: routing.manager?.id, kind: 'copied', title: `${created.reference} raised: ${what}` },
         ]);

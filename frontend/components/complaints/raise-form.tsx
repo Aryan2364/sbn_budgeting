@@ -49,10 +49,14 @@ import { useComplaintMasters } from "@/components/complaints/use-masters"
  * phone exception: single column below 640px, full-width controls,
  * 16px inputs, the camera one tap away).
  *
- * The contract's fields in the partner's own order: site, category,
- * complainant name and phone (prefilled from the signed-in person and
- * editable), a note on where exactly, the description, and up to three
- * photos.
+ * The fields in the owner's order (6 Oct 2026): the complaint's title,
+ * site, category, description, complainant's name and phone (prefilled
+ * from the signed-in person and editable), then a note on where exactly
+ * and up to three photos. Only the title, site and category are
+ * required. The optional fields say "જરૂરી નથી" in their helper text,
+ * as the place note always has (owner's instruction; it departs from
+ * 11.3 rule 3, which leaves optional fields unmarked). An empty optional
+ * field is sent as nothing; a phone that IS given must be 10 digits.
  *
  * A complaint is filed against a budget site (CONTRACT §10). Routing is
  * decided by the server at raise time. The form previews it from the
@@ -87,12 +91,11 @@ const GU = {
   tryAgain: "ફરી પ્રયાસ કરો",
 
   // Validation
+  needTitle: "ફરિયાદનો વિષય ટૂંકમાં લખો",
+  longTitle: (max: number) => `વિષય ${max} અક્ષર સુધીમાં લખો. વધુ વિગત નીચે લખી શકો છો.`,
   needSite: "ફરિયાદ કઈ સાઇટની છે તે પસંદ કરો",
   needCategory: "ફરિયાદનો પ્રકાર પસંદ કરો",
-  needName: "ફરિયાદીનું નામ લખો",
-  needPhone: "મોબાઇલ નંબર લખો, જેથી સુપરવાઇઝર ફોન કરી શકે",
-  shortPhone: "પૂરો 10 આંકડાનો મોબાઇલ નંબર લખો, જેમ કે 98765 43210",
-  needDescription: "સમસ્યાની વિગત લખો, જેથી સુપરવાઇઝરને ખબર પડે કે શું સુધારવાનું છે",
+  shortPhone: "પૂરો 10 આંકડાનો મોબાઇલ નંબર લખો, જેમ કે 98765 43210, અથવા આ ખાનું ખાલી રાખો",
   tooManyPhotos: (max: number) => `વધુમાં વધુ ${max} ફોટા ઉમેરો`,
 
   // Submit failure banner
@@ -119,10 +122,20 @@ const GU = {
   noSupervisorOthers: (site: string) =>
     `${site} માટે સુપરવાઇઝર નથી, તેથી ફરિયાદ નહીં પહોંચે. બીજી સાઇટ પસંદ કરો.`,
 
+  // Title field
+  titleHint: "ટૂંકમાં લખો, જેમ કે 'પાણીની લાઇન તૂટી ગઈ'.",
+
   // Category field
   categoryPlaceholder: "ફરિયાદનો પ્રકાર પસંદ કરો",
   categorySearch: "ફરિયાદનો પ્રકાર શોધો",
   categoryNoMatch: "આ નામનો કોઈ ફરિયાદનો પ્રકાર મળ્યો નથી. બીજું નામ લખીને શોધો.",
+
+  // Optional fields (owner, 6 Oct 2026): their helper text says so first,
+  // the way the place note always has.
+  descriptionHint:
+    "જરૂરી નથી. શું થયું છે તે વિગતે લખો, જેથી સુપરવાઇઝરને ખબર પડે કે શું સુધારવાનું છે.",
+  complainantNameHint: "જરૂરી નથી.",
+  complainantPhoneHint: "જરૂરી નથી. લખશો તો સુપરવાઇઝર ફોન કરી શકશે.",
 
   // Exact place field
   locationNoteHint:
@@ -131,7 +144,6 @@ const GU = {
 
   // Raised on someone else's behalf
   onBehalfOf: (name: string) => `તમે આ ફરિયાદ ${name} વતી નોંધાવી રહ્યા છો.`,
-  theComplainant: "ફરિયાદી",
 
   // Footer
   cancel: "રદ કરો",
@@ -204,7 +216,11 @@ const GU_UPLOAD: FileUploadText = {
   confirmAction: () => "ફોટો દૂર કરો",
 }
 
+/** The API's limit on a title (RaiseComplaintDto). */
+const MAX_TITLE = 120
+
 interface Values {
+  title: string
   siteId: string
   categoryId: string
   complainantName: string
@@ -221,19 +237,20 @@ function digits(text: string) {
 
 function validate(key: FieldKey, values: Values, photos: FileUploadItem[]): string | null {
   switch (key) {
+    case "title": {
+      const title = values.title.trim()
+      if (!title) return GU.needTitle
+      return title.length > MAX_TITLE ? GU.longTitle(MAX_TITLE) : null
+    }
     case "siteId":
       return values.siteId ? null : GU.needSite
     case "categoryId":
       return values.categoryId ? null : GU.needCategory
-    case "complainantName":
-      return values.complainantName.trim() ? null : GU.needName
     case "complainantPhone": {
-      const d = digits(values.complainantPhone)
-      if (!d) return GU.needPhone
-      return d.length >= 10 ? null : GU.shortPhone
+      // Optional: empty is none. One that is given must be a full number.
+      if (!values.complainantPhone.trim()) return null
+      return digits(values.complainantPhone).length >= 10 ? null : GU.shortPhone
     }
-    case "description":
-      return values.description.trim() ? null : GU.needDescription
     case "photos":
       return photos.length > MAX_PHOTOS ? GU.tooManyPhotos(MAX_PHOTOS) : null
     default:
@@ -241,14 +258,7 @@ function validate(key: FieldKey, values: Values, photos: FileUploadItem[]): stri
   }
 }
 
-const ORDER: FieldKey[] = [
-  "siteId",
-  "categoryId",
-  "complainantName",
-  "complainantPhone",
-  "description",
-  "photos",
-]
+const ORDER: FieldKey[] = ["title", "siteId", "categoryId", "complainantPhone", "photos"]
 
 export function RaiseComplaintForm() {
   const router = useRouter()
@@ -263,6 +273,7 @@ export function RaiseComplaintForm() {
 
   const initial = React.useMemo<Values>(
     () => ({
+      title: "",
       siteId: "",
       categoryId: "",
       complainantName: user?.name ?? "",
@@ -330,12 +341,14 @@ export function RaiseComplaintForm() {
     try {
       const detail = await complaintsApi.raise(
         {
+          title: values.title.trim(),
           siteId: values.siteId,
           categoryId: values.categoryId,
-          complainantName: values.complainantName.trim(),
-          complainantPhone: values.complainantPhone.trim(),
+          // Optional: an empty field is not sent at all (none).
+          complainantName: values.complainantName.trim() || undefined,
+          complainantPhone: values.complainantPhone.trim() || undefined,
           locationNote: values.locationNote.trim() || undefined,
-          description: values.description.trim(),
+          description: values.description.trim() || undefined,
         },
         filesToSend(photos),
       )
@@ -435,7 +448,7 @@ export function RaiseComplaintForm() {
 
             {masters.loading ? (
               <div className="mt-8 flex flex-col gap-6" aria-hidden="true">
-                {Array.from({ length: 5 }, (_, i) => (
+                {Array.from({ length: 6 }, (_, i) => (
                   <div key={i} className="flex flex-col gap-2">
                     <Skeleton className="h-4 w-24" />
                     <Skeleton className="h-control w-full max-w-field-max" />
@@ -444,6 +457,25 @@ export function RaiseComplaintForm() {
               </div>
             ) : (
               <div className="mt-8 grid grid-cols-12 gap-6">
+                <FormField
+                  span={12}
+                  label="ફરિયાદનો વિષય"
+                  required
+                  htmlFor="raise-title"
+                  error={errors.title}
+                  hint={GU.titleHint}
+                >
+                  <Input
+                    id="raise-title"
+                    value={values.title}
+                    maxLength={MAX_TITLE}
+                    aria-invalid={Boolean(errors.title) || undefined}
+                    onChange={(e) => set("title", e.target.value)}
+                    onBlur={blur("title")}
+                    className={cn(PHONE_TEXT, "max-sm:max-w-none")}
+                  />
+                </FormField>
+
                 <FormField
                   span={6}
                   label="સાઇટ"
@@ -524,35 +556,15 @@ export function RaiseComplaintForm() {
 
                 <FormField
                   span={12}
-                  label="ચોક્કસ જગ્યા"
-                  htmlFor="raise-locationNote"
-                  hint={GU.locationNoteHint}
-                >
-                  <Textarea
-                    id="raise-locationNote"
-                    rows={2}
-                    value={values.locationNote}
-                    onChange={(e) => set("locationNote", e.target.value)}
-                    onKeyDown={ctrlEnterSaves}
-                    placeholder={GU.locationNotePlaceholder}
-                    className={PHONE_TEXT}
-                  />
-                </FormField>
-
-                <FormField
-                  span={12}
                   label="ફરિયાદની વિગત"
-                  required
                   htmlFor="raise-description"
-                  error={errors.description}
+                  hint={GU.descriptionHint}
                 >
                   <Textarea
                     id="raise-description"
                     rows={4}
                     value={values.description}
-                    aria-invalid={Boolean(errors.description) || undefined}
                     onChange={(e) => set("description", e.target.value)}
-                    onBlur={blur("description")}
                     onKeyDown={ctrlEnterSaves}
                     className={PHONE_TEXT}
                   />
@@ -561,26 +573,23 @@ export function RaiseComplaintForm() {
                 <FormField
                   span={6}
                   label="ફરિયાદીનું નામ"
-                  required
                   htmlFor="raise-complainantName"
-                  error={errors.complainantName}
+                  hint={GU.complainantNameHint}
                 >
                   <Input
                     id="raise-complainantName"
                     autoComplete="name"
                     value={values.complainantName}
-                    aria-invalid={Boolean(errors.complainantName) || undefined}
                     onChange={(e) => set("complainantName", e.target.value)}
-                    onBlur={blur("complainantName")}
                     className={cn(PHONE_TEXT, "max-sm:max-w-none")}
                   />
                 </FormField>
                 <FormField
                   span={4}
                   label="ફરિયાદીનો મોબાઇલ નંબર"
-                  required
                   htmlFor="raise-complainantPhone"
                   error={errors.complainantPhone}
+                  hint={GU.complainantPhoneHint}
                 >
                   <Input
                     id="raise-complainantPhone"
@@ -595,12 +604,30 @@ export function RaiseComplaintForm() {
                     className={cn(PHONE_TEXT, "max-sm:max-w-none")}
                   />
                 </FormField>
-                {user && values.complainantName.trim() !== user.name ? (
+                {/* Only when another person is named: no name means no one. */}
+                {user && values.complainantName.trim() && values.complainantName.trim() !== user.name ? (
                   <p className="col-span-12 -mt-4 flex items-center gap-1 text-label text-text-secondary">
                     <UserIcon className="size-4" aria-hidden="true" />
-                    {GU.onBehalfOf(values.complainantName.trim() || GU.theComplainant)}
+                    {GU.onBehalfOf(values.complainantName.trim())}
                   </p>
                 ) : null}
+
+                <FormField
+                  span={12}
+                  label="ચોક્કસ જગ્યા"
+                  htmlFor="raise-locationNote"
+                  hint={GU.locationNoteHint}
+                >
+                  <Textarea
+                    id="raise-locationNote"
+                    rows={2}
+                    value={values.locationNote}
+                    onChange={(e) => set("locationNote", e.target.value)}
+                    onKeyDown={ctrlEnterSaves}
+                    placeholder={GU.locationNotePlaceholder}
+                    className={PHONE_TEXT}
+                  />
+                </FormField>
 
                 <FormField
                   span={12}

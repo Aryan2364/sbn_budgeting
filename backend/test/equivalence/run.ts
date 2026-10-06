@@ -62,6 +62,7 @@ import {
   matchIntended,
   matchSwitchOnly,
   missingApprovals,
+  missingOptionalFields,
   missingRemovals,
   missingSwitchOver,
   moduleLookup,
@@ -402,6 +403,8 @@ if (require.main === module) {
       const missing = opts.only ? [] : missingSwitchOver(differences, intendedWorld, expect);
       // D10 must appear too: both removed report routes are in every baseline.
       if (!opts.only) missing.push(...missingRemovals(differences));
+      // D11 too: its raise cases are in every run, and someone may raise.
+      if (!opts.only) missing.push(...missingOptionalFields(differences, intendedWorld));
 
       if (approvalsMissing.length) {
         process.stdout.write(`FAIL: ${approvalsMissing.length} D8/D9 change(s) missing.\n`);
