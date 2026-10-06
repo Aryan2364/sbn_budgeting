@@ -37,17 +37,6 @@ import { reasonFor } from './permission.guard';
 /** Pushes a value and returns its placeholder (`$3`). runListQuery's own `param`. */
 export type Param = (value: unknown) => string;
 
-/** The record types a scope predicate exists for (plan 5.2). */
-export const RECORD_TYPES: readonly RecordType[] = [
-  'project',
-  'site',
-  'site_budget',
-  'expense',
-  'variance',
-  'complaint',
-  'person',
-];
-
 /** The people a complaint names (Own, plan 6.1.4): its raiser, and the site's supervisor and manager. */
 const COMPLAINT_PEOPLE = ['raised_by', 'supervisor_id', 'manager_id'] as const;
 

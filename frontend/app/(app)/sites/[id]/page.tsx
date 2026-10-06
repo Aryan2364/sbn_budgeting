@@ -65,7 +65,7 @@ import {
 import { RecordBreadcrumb } from "@/components/forms/record-breadcrumb"
 import { HeadPeriodGrid, measureLabel, type Measure } from "@/components/forms/head-period-grid"
 import { DeleteRecordDialog } from "@/components/forms/delete-record-dialog"
-import { PermissionTooltip } from "@/components/forms/permission-tooltip"
+import { PermissionTooltip } from "@/components/ui/permission-tooltip"
 import { varianceDirection } from "@/components/forms/variance-figures"
 
 

@@ -22,8 +22,6 @@
  * up with no edit here.
  */
 
-import * as React from "react"
-
 import { buildExportFilename, formatDate } from "@/lib/format"
 
 /**

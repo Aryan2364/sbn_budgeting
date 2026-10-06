@@ -312,25 +312,6 @@ export const notificationsApi = {
   readAll: () => api.post<void>("/notifications/read-all", {}),
 }
 
-/**
- * Every page of a list, for a picker. Pickers are the one place a
- * whole master list is needed at once; the loop stops at the API's own
- * total, so it cannot silently drop the 101st row the way a single
- * `pageSize: 100` request would.
- */
-export async function fetchAllPages<T>(
-  load: (page: number) => Promise<ListResponse<T>>,
-  maxPages = 20,
-): Promise<T[]> {
-  const first = await load(1)
-  const rows = [...first.data]
-  for (let page = 2; page <= Math.min(first.totalPages, maxPages); page += 1) {
-    const next = await load(page)
-    rows.push(...next.data)
-  }
-  return rows
-}
-
 // ---------------------------------------------------------------
 // Authenticated photo loading
 // ---------------------------------------------------------------

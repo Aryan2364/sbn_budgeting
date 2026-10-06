@@ -13,7 +13,7 @@ import {
   Query,
 } from '@nestjs/common';
 import { Transform } from 'class-transformer';
-import { IsInt, IsOptional, IsString, Min, MinLength } from 'class-validator';
+import { IsInt, IsString, Min, MinLength } from 'class-validator';
 import type { Pool } from 'pg';
 
 import { isPgError, PG_FOREIGN_KEY_VIOLATION, buildUpdate } from '../common/crud';

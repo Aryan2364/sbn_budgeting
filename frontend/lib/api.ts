@@ -361,9 +361,6 @@ export interface Location {
   complaintCount: number
 }
 
-/** Kept for the budget screens: a location is a site location. */
-export type SiteLocation = Location
-
 export interface Designation {
   id: string
   name: string
@@ -674,19 +671,6 @@ export interface VarianceRow {
   actualPaise: string
   variancePaise: string | null
   variancePct: string | null
-}
-
-/** `GET /reports/variance/sites/:siteId`, optionally for one period. */
-export interface SiteVariance {
-  /**
-   * The site's own total, read from the view rather than added up from
-   * the rows — and read at the SAME period the rows are. Null only
-   * where the site has no budget and no expenses in that period.
-   */
-  total: VarianceRow | null
-  /** One per cost head. Driven from `cost_heads`, not from the view. */
-  rows: VarianceRow[]
-  period: number | null
 }
 
 /** Phase 7b, Report 1. One period, at whatever scope was asked for. */

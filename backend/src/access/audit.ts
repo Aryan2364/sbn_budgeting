@@ -53,8 +53,6 @@ export interface AuditActor {
   name: string;
 }
 
-export const SYSTEM_ACTOR: AuditActor = { id: null, name: 'System' };
-
 export interface AuditNamed {
   id: string;
   name: string;

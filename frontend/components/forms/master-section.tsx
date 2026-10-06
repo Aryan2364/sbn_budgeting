@@ -29,7 +29,7 @@ import {
 } from "@/components/ui/table"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { DeleteRecordDialog } from "@/components/forms/delete-record-dialog"
-import { PermissionTooltip } from "@/components/forms/permission-tooltip"
+import { PermissionTooltip } from "@/components/ui/permission-tooltip"
 
 /** Section 10 rule 4, applied the same way `record-list` applies it. */
 const PRIORITY_CLASS = {

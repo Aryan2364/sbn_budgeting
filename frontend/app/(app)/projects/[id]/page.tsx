@@ -42,7 +42,7 @@ import {
 } from "@/components/templates/detail-page"
 import { RecordBreadcrumb } from "@/components/forms/record-breadcrumb"
 import { DeleteRecordDialog } from "@/components/forms/delete-record-dialog"
-import { PermissionTooltip } from "@/components/forms/permission-tooltip"
+import { PermissionTooltip } from "@/components/ui/permission-tooltip"
 import type { ExportColumn } from "@/lib/pdf-export"
 
 /**

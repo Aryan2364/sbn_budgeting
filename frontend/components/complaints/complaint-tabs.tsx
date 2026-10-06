@@ -1,7 +1,5 @@
 "use client"
 
-import * as React from "react"
-
 import type { ComplaintCounts, ComplaintTab } from "@/lib/complaints-api"
 import { SectionTabs } from "@/components/ui/section-tabs"
 

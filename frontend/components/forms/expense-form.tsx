@@ -59,7 +59,7 @@ import {
 import { RecordBreadcrumb } from "@/components/forms/record-breadcrumb"
 import { FormError, FormLoadFailed } from "@/components/forms/form-error"
 import { DeleteRecordDialog } from "@/components/forms/delete-record-dialog"
-import { PermissionTooltip } from "@/components/forms/permission-tooltip"
+import { PermissionTooltip } from "@/components/ui/permission-tooltip"
 
 function toIsoDate(date: Date): string {
   const year = date.getFullYear()
