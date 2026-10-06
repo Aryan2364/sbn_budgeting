@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { LayoutGridIcon, ListIcon, SearchIcon, XIcon } from "lucide-react"
+import { SearchIcon, XIcon } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 import { formatNumber } from "@/lib/format"
@@ -122,71 +122,6 @@ function ListSearch({
         </InputGroupAddon>
       ) : null}
     </InputGroup>
-  )
-}
-
-/**
- * Section 11.1: a joined pair on the far right, the active side tinted
- * with primary-subtle. Section 11.6: switching view changes appearance
- * only, never content, and the choice is remembered.
- *
- * Not a pair of Buttons: a Button carries its own border and radius on
- * all four sides, and two of them cannot be joined without fighting
- * both. The states below are the same tokens a ghost button uses.
- */
-type ListView = "list" | "card"
-
-function ListViewSwitcher({
-  value,
-  onValueChange,
-  className,
-}: {
-  value: ListView
-  onValueChange: (value: ListView) => void
-  className?: string
-}) {
-  const options: { value: ListView; label: string; icon: React.ReactNode }[] = [
-    { value: "list", label: "List view", icon: <ListIcon /> },
-    { value: "card", label: "Card view", icon: <LayoutGridIcon /> },
-  ]
-
-  return (
-    <div
-      data-slot="list-view-switcher"
-      role="group"
-      aria-label="View"
-      className={cn(
-        "inline-flex shrink-0 overflow-hidden rounded-lg border border-border",
-        className
-      )}
-    >
-      {options.map((option, index) => (
-        <Tooltip key={option.value}>
-          <TooltipTrigger
-            render={
-              <button
-                type="button"
-                aria-label={option.label}
-                aria-pressed={value === option.value}
-                data-active={value === option.value || undefined}
-                onClick={() => onValueChange(option.value)}
-                className={cn(
-                  "flex size-control cursor-pointer items-center justify-center bg-surface text-text-primary transition-colors",
-                  "hover:bg-surface-control active:bg-surface-control-pressed",
-                  "outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary-ring",
-                  "data-active:bg-primary-subtle data-active:text-primary-pressed",
-                  index > 0 && "border-l border-border",
-                  "[&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-icon-nav"
-                )}
-              />
-            }
-          >
-            {option.icon}
-          </TooltipTrigger>
-          <TooltipContent side="bottom">{option.label}</TooltipContent>
-        </Tooltip>
-      ))}
-    </div>
   )
 }
 
@@ -329,8 +264,6 @@ function ListPagination({
 export {
   ListToolbar,
   ListSearch,
-  ListViewSwitcher,
   ListDataArea,
   ListPagination,
-  type ListView,
 }

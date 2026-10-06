@@ -282,14 +282,14 @@ export const ROUTES: Record<string, RouteSpec> = {
     ],
   },
   'GET /api/reports/variance/summary': { variants: [{ name: '' }] },
-  'GET /api/reports/variance/periods': { variants: [{ name: '' }] },
   'GET /api/reports/variance/periods-summary': {
     variants: [{ name: '' }, { name: 'one-site', query: {} }],
   },
   'GET /api/reports/variance/head-periods': {
     variants: [{ name: '' }, { name: 'one-site', query: {} }],
   },
-  'GET /api/reports/variance/sites/:siteId': { params: { siteId: 'site' }, variants: [{ name: '' }] },
+  // GET /periods and GET /sites/:siteId: removed, unused (owner decision,
+  // 6 Oct 2026; intended difference D10). Their baseline cases are matched there.
 
   // ---- budget Picks (P3b; new-system routes, D7) ---------------------
   'GET /api/pick/budget/projects': {

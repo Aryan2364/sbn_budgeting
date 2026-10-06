@@ -303,6 +303,41 @@ function d5IdFor(d: Difference): string | null {
   return d.baseline === 422 && (d.run === 200 || d.run === 409) ? 'D5' : null;
 }
 
+// ---------------------------------------------------------------------
+// D10 (owner decision, 6 Oct 2026): two report routes no screen calls
+// are removed. GET /reports/variance/periods (static period labels; the
+// frontend keeps its own, lib/periods.ts) and GET /reports/variance/
+// sites/:siteId (the old one-site report; the site page's Variance tab
+// reads head-periods). Removal only: the route itself and its cases
+// MISSING from a run match, for exactly these two routes. A case added
+// under them, or any field that differs, never does.
+// ---------------------------------------------------------------------
+
+/** D10: the routes removed as unused. Their route and every one of their cases are D10. */
+export const D10_REMOVED_ROUTES: readonly string[] = [
+  'GET /api/reports/variance/periods',
+  'GET /api/reports/variance/sites/:siteId',
+];
+
+/** D10 for one difference: a removed route, or one of its cases, missing from the run. */
+export function removedRouteIdFor(d: Difference): string | null {
+  if (d.kind !== 'route-only-in-baseline' && d.kind !== 'case-only-in-baseline') return null;
+  return D10_REMOVED_ROUTES.includes(splitKey(d.key).route) ? 'D10' : null;
+}
+
+/**
+ * Plan 6.3.2, every listed entry appears: each D10 route is in every
+ * baseline, so each must show as removed. One line per miss.
+ */
+export function missingRemovals(diffs: readonly Difference[]): string[] {
+  const gone = new Set(
+    diffs.filter((d) => d.kind === 'route-only-in-baseline' && removedRouteIdFor(d)).map((d) => d.key),
+  );
+  return D10_REMOVED_ROUTES.filter((r) => !gone.has(r)).map(
+    (r) => `D10 lists ${r} as removed, but the comparison did not find it gone`,
+  );
+}
+
 /** The id of the intended difference this one is, or null when it is unexplained. */
 export function intendedIdFor(d: Difference, world?: IntendedWorld): string | null {
   if ((d.kind === 'route-only-in-run' || d.kind === 'case-only-in-run') && isNewSystemRoute(d.key)) return 'D7';
@@ -312,6 +347,8 @@ export function intendedIdFor(d: Difference, world?: IntendedWorld): string | nu
   }
   const d5 = d5IdFor(d);
   if (d5) return d5;
+  const d10 = removedRouteIdFor(d);
+  if (d10) return d10;
   if (world) {
     const id = approvalsIdFor(d, world);
     if (id) return id;
@@ -456,7 +493,8 @@ export function switchOverIdFor(d: Difference, world: IntendedWorld): string | n
 /**
  * Against a PRE-SWITCH build's answers (a shadow-mode build, which
  * already carried D1, D5, D6 and D7): only D2, D3 and D4 may differ, and
- * D8 and D9, which came after that build (migration 0013). Anything
+ * D8, D9 and D10, which came after that build (migration 0013; the
+ * removed report routes). Anything
  * else, including a difference that would be D1 or D7 against the old
  * baseline, is unmatched.
  */
@@ -464,7 +502,7 @@ export function matchSwitchOnly(diffs: readonly Difference[], world: IntendedWor
   const unmatched: Difference[] = [];
   const matched: Record<string, number> = {};
   for (const d of diffs) {
-    const id = switchOverIdFor(d, world) ?? approvalsIdFor(d, world);
+    const id = switchOverIdFor(d, world) ?? approvalsIdFor(d, world) ?? removedRouteIdFor(d);
     if (id) matched[id] = (matched[id] ?? 0) + 1;
     else unmatched.push(d);
   }

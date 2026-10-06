@@ -102,9 +102,7 @@ function budgetRoutes(): Array<{ route: string; handler: object }> {
 const AMOUNT_ONLY_ROUTES = [
   'GET /reports/variance',
   'GET /reports/variance/head-periods',
-  'GET /reports/variance/periods',
   'GET /reports/variance/periods-summary',
-  'GET /reports/variance/sites/:siteId',
   'GET /reports/variance/summary',
   'GET /sites/:siteId/budget',
   'PATCH /expenses/:id',
@@ -149,7 +147,7 @@ describe('P4 see amounts: the rules', () => {
     const blind = ctxOf(BLIND_KEYS);
     const seer = ctxOf(SEER_KEYS);
     const routes = budgetRoutes();
-    assert.equal(routes.length, 33, 'a new budget route needs a row in this table');
+    assert.equal(routes.length, 31, 'a new budget route needs a row in this table');
     const refused = routes.filter((r) => amountRefusal(r.handler, blind)).map((r) => r.route);
     assert.deepEqual(refused, AMOUNT_ONLY_ROUTES);
     for (const r of routes) {
@@ -267,7 +265,6 @@ const GET_CASES: Record<string, { path: string; amountOnly?: true; seerSees?: tr
   'GET /cost-heads/:id': { path: `/cost-heads/${HEAD}` },
   'GET /reports/variance': { path: '/reports/variance?pageSize=100', amountOnly: true, seerSees: true },
   'GET /reports/variance/summary': { path: '/reports/variance/summary', amountOnly: true, seerSees: true },
-  'GET /reports/variance/periods': { path: '/reports/variance/periods', amountOnly: true },
   'GET /reports/variance/periods-summary': {
     path: `/reports/variance/periods-summary?projectId=${PROJECT}`,
     amountOnly: true,
@@ -278,7 +275,6 @@ const GET_CASES: Record<string, { path: string; amountOnly?: true; seerSees?: tr
     amountOnly: true,
     seerSees: true,
   },
-  'GET /reports/variance/sites/:siteId': { path: `/reports/variance/sites/${SITE}`, amountOnly: true, seerSees: true },
   'GET /pick/budget/projects': { path: '/pick/budget/projects' },
   'GET /pick/budget/sites': { path: '/pick/budget/sites' },
   'GET /pick/budget/cost_heads': { path: '/pick/budget/cost_heads' },
@@ -421,8 +417,6 @@ describe('P4 see amounts through the real routes', { skip: dbTestsEnabled ? fals
       sites: await variance.sites(blind, { pageSize: 100 }),
       periods: await variance.periods(blind, { projectId: PROJECT }),
       heads: await variance.headPeriods(blind, { projectId: PROJECT }),
-      siteHeads: await variance.siteHeads(blind, SITE),
-      siteTotal: await variance.siteTotal(blind, SITE),
     }));
     for (const [name, raw] of Object.entries(results)) {
       assert.ok(amountPaths(raw).length > 0, `${name}: the raw figures carry amounts`);

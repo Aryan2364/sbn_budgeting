@@ -57,9 +57,7 @@ machine. Write a new migration.
 | GET | `/api/auth/me` | any signed-in user |
 | GET | `/api/cost-heads` | any signed-in user |
 | GET | `/api/users` | admin |
-| GET | `/api/reports/variance/periods` | any signed-in user |
 | GET | `/api/reports/variance` | any signed-in user |
-| GET | `/api/reports/variance/sites/:siteId` | any signed-in user |
 
 Authentication is **on by default**. A route opts out with `@Public()`,
 never the other way round, so an endpoint nobody remembered to guard is

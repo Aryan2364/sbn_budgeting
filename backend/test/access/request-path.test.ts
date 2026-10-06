@@ -121,18 +121,24 @@ describe('access request path', { skip: dbTestsEnabled ? false : SKIP_REASON }, 
     assert.ok(!result.undeclared.some((r) => r.startsWith('GET /auth/me') || r.startsWith('POST /auth/login')));
   });
 
+  // A budget.reports.view route whose handler sends exactly ONE query of
+  // its own (headPeriods: one GROUPING SETS read), so every query beyond
+  // that one is the access path's. (It used the static period labels,
+  // GET /reports/variance/periods, until that unused route was removed.)
+  const ONE_READ = '/api/reports/variance/head-periods';
+
   it('one query per request: the user row, and nothing else for access', async () => {
     // Warm the role map (the first request after a start reads it).
-    await call('/api/reports/variance/periods', U.budget_staff);
+    await call(ONE_READ, U.budget_staff);
     const loads = roleMap.loads;
 
-    const periods = await call('/api/reports/variance/periods', U.budget_staff);
-    assert.equal(periods.status, 200);
-    assert.equal(periods.queries, 1, 'a static route costs exactly the per-request user query');
-    assert.equal(periods.connects, 0);
+    const report = await call(ONE_READ, U.budget_staff);
+    assert.equal(report.status, 200);
+    assert.equal(report.queries, 2, "the per-request user query, plus the handler's own one read");
+    assert.equal(report.connects, 0);
 
-    // A refusal by the old guard costs the same one query.
-    const refused = await call('/api/reports/variance/periods', U.raiser);
+    // A refusal costs the user query only: the handler never runs.
+    const refused = await call(ONE_READ, U.raiser);
     assert.equal(refused.status, 403);
     assert.equal(refused.queries, 1);
 
@@ -219,9 +225,9 @@ describe('access request path', { skip: dbTestsEnabled ? false : SKIP_REASON }, 
     ]);
     try {
       assert.equal(Number(await accessVersion(db.client)), before + 1);
-      const first = await call('/api/reports/variance/periods', U.budget_staff);
+      const first = await call(ONE_READ, U.budget_staff);
       assert.equal(first.status, 200);
-      assert.equal(first.queries, 2, 'the user query, plus the one role-map read');
+      assert.equal(first.queries, 3, "the user query, plus the one role-map read, plus the handler's read");
       assert.equal(roleMap.loads, loads + 1);
 
       const me = await call('/api/auth/me', U.budget_staff);
@@ -229,8 +235,8 @@ describe('access request path', { skip: dbTestsEnabled ? false : SKIP_REASON }, 
       assert.equal(perms.version, before + 1);
       assert.deepEqual(perms.permissions['budget.expenses.delete'], ['all']);
 
-      const again = await call('/api/reports/variance/periods', U.budget_staff);
-      assert.equal(again.queries, 1, 'back to one query once the map is current');
+      const again = await call(ONE_READ, U.budget_staff);
+      assert.equal(again.queries, 2, 'back to the one access query once the map is current');
     } finally {
       await db.client.query(`delete from role_permissions where role_id = $1 and permission_key = 'budget.expenses.delete'`, [
         seedIds.budget_staff,
@@ -284,7 +290,7 @@ describe('access request path', { skip: dbTestsEnabled ? false : SKIP_REASON }, 
       const next = await call('/api/auth/me', U.budget_staff);
       assert.equal(next.status, 401);
       assert.equal(next.queries, 1);
-      assert.equal((await call('/api/reports/variance/periods', U.budget_staff)).status, 401);
+      assert.equal((await call(ONE_READ, U.budget_staff)).status, 401);
       assert.equal((await call('/api/auth/login', null, { method: 'POST', body: loginBody })).status, 401);
     } finally {
       await db.client.query('update users set active = true where id = $1', [U.budget_staff]);

@@ -22,8 +22,9 @@
  *               --switch-only                 that snapshot comes from a pre-switch
  *                                             (shadow-mode) build, which already had
  *                                             D1, D5, D6 and D7: only the switch-over's
- *                                             D2, D3 and D4 may differ, and D8 and D9
- *                                             (migration 0013), which came after it
+ *                                             D2, D3 and D4 may differ, and D8, D9
+ *                                             (migration 0013) and D10 (removed report
+ *                                             routes), which came after it
  *               --through <version>           with --prepare: apply migrations only up
  *                                             to that one (record a pre-switch build's
  *                                             answers before 0013 drops what it reads)
@@ -61,6 +62,7 @@ import {
   matchIntended,
   matchSwitchOnly,
   missingApprovals,
+  missingRemovals,
   missingSwitchOver,
   moduleLookup,
   type ApprovalsWorld,
@@ -83,7 +85,7 @@ export interface BaselineOptions {
   through?: string;
   /** Compare with this snapshot instead of baseline.json. */
   baselineFile?: string;
-  /** The baseline is a pre-switch build's: only D2, D3, D4 (and D8, D9, which came after it) may differ. */
+  /** The baseline is a pre-switch build's: only D2, D3, D4 (and D8, D9, D10, which came after it) may differ. */
   switchOnly?: boolean;
   only?: string;
   plant?: boolean;
@@ -398,6 +400,8 @@ if (require.main === module) {
       // a population must appear, and so must every person D2 names (plan 6.3.2).
       process.stdout.write(`  D2 people (mapping report): ${expect.d2People.join(', ') || 'none'}\n`);
       const missing = opts.only ? [] : missingSwitchOver(differences, intendedWorld, expect);
+      // D10 must appear too: both removed report routes are in every baseline.
+      if (!opts.only) missing.push(...missingRemovals(differences));
 
       if (approvalsMissing.length) {
         process.stdout.write(`FAIL: ${approvalsMissing.length} D8/D9 change(s) missing.\n`);

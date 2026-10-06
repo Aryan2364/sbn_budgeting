@@ -115,7 +115,7 @@ describe('P2b budget lane: route declarations', () => {
   const routes = budgetRoutes();
 
   it('finds every budget route', () => {
-    assert.equal(routes.length, 30);
+    assert.equal(routes.length, 28);
   });
 
   it('every budget handler carries exactly one new declaration, a Budget key', () => {

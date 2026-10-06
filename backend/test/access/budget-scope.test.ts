@@ -376,11 +376,13 @@ describe('budget scope through the real routes (P3b)', { skip: dbTestsEnabled ? 
     );
     const everything = await dash('ceo');
     assert.deepEqual([everything.projectCount, everything.siteCount, everything.plannedTrees], [3, 4, 100]);
-    const outside = await call(`/reports/variance/sites/${S.S2}`, 'mgrA');
+    // One site's report (the site page's Variance tab): outside reach it is
+    // as if the site had nothing in it.
+    const outside = await call(`/reports/variance/head-periods?siteId=${S.S2}`, 'mgrA');
     assert.equal(outside.status, 200);
-    assert.deepEqual([outside.body.rows.length, outside.body.total], [0, null], 'outside: as if it did not exist');
-    const inside = await call(`/reports/variance/sites/${S.S1}`, 'mgrA');
-    assert.ok(inside.body.rows.length > 0);
+    assert.deepEqual([outside.body.total.budgetPaise, outside.body.total.actualPaise], [null, '0'], 'outside: as if empty');
+    const inside = await call(`/reports/variance/head-periods?siteId=${S.S1}`, 'mgrA');
+    assert.equal(inside.body.total.budgetPaise, '1000');
     const periods = await call(`/reports/variance/periods-summary?projectId=${PR.P1}`, 'mgrA');
     assert.equal(periods.body.total.budgetPaise, '1000', 'S1 only: 100 paise x 10 trees');
   });

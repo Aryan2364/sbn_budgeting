@@ -22,7 +22,7 @@ import type { ModuleCatalogue } from './types';
  *   budgets.edit      PUT /sites/:siteId/budget
  *   expenses.*        GET/POST/PATCH/DELETE /expenses[/:id]
  *   cost_heads.manage GET/POST/PATCH/DELETE /cost-heads[/:id]
- *   reports.view      GET /reports/variance/* except /periods (@SignedIn)
+ *   reports.view      GET /reports/variance/*
  */
 export const budgetCatalogue = {
   module: 'budget',

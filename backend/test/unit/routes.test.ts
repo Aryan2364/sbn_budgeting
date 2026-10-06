@@ -4,6 +4,8 @@ import { after, before, describe, it } from 'node:test';
 import { prepareTestEnv } from '../support/test-env';
 import { discoverRoutes, startHarnessApp, type HarnessApp } from '../support/app';
 import { ROUTES } from '../equivalence/cases';
+import { D10_REMOVED_ROUTES } from '../equivalence/intended';
+import { BASELINE_FILE, readSnapshot } from '../equivalence/snapshot';
 import { openScratchDatabase, type ScratchDb } from '../access/support';
 
 /**
@@ -43,6 +45,18 @@ describe('access baseline route coverage', { skip: enabled ? false : 'TEST_DATAB
     const stale = Object.keys(ROUTES).filter((k) => !discovered.includes(k));
     assert.deepEqual(missing, [], `routes with no baseline case: ${missing.join(', ')}`);
     assert.deepEqual(stale, [], `baseline cases for routes that no longer exist: ${stale.join(', ')}`);
+  });
+
+  it('D10: the removed report routes are gone from the app and the cases, and still in the baseline', () => {
+    const discovered = discoverRoutes(harness.app).map((r) => `${r.method} ${r.path}`);
+    const baseline = readSnapshot(BASELINE_FILE());
+    for (const route of D10_REMOVED_ROUTES) {
+      assert.ok(!discovered.includes(route), `${route} is still served`);
+      assert.equal(ROUTES[route], undefined, `${route} still has a case`);
+      // The baseline is never re-recorded: D10 matches its cases as missing.
+      assert.ok(baseline.routes.includes(route), `${route} is not in the baseline`);
+      assert.ok(Object.keys(baseline.cases).some((k) => k.startsWith(`${route} |`)), `${route} has no baseline cases`);
+    }
   });
 
   it('mirrors main.ts: global prefix and a guarded-by-default API', async () => {

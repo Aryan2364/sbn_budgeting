@@ -1,14 +1,9 @@
-import { Controller, Get, Param, ParseUUIDPipe, Query } from '@nestjs/common';
+import { Controller, Get, Query } from '@nestjs/common';
 
 import { type AccessContext, CurrentAccess } from '../access/access-context';
 import { Can } from '../access/decorators';
 import { ListQueryDto } from '../common/list-query.dto';
-import {
-  PERIODS,
-  VarianceService,
-  type DashboardSummary,
-  type VarianceRow,
-} from './variance.service';
+import { VarianceService, type DashboardSummary } from './variance.service';
 
 @Controller('reports/variance')
 export class ReportsController {
@@ -19,16 +14,6 @@ export class ReportsController {
   @Can('budget.reports.view')
   summary(@CurrentAccess() access: AccessContext): Promise<DashboardSummary> {
     return this.variance.dashboard(access);
-  }
-
-  /** The period labels, so the client never restates them. */
-  @Get('periods')
-  // Static labels, but only the report screens use them, and today they
-  // need Budget access. @SignedIn (plan 5.3.1) would open them to people
-  // with no Budget role, a difference D1-D10 do not list.
-  @Can('budget.reports.view')
-  periods(): { value: number; label: string }[] {
-    return PERIODS.map((label, value) => ({ value, label }));
   }
 
   /**
@@ -74,27 +59,5 @@ export class ReportsController {
     @Query('managerId') managerId?: string,
   ) {
     return this.variance.sites(access, { ...query, projectId, managerId });
-  }
-
-  /**
-   * Screen 2. One site, one row per cost head, plus the site total read
-   * from the same view rather than added up here.
-   *
-   * The period goes to BOTH halves. Sending it to only the rows is
-   * what put an all-time total over a single period's rows.
-   */
-  @Get('sites/:siteId')
-  @Can('budget.reports.view')
-  async site(
-    @Param('siteId', new ParseUUIDPipe()) siteId: string,
-    @CurrentAccess() access: AccessContext,
-    @Query('period') period?: string,
-  ): Promise<{ total: VarianceRow | null; rows: VarianceRow[]; period: number | null }> {
-    const parsed = period === undefined || period === '' ? undefined : Number(period);
-    const [rows, total] = await Promise.all([
-      this.variance.siteHeads(access, siteId, parsed),
-      this.variance.siteTotal(access, siteId, parsed),
-    ]);
-    return { total, rows, period: parsed ?? null };
   }
 }
