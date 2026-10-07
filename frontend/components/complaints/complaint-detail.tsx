@@ -20,8 +20,7 @@ import {
   type ComplaintStatus,
   type PersonRef,
 } from "@/lib/complaints-api"
-import { recordAnswer, usePermissions, type PermissionKey } from "@/lib/permissions"
-import { errorMessage } from "@/components/shell/session"
+import { usePermissions, type PermissionKey } from "@/lib/permissions"
 import { Banner, BannerAction, BannerDescription, BannerTitle } from "@/components/ui/banner"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -36,6 +35,7 @@ import { ReassignDialog, ResolveDialog } from "@/components/complaints/action-di
 import { PhotoGrid } from "@/components/complaints/photos"
 import { ageLabel, ComplaintStatusBadge } from "@/components/complaints/status"
 import { Timeline } from "@/components/complaints/timeline"
+import { GU_COMMON, guError, guNotHeld } from "@/components/complaints/gu"
 
 /**
  * `/complaints/[id]` — section 11.2's detail page.
@@ -55,7 +55,12 @@ import { Timeline } from "@/components/complaints/timeline"
  *
  * Which actions are shown depends only on the status (the next steps
  * of the work); whether each is usable depends only on `actions`.
- * Resolving closes the complaint.
+ * Resolving closes the complaint, and records what was done and why the
+ * problem happened (its root cause, owner 7 Oct 2026), shown together
+ * in the Resolution card.
+ *
+ * Every word is Gujarati (owner, 7 Oct 2026); the server's reasons and
+ * refusals arrive in Gujarati too.
  */
 
 type DialogName = "resolve" | "reassign"
@@ -89,10 +94,82 @@ const ACTION_KEY: Record<ActionName, PermissionKey> = {
 }
 
 const LABEL: Record<ActionName, string> = {
-  start: "Start work",
-  resolve: "Resolve",
-  reassign: "Reassign",
-  comment: "Add comment",
+  start: "કામ શરૂ કરો",
+  resolve: "ફરિયાદ ઉકેલો",
+  reassign: "બીજાને સોંપો",
+  comment: "ટિપ્પણી ઉમેરો",
+}
+
+const GU = {
+  starting: "કામ શરૂ થઈ રહ્યું છે…",
+  started: (reference: string) => `ફરિયાદ ${reference} પર કામ શરૂ થયું`,
+  notFound: "ફરિયાદ મળી નથી",
+  notFoundBody: "તે કદાચ નથી, અથવા તમને મોકલવામાં આવી નથી. તમે જોઈ શકો તે ફરિયાદો યાદીમાં છે.",
+  openList: "ફરિયાદોની યાદી ખોલો",
+  loadFailed: "ફરિયાદ ખૂલી શકી નથી",
+  meta: (reference: string, category: string, place: string, when: string, by: string) =>
+    `${reference} · ${category} · ${place} · ${by} દ્વારા ${when} ના રોજ નોંધાવી`,
+  actionFailed: "આ કામ થઈ શક્યું નથી",
+  stale: "કોઈએ આ ફરિયાદ બદલી છે",
+  closed: (by: string | null, when: string | null) =>
+    `${
+      by && when
+        ? `${by} એ ${when} ના રોજ આ ફરિયાદ બંધ કરી.`
+        : by
+          ? `${by} એ આ ફરિયાદ બંધ કરી.`
+          : when
+            ? `આ ફરિયાદ ${when} ના રોજ બંધ થઈ.`
+            : "આ ફરિયાદ બંધ છે."
+    } હવે તેમાં ફેરફાર થઈ શકે નહીં, પણ જેમને તે મોકલાઈ છે તેઓ હજી ટિપ્પણી કરી શકે છે.`,
+  raised: (reference: string) => `ફરિયાદ ${reference} નોંધાઈ ગઈ`,
+  sentTo: (supervisor: string, place: string) => `તે ${place} ના સુપરવાઇઝર ${supervisor} ને મોકલાઈ છે`,
+  copiedTo: (manager: string) => `, અને તેની નકલ મેનેજર ${manager} ને પણ ગઈ છે`,
+  complaintCard: "ફરિયાદ",
+  noDescription: "ફરિયાદની વિગત લખી નથી.",
+  complainant: "ફરિયાદીનું નામ",
+  noName: "નામ આપ્યું નથી",
+  phone: "ફરિયાદીનો મોબાઇલ નંબર",
+  noPhone: "મોબાઇલ નંબર આપ્યો નથી",
+  place: "ચોક્કસ જગ્યા",
+  noPlace: "કોઈ નોંધ લખી નથી",
+  problemPhotos: "સમસ્યાના ફોટા",
+  problemPhoto: "સમસ્યાનો ફોટો",
+  noProblemPhotos: "ફરિયાદ નોંધાવતી વખતે કોઈ ફોટો ઉમેર્યો નથી.",
+  resolution: "ઉકેલ",
+  resolvedBy: (by: string, when: string) => `${by} એ ${when} ના રોજ ઉકેલી`,
+  rootCause: "સમસ્યાનું મૂળ કારણ",
+  noRootCause: "નોંધ્યું નથી. આ ફરિયાદ મૂળ કારણ લખવું જરૂરી બન્યું તે પહેલાં ઉકેલાઈ હતી.",
+  whatWasDone: "શું કામ કર્યું",
+  fixPhoto: "કામ પૂરું થયાનો ફોટો",
+  activity: "ઇતિહાસ",
+  sentToCard: "કોને મોકલી",
+  nobody: "કોઈ નહીં",
+  dates: "તારીખો",
+  raisedOn: "નોંધાઈ",
+  workStarted: "કામ શરૂ થયું",
+  resolvedOn: "ઉકેલાઈ",
+  closedOn: "બંધ થઈ",
+  took: "લાગેલો સમય",
+  age: "કેટલા દિવસથી",
+  notYet: "હજી નહીં",
+}
+
+/**
+ * Kit 26.5 rule 2 (lib/permissions `recordAnswer`), with the key's own
+ * reason in Gujarati: enabled only when the person holds the key AND the
+ * complaint's answer is yes; the complaint's string is its reason, shown
+ * as given (the server writes it in Gujarati). While either is unknown:
+ * disabled, no reason (26.1).
+ */
+function answerFor(
+  held: boolean | undefined,
+  key: PermissionKey,
+  record: true | string | undefined,
+): { allowed: boolean | undefined; reason: string } {
+  if (held === false) return { allowed: false, reason: guNotHeld(key) }
+  if (typeof record === "string") return { allowed: false, reason: record }
+  if (held === true && record === true) return { allowed: true, reason: "" }
+  return { allowed: undefined, reason: "" }
 }
 
 export function ComplaintDetailPage({ id }: { id: string }) {
@@ -121,7 +198,7 @@ export function ComplaintDetailPage({ id }: { id: string }) {
           attempt,
           detail: null,
           error: {
-            message: errorMessage(caught),
+            message: guError(caught),
             missing: caught instanceof ApiError && (caught.status === 404 || caught.status === 400),
           },
         })
@@ -168,10 +245,10 @@ export function ComplaintDetailPage({ id }: { id: string }) {
     setStale(null)
     setActionError(null)
     try {
-      apply(await complaintsApi.start(detail.id), `Work started on ${detail.reference}`)
+      apply(await complaintsApi.start(detail.id), GU.started(detail.reference))
     } catch (caught) {
-      if (caught instanceof ApiError && caught.status === 409) setStale(caught.message)
-      else setActionError(errorMessage(caught))
+      if (caught instanceof ApiError && caught.status === 409) setStale(guError(caught))
+      else setActionError(guError(caught))
     } finally {
       setPending(null)
     }
@@ -182,7 +259,7 @@ export function ComplaintDetailPage({ id }: { id: string }) {
     try {
       setDetail(await complaintsApi.comment(detail.id, note))
     } catch (caught) {
-      throw new Error(errorMessage(caught))
+      throw new Error(guError(caught))
     }
   }
 
@@ -197,20 +274,26 @@ export function ComplaintDetailPage({ id }: { id: string }) {
   if (state.error && state.attempt === attempt && !state.detail) {
     return (
       <PageScroller>
-        <RecordBreadcrumb trail={[{ label: "Complaints", href: "/complaints" }]} current="Complaint" />
+        <RecordBreadcrumb
+          trail={[{ label: GU_COMMON.complaints, href: "/complaints" }]}
+          current={GU_COMMON.complaint}
+          label={GU_COMMON.breadcrumbLabel}
+        />
         {state.error.missing ? (
           <EmptyState
             variant="not-found"
-            heading="Complaint not found"
-            dashboardHref="/complaints"
+            heading={GU.notFound}
+            actionLabel={GU.openList}
+            onAction={() => router.push("/complaints")}
             className="mt-6"
           >
-            It may not exist, or it was not sent to you. Complaints you can see are in the list.
+            {GU.notFoundBody}
           </EmptyState>
         ) : (
           <EmptyState
             variant="failed"
-            heading="The complaint could not be loaded"
+            heading={GU.loadFailed}
+            actionLabel={GU_COMMON.tryAgain}
             onAction={() => setAttempt((a) => a + 1)}
             className="mt-6"
           >
@@ -249,7 +332,7 @@ export function ComplaintDetailPage({ id }: { id: string }) {
   const actionButtons = (fullWidth: boolean) =>
     steps.map((name) => {
       const action = detail.actions[name]
-      const answer = recordAnswer(
+      const answer = answerFor(
         can(ACTION_KEY[name]),
         ACTION_KEY[name],
         action.allowed ? true : (action.reason ?? undefined),
@@ -265,7 +348,7 @@ export function ComplaintDetailPage({ id }: { id: string }) {
             onClick={() => open(name)}
             className={fullWidth ? "w-full" : undefined}
           >
-            {pending === name ? "Starting…" : LABEL[name]}
+            {pending === name ? GU.starting : LABEL[name]}
           </Button>
         </PermissionTooltip>
       )
@@ -273,7 +356,11 @@ export function ComplaintDetailPage({ id }: { id: string }) {
 
   return (
     <PageScroller className="max-sm:[&>div]:px-4">
-      <RecordBreadcrumb trail={[{ label: "Complaints", href: "/complaints" }]} current={detail.reference} />
+      <RecordBreadcrumb
+        trail={[{ label: GU_COMMON.complaints, href: "/complaints" }]}
+        current={detail.reference}
+        label={GU_COMMON.breadcrumbLabel}
+      />
 
       {/* 11.2: the record's name is the page title. A complaint's name is
           its title (owner, 6 Oct 2026); the reference leads the meta line. */}
@@ -281,7 +368,13 @@ export function ComplaintDetailPage({ id }: { id: string }) {
         className="mt-4"
         title={<span className="break-words">{detail.title}</span>}
         badges={<ComplaintStatusBadge status={detail.status} />}
-        meta={`${detail.reference} · ${detail.category.name} · ${complaintPlace(detail)} · Raised ${formatDateTime(detail.raisedAt)} by ${detail.raisedBy.name}`}
+        meta={GU.meta(
+          detail.reference,
+          detail.category.name,
+          complaintPlace(detail),
+          formatDateTime(detail.raisedAt),
+          detail.raisedBy.name,
+        )}
         actions={
           steps.length > 0 ? (
             <div className="hidden flex-wrap items-center gap-2 sm:flex">{actionButtons(false)}</div>
@@ -304,18 +397,18 @@ export function ComplaintDetailPage({ id }: { id: string }) {
         {actionError ? (
           <Banner variant="danger">
             <CircleAlertIcon />
-            <BannerTitle>That did not go through</BannerTitle>
+            <BannerTitle>{GU.actionFailed}</BannerTitle>
             <BannerDescription>{actionError}</BannerDescription>
           </Banner>
         ) : stale ? (
           <Banner variant="warning">
             <CircleAlertIcon />
-            <BannerTitle>Someone else changed this complaint</BannerTitle>
+            <BannerTitle>{GU.stale}</BannerTitle>
             <BannerDescription>{stale}</BannerDescription>
             <BannerAction>
               <Button type="button" variant="secondary" size="sm" onClick={refresh}>
                 <RefreshCwIcon />
-                Refresh complaint
+                {GU_COMMON.refreshComplaint}
               </Button>
             </BannerAction>
           </Banner>
@@ -325,22 +418,23 @@ export function ComplaintDetailPage({ id }: { id: string }) {
           <Banner layout="line">
             <LockIcon />
             <BannerDescription>
-              {`${detail.closedBy ? `Closed by ${detail.closedBy.name}` : "Closed"}${
-                detail.closedAt ? ` on ${formatDateTime(detail.closedAt)}` : ""
-              }. It can no longer be changed, but anyone it was sent to can still comment.`}
+              {GU.closed(
+                detail.closedBy?.name ?? null,
+                detail.closedAt ? formatDateTime(detail.closedAt) : null,
+              )}
             </BannerDescription>
           </Banner>
         ) : justRaised ? (
           <Banner variant="success">
             <CircleCheckIcon />
-            <BannerTitle>{detail.reference} raised</BannerTitle>
+            <BannerTitle>{GU.raised(detail.reference)}</BannerTitle>
             <BannerDescription>
-              It went to {detail.supervisor.name}, the supervisor at {complaintPlace(detail)}
+              {GU.sentTo(detail.supervisor.name, complaintPlace(detail))}
               {copies(detail)}.
             </BannerDescription>
             <BannerAction>
               <Button type="button" variant="secondary" size="sm" onClick={dismissRaised}>
-                Close
+                {GU_COMMON.close}
               </Button>
             </BannerAction>
           </Banner>
@@ -353,26 +447,26 @@ export function ComplaintDetailPage({ id }: { id: string }) {
           <>
             <Card>
               <CardHeader>
-                <CardTitle>Complaint</CardTitle>
+                <CardTitle>{GU.complaintCard}</CardTitle>
               </CardHeader>
               <CardContent className="flex flex-col gap-6">
                 {/* Description, complainant and phone are optional (owner,
                     6 Oct 2026). One that was not given says so plainly,
-                    the way "Where exactly" always has. */}
+                    the way the exact place always has. */}
                 {detail.description ? (
                   <p className="text-body break-words whitespace-pre-wrap text-text-primary">
                     {detail.description}
                   </p>
                 ) : (
-                  <p className="text-body text-text-secondary">No description was added.</p>
+                  <p className="text-body text-text-secondary">{GU.noDescription}</p>
                 )}
                 <DetailFieldList>
-                  <DetailField label="Complainant">
+                  <DetailField label={GU.complainant}>
                     {detail.complainantName ?? (
-                      <span className="font-normal text-text-secondary">No name was given</span>
+                      <span className="font-normal text-text-secondary">{GU.noName}</span>
                     )}
                   </DetailField>
-                  <DetailField label="Phone number">
+                  <DetailField label={GU.phone}>
                     {detail.complainantPhone ? (
                       <a
                         href={`tel:${detail.complainantPhone.replace(/[^\d+]/g, "")}`}
@@ -382,14 +476,14 @@ export function ComplaintDetailPage({ id }: { id: string }) {
                         {detail.complainantPhone}
                       </a>
                     ) : (
-                      <span className="font-normal text-text-secondary">No phone number was given</span>
+                      <span className="font-normal text-text-secondary">{GU.noPhone}</span>
                     )}
                   </DetailField>
-                  <DetailField label="Where exactly" className="sm:col-span-2">
+                  <DetailField label={GU.place} className="sm:col-span-2">
                     {detail.locationNote ? (
                       <span className="whitespace-pre-wrap">{detail.locationNote}</span>
                     ) : (
-                      <span className="font-normal text-text-secondary">No note was added</span>
+                      <span className="font-normal text-text-secondary">{GU.noPlace}</span>
                     )}
                   </DetailField>
                 </DetailFieldList>
@@ -398,13 +492,13 @@ export function ComplaintDetailPage({ id }: { id: string }) {
 
             <Card>
               <CardHeader>
-                <CardTitle>Photos of the problem</CardTitle>
+                <CardTitle>{GU.problemPhotos}</CardTitle>
               </CardHeader>
               <CardContent>
                 {raisePhotos.length > 0 ? (
-                  <PhotoGrid complaintId={detail.id} photos={raisePhotos} label="Photo of the problem" />
+                  <PhotoGrid complaintId={detail.id} photos={raisePhotos} label={GU.problemPhoto} />
                 ) : (
-                  <p className="text-body text-text-secondary">No photos were added when this was raised.</p>
+                  <p className="text-body text-text-secondary">{GU.noProblemPhotos}</p>
                 )}
               </CardContent>
             </Card>
@@ -412,20 +506,31 @@ export function ComplaintDetailPage({ id }: { id: string }) {
             {detail.resolvedAt ? (
               <Card>
                 <CardHeader>
-                  <CardTitle>Resolution</CardTitle>
+                  <CardTitle>{GU.resolution}</CardTitle>
                 </CardHeader>
                 <CardContent className="flex flex-col gap-4">
                   <p className="text-meta text-text-muted">
-                    {detail.resolvedBy?.name ?? "The supervisor"} resolved it on{" "}
-                    {formatDateTime(detail.resolvedAt)}
+                    {GU.resolvedBy(detail.resolvedBy?.name ?? GU_COMMON.supervisor, formatDateTime(detail.resolvedAt))}
                   </p>
-                  {detail.resolutionNote ? (
-                    <p className="text-body break-words whitespace-pre-wrap text-text-primary">
-                      {detail.resolutionNote}
-                    </p>
-                  ) : null}
+                  {/* Why it happened, then what was done: the Resolve
+                      dialog's order. A complaint resolved before the root
+                      cause was asked says so plainly. */}
+                  <DetailFieldList>
+                    <DetailField label={GU.rootCause} className="sm:col-span-2">
+                      {detail.rootCause ? (
+                        <span className="break-words whitespace-pre-wrap">{detail.rootCause}</span>
+                      ) : (
+                        <span className="font-normal text-text-secondary">{GU.noRootCause}</span>
+                      )}
+                    </DetailField>
+                    {detail.resolutionNote ? (
+                      <DetailField label={GU.whatWasDone} className="sm:col-span-2">
+                        <span className="break-words whitespace-pre-wrap">{detail.resolutionNote}</span>
+                      </DetailField>
+                    ) : null}
+                  </DetailFieldList>
                   {resolvePhotos.length > 0 ? (
-                    <PhotoGrid complaintId={detail.id} photos={resolvePhotos} label="Photo of the fix" />
+                    <PhotoGrid complaintId={detail.id} photos={resolvePhotos} label={GU.fixPhoto} />
                   ) : null}
                 </CardContent>
               </Card>
@@ -433,7 +538,7 @@ export function ComplaintDetailPage({ id }: { id: string }) {
 
             <Card>
               <CardHeader>
-                <CardTitle>Activity</CardTitle>
+                <CardTitle>{GU.activity}</CardTitle>
               </CardHeader>
               <CardContent>
                 <Timeline events={detail.events} comment={detail.actions.comment} onComment={comment} />
@@ -445,26 +550,26 @@ export function ComplaintDetailPage({ id }: { id: string }) {
           <>
             <Card>
               <CardHeader>
-                <CardTitle>Sent to</CardTitle>
+                <CardTitle>{GU.sentToCard}</CardTitle>
               </CardHeader>
               <CardContent>
                 <dl className="flex flex-col gap-4">
-                  <Routed label="Supervisor" person={detail.supervisor} />
-                  <Routed label="Manager" person={detail.manager} />
+                  <Routed label={GU_COMMON.supervisor} person={detail.supervisor} />
+                  <Routed label={GU_COMMON.manager} person={detail.manager} />
                 </dl>
               </CardContent>
             </Card>
             <Card>
               <CardHeader>
-                <CardTitle>Dates</CardTitle>
+                <CardTitle>{GU.dates}</CardTitle>
               </CardHeader>
               <CardContent>
                 <dl className="flex flex-col gap-4">
-                  <DetailField label="Raised">{formatDateTime(detail.raisedAt)}</DetailField>
-                  <DetailField label="Work started">{when(detail.startedAt)}</DetailField>
-                  <DetailField label="Resolved">{when(detail.resolvedAt)}</DetailField>
-                  <DetailField label="Closed">{when(detail.closedAt)}</DetailField>
-                  <DetailField label={detail.status === "closed" ? "Took" : "Age"}>
+                  <DetailField label={GU.raisedOn}>{formatDateTime(detail.raisedAt)}</DetailField>
+                  <DetailField label={GU.workStarted}>{when(detail.startedAt)}</DetailField>
+                  <DetailField label={GU.resolvedOn}>{when(detail.resolvedAt)}</DetailField>
+                  <DetailField label={GU.closedOn}>{when(detail.closedAt)}</DetailField>
+                  <DetailField label={detail.status === "closed" ? GU.took : GU.age}>
                     {ageLabel(detail.ageDays)}
                   </DetailField>
                 </dl>
@@ -486,18 +591,18 @@ export function ComplaintDetailPage({ id }: { id: string }) {
 function Routed({ label, person }: { label: string; person: PersonRef | null }) {
   return (
     <DetailField label={label}>
-      {person ? person.name : <span className="font-normal text-text-secondary">Nobody</span>}
+      {person ? person.name : <span className="font-normal text-text-secondary">{GU.nobody}</span>}
     </DetailField>
   )
 }
 
 function when(value: string | null): React.ReactNode {
-  return value ? formatDateTime(value) : <span className="font-normal text-text-secondary">Not yet</span>
+  return value ? formatDateTime(value) : <span className="font-normal text-text-secondary">{GU.notYet}</span>
 }
 
-/** ", with a copy to Suresh (manager)". */
+/** ", and a copy to Meena, the manager" (in Gujarati). */
 function copies(detail: ComplaintDetail): string {
   const manager = detail.manager
   if (!manager || manager.id === detail.supervisor.id || manager.id === detail.raisedBy.id) return ""
-  return `, with a copy to ${manager.name} (manager)`
+  return GU.copiedTo(manager.name)
 }

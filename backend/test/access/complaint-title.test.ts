@@ -114,7 +114,8 @@ describe('complaint title and optional fields (migration 0014)', { skip: dbTests
     for (const title of [undefined, '', '    ']) {
       const res = await raise({ title, description: 'Pipe burst', complainantName: 'A', complainantPhone: '9825012345' });
       assert.equal(res.status, 400, JSON.stringify(res.body));
-      assert.ok(JSON.stringify(res.body).includes('Enter a short title for the complaint'), JSON.stringify(res.body));
+      // "Enter a short title for the complaint" (Gujarati, owner, 7 Oct 2026)
+      assert.ok(JSON.stringify(res.body).includes('ફરિયાદનો વિષય ટૂંકમાં લખો'), JSON.stringify(res.body));
     }
     const long = await raise({ title: 'y'.repeat(121) });
     assert.equal(long.status, 400, JSON.stringify(long.body));
@@ -127,10 +128,10 @@ describe('complaint title and optional fields (migration 0014)', { skip: dbTests
   it('site and category are still required', async () => {
     const noSite = await send('raiser', 'POST', '/complaints', { title: 'Pipe burst', categoryId: F.CC.pd_approval });
     assert.equal(noSite.status, 400);
-    assert.ok(JSON.stringify(noSite.body).includes('Choose the site from the list'));
+    assert.ok(JSON.stringify(noSite.body).includes('ફરિયાદ કઈ સાઇટની છે તે યાદીમાંથી પસંદ કરો'));
     const noCategory = await send('raiser', 'POST', '/complaints', { title: 'Pipe burst', siteId: F.S.a });
     assert.equal(noCategory.status, 400);
-    assert.ok(JSON.stringify(noCategory.body).includes('Choose the category from the list'));
+    assert.ok(JSON.stringify(noCategory.body).includes('ફરિયાદનો પ્રકાર યાદીમાંથી પસંદ કરો'));
   });
 
   it('description, complainant name and phone are optional: left out or blank, they are null', async () => {
@@ -163,7 +164,7 @@ describe('complaint title and optional fields (migration 0014)', { skip: dbTests
   it('a phone that is given must still be a full 10-digit number; given values are kept as typed (trimmed)', async () => {
     const short = await raise({ title: 'Short phone', complainantPhone: '12345' });
     assert.equal(short.status, 422, JSON.stringify(short.body));
-    assert.ok(JSON.stringify(short.body).includes('Enter all 10 digits'));
+    assert.ok(JSON.stringify(short.body).includes('10 આંકડા લખો'));
 
     const full = await raise({
       title: 'Full',

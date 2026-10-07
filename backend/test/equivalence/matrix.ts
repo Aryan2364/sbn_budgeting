@@ -6,9 +6,10 @@ import type { DiscoveredRoute, HarnessApp } from '../support/app';
 import { testTxIdle } from '../support/test-tx';
 import { ROUTES, World, resolveQueries, type BodyContext, type Person, type Variant } from './cases';
 import { USER_LABEL } from './fixtures';
-import { withoutAdditiveKeys, withoutComplaintTitle, withoutRecordCan } from './intended';
+import { actionsDifferInWordsOnly, withoutAdditiveKeys, withoutComplaintAdditions, withoutRecordCan } from './intended';
 import { LegacyUndo, UNDONE_ROUTES, type LegacyWorld, type Why } from './legacy-approvals';
 import { legacyActions, type LegacyViewer } from './legacy-complaint-actions';
+import { legacySitesBody } from './legacy-complaint-messages';
 import { screenMatrix, type ScreenMatrix } from './legacy-screen-rules';
 import { sampleFor, type Sample } from './sampling';
 
@@ -46,10 +47,13 @@ export interface CaseResult {
    *     says which was needed);
    *   - otherwise a body with an `actions` map (the complaint detail):
    *     its digest with `actions` as the baseline build would have
-   *     computed it (legacy-complaint-actions.ts), D1.
+   *     computed it (legacy-complaint-actions.ts), D1; or D12 when the run's
+   *     map differs from that only in its words (Gujarati, 7 Oct 2026);
+   *   - the site picker (GET /complaints/sites): its digest with each
+   *     row's `reason` in the baseline's English words, D12.
    */
   legacyDigest?: string;
-  legacyWhy?: Why | 'D1';
+  legacyWhy?: Why | 'D1' | 'D12';
   error?: string;
 }
 
@@ -221,7 +225,7 @@ async function runCase(
     const out: CaseResult = {
       status: res.status,
       keys: keysOf(res.body),
-      digest: digest(withoutComplaintTitle(path, withoutRecordCan(withoutAdditiveKeys(path, res.body)))),
+      digest: digest(withoutComplaintAdditions(path, withoutRecordCan(withoutAdditiveKeys(path, res.body)))),
     };
     const rows = rowsOf(res.body);
     if (rows) {
@@ -236,17 +240,26 @@ async function runCase(
     }
     const undone = undo ? await undo(res.body) : null;
     if (undone) {
-      out.legacyDigest = digest(withoutComplaintTitle(path, withoutRecordCan(withoutAdditiveKeys(path, undone.value))));
+      out.legacyDigest = digest(withoutComplaintAdditions(path, withoutRecordCan(withoutAdditiveKeys(path, undone.value))));
       out.legacyWhy = undone.why;
     } else if (out.actions && legacyViewer) {
       const body = res.body as Parameters<typeof legacyActions>[1] & Record<string, unknown>;
+      const legacy = legacyActions(legacyViewer, body);
       out.legacyDigest = digest(
-        withoutComplaintTitle(
+        withoutComplaintAdditions(
           path,
-          withoutRecordCan(withoutAdditiveKeys(path, { ...body, actions: legacyActions(legacyViewer, body) })),
+          withoutRecordCan(withoutAdditiveKeys(path, { ...body, actions: legacy })),
         ),
       );
-      out.legacyWhy = 'D1';
+      const runActions = body.actions as Parameters<typeof actionsDifferInWordsOnly>[0];
+      out.legacyWhy = actionsDifferInWordsOnly(runActions, legacy) ? 'D12' : 'D1';
+    } else if (path === '/api/complaints/sites') {
+      // D12: the picker's `reason` in the old English words.
+      const old = legacySitesBody(res.body);
+      if (old) {
+        out.legacyDigest = digest(withoutComplaintAdditions(path, withoutRecordCan(withoutAdditiveKeys(path, old))));
+        out.legacyWhy = 'D12';
+      }
     }
     return out;
   }
@@ -273,7 +286,7 @@ async function runCase(
     itemKeys: unionItemKeys(all),
     // D7 (intended.ts): each row's `can` (and a complaint row's `title`)
     // is left out, so the rest must match.
-    digest: digest(withoutComplaintTitle(path, withoutRecordCan(sortedRows))),
+    digest: digest(withoutComplaintAdditions(path, withoutRecordCan(sortedRows))),
   };
   if (first && typeof first.total === 'number') out.total = first.total;
   if (first && first.aggregates && typeof first.aggregates === 'object') {
@@ -281,7 +294,7 @@ async function runCase(
   }
   const undone = undo ? await undo(sortedRows) : null;
   if (undone) {
-    out.legacyDigest = digest(withoutComplaintTitle(path, withoutRecordCan(undone.value)));
+    out.legacyDigest = digest(withoutComplaintAdditions(path, withoutRecordCan(undone.value)));
     out.legacyWhy = undone.why;
   }
   return out;

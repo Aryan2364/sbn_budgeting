@@ -7,7 +7,7 @@ import {
   intendedIdFor,
   matchSwitchOnly,
   missingOptionalFields,
-  withoutComplaintTitle,
+  withoutComplaintAdditions,
   type IntendedWorld,
 } from '../equivalence/intended';
 
@@ -32,15 +32,18 @@ describe('intended difference D7: complaints gain `title`', () => {
     assert.equal(intendedIdFor(keys(LIST, 'itemKeys', ['can', 'id', 'status'], ['can', 'id', 'status', 'title'])), 'D7');
   });
 
-  it('the detail gaining them beside D8 removals is still matched', () => {
+  it('the detail gaining them (with `rootCause`, 0015) beside D8 removals is still matched', () => {
     const d = keys(
       'GET /api/complaints/:id |raiser|x',
       'keys',
       ['actions', 'approver', 'ceo', 'hod', 'id', 'requiresApproval'],
-      ['actions', 'can', 'id', 'title'],
+      ['actions', 'can', 'id', 'rootCause', 'title'],
     );
     assert.equal(intendedIdFor(d, { runCases: {} }), 'D8');
-    assert.equal(intendedIdFor(keys(DETAIL, 'keys', ['actions', 'id'], ['actions', 'can', 'id', 'title'])), 'D7');
+    assert.equal(
+      intendedIdFor(keys(DETAIL, 'keys', ['actions', 'id'], ['actions', 'can', 'id', 'rootCause', 'title'])),
+      'D7',
+    );
   });
 
   it('nothing wider: another key, another route, or a key lost never matches', () => {
@@ -52,16 +55,16 @@ describe('intended difference D7: complaints gain `title`', () => {
     assert.equal(intendedIdFor(field), null);
   });
 
-  it('the digest drops `title` on the two complaint routes only, and nothing else', () => {
+  it('the digest drops `title` on the two complaint routes only (and `rootCause` on the detail), and nothing else', () => {
     const row = { id: '1', title: 'T', description: 'D' };
-    assert.deepEqual(withoutComplaintTitle('/api/complaints', [row]), [{ id: '1', description: 'D' }]);
+    assert.deepEqual(withoutComplaintAdditions('/api/complaints', [row]), [{ id: '1', description: 'D' }]);
     assert.deepEqual(
-      withoutComplaintTitle('/api/complaints/30000000-0000-4000-8000-000000000001', row),
+      withoutComplaintAdditions('/api/complaints/30000000-0000-4000-8000-000000000001', row),
       { id: '1', description: 'D' },
     );
-    assert.deepEqual(withoutComplaintTitle('/api/complaints/summary', row), row);
-    assert.deepEqual(withoutComplaintTitle('/api/sites', [row]), [row]);
-    assert.deepEqual(withoutComplaintTitle('/api/notifications', { items: [row] }), { items: [row] });
+    assert.deepEqual(withoutComplaintAdditions('/api/complaints/summary', row), row);
+    assert.deepEqual(withoutComplaintAdditions('/api/sites', [row]), [row]);
+    assert.deepEqual(withoutComplaintAdditions('/api/notifications', { items: [row] }), { items: [row] });
   });
 });
 

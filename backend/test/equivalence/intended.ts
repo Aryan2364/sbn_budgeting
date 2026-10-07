@@ -160,6 +160,8 @@ function legacyDigestIdFor(d: Difference, world: IntendedWorld): string | null {
   if (d.field !== 'digest') return null;
   const c = world.runCases[d.key];
   if (!c?.legacyDigest || c.legacyDigest !== d.baseline) return null;
+  // D12 is named by languageIdFor alone, which also checks the route.
+  if (c.legacyWhy === 'D12') return null;
   return c.legacyWhy ?? null;
 }
 
@@ -327,42 +329,65 @@ function d5IdFor(d: Difference): string | null {
 /** D7: the key complaint rows and details gain (migration 0014). */
 export const D7_TITLE_KEY = 'title';
 
+/**
+ * D7 (owner decision, 7 Oct 2026; migration 0015): the complaint detail
+ * gains `rootCause`, why the problem happened, written when resolving.
+ * Additive exactly like `title`: the detail's `keys` may gain it, it is
+ * left out of the detail's digest only, and the baseline has no such key.
+ */
+export const D7_ROOT_CAUSE_KEY = 'rootCause';
+
 /** D7: the routes (method + template) whose records gain `title`. */
 export const D7_TITLE_ROUTES: readonly string[] = ['GET /api/complaints', 'GET /api/complaints/:id'];
 
-/** The request paths of those two routes: `/api/complaints` and `/api/complaints/<uuid>`. */
-const TITLE_PATH = /^\/api\/complaints(?:\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})?$/i;
+/** D7: the keys complaint records gain, per route: `title` on both, `rootCause` on the detail. */
+export const D7_COMPLAINT_KEYS: Readonly<Record<string, readonly string[]>> = {
+  'GET /api/complaints': [D7_TITLE_KEY],
+  'GET /api/complaints/:id': [D7_TITLE_KEY, D7_ROOT_CAUSE_KEY],
+};
 
-function withoutTitleKey(value: unknown): unknown {
+/** The list's request path, and the detail's (`/api/complaints/<uuid>`). */
+const LIST_PATH = /^\/api\/complaints$/;
+const DETAIL_PATH = /^\/api\/complaints\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function withoutKeys(value: unknown, drop: readonly string[]): unknown {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
   const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(value as Record<string, unknown>)) if (k !== D7_TITLE_KEY) out[k] = v;
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) if (!drop.includes(k)) out[k] = v;
   return out;
 }
 
 /**
- * The body with D7's `title` removed, for the digest: from a complaint
- * detail, or from each complaint row, on the two titled routes only.
- * Any other path's body is returned untouched.
+ * The body with D7's complaint additions removed, for the digest:
+ * `title` from each complaint row, and `title` and `rootCause` from a
+ * complaint detail, on those two routes only. Any other path's body is
+ * returned untouched.
  */
-export function withoutComplaintTitle(path: string, body: unknown): unknown {
-  if (!TITLE_PATH.test(path)) return body;
-  if (Array.isArray(body)) return body.map(withoutTitleKey);
-  const out = withoutTitleKey(body);
+export function withoutComplaintAdditions(path: string, body: unknown): unknown {
+  const drop = LIST_PATH.test(path)
+    ? D7_COMPLAINT_KEYS['GET /api/complaints']!
+    : DETAIL_PATH.test(path)
+      ? D7_COMPLAINT_KEYS['GET /api/complaints/:id']!
+      : null;
+  if (!drop) return body;
+  if (Array.isArray(body)) return body.map((r) => withoutKeys(r, drop));
+  const out = withoutKeys(body, drop);
   if (!out || typeof out !== 'object') return out;
   const o = out as Record<string, unknown>;
-  for (const k of ['data', 'rows', 'items']) if (Array.isArray(o[k])) o[k] = (o[k] as unknown[]).map(withoutTitleKey);
+  for (const k of ['data', 'rows', 'items']) if (Array.isArray(o[k])) o[k] = (o[k] as unknown[]).map((r) => withoutKeys(r, drop));
   return o;
 }
 
-/** Keys as the run should have them on `route`: plus `title` on a titled route. */
+/** Keys as the run should have them on `route`: plus D7's complaint additions on those two routes. */
 function withTitle(route: string, keys: readonly string[]): string[] {
-  return D7_TITLE_ROUTES.includes(route) && !keys.includes(D7_TITLE_KEY) ? [...keys, D7_TITLE_KEY] : [...keys];
+  const add = (D7_COMPLAINT_KEYS[route] ?? []).filter((k) => !keys.includes(k));
+  return [...keys, ...add];
 }
 
 /**
- * D7 for a titled route's `keys` / `itemKeys` that gained exactly `title`
- * (against a build that already sent `can`, e.g. a pre-switch snapshot).
+ * D7 for a titled route's `keys` / `itemKeys` that gained exactly its
+ * complaint additions (`title`, and `rootCause` on the detail), against
+ * a build that already sent `can`, e.g. a pre-switch snapshot.
  */
 function titleOnlyIdFor(d: Difference): string | null {
   if (d.kind !== 'field' || (d.field !== 'keys' && d.field !== 'itemKeys')) return null;
@@ -416,6 +441,132 @@ export function missingOptionalFields(diffs: readonly Difference[], world: Inten
 }
 
 // ---------------------------------------------------------------------
+// D12 (owner decision, 7 Oct 2026): the Complaints area speaks Gujarati.
+//
+// Every sentence the complaint routes send a person is now Gujarati:
+// refusals, field errors, the workflow's reasons, the site picker's
+// `reason`, notifications. Only WORDS change: every status code, every
+// field, every flag stays as it was.
+//
+// Most of it never reaches the comparison: the harness records no
+// refusal text (matrix.ts; D1), so a refusal's new words cannot differ.
+// Two successful reads carry sentences in their bodies, and only there
+// is D12 matched, by rebuilding the body with the old English words and
+// requiring the baseline's digest exactly (`legacyDigest`, `legacyWhy`):
+//   GET /api/complaints/sites  each row's `reason` replaced by the frozen
+//       English sentence (legacy-complaint-messages.ts);
+//   GET /api/complaints/:id   `actions` reasons: the run's map is
+//       replaced by the frozen baseline map (legacy-complaint-actions.ts),
+//       as D1 does, and D12 is named only when the run's map differs from
+//       it in reason WORDS alone (same keys, same allowed flags). On the
+//       fixtures every detail is already rebuilt by D8 (legacy-
+//       approvals.ts puts the frozen `actions` back wholesale), so its
+//       Gujarati reasons sit inside D8's proof and are counted there;
+//       this branch serves a run whose complaints D8 does not know.
+// Nothing else: another route, a flag, a status or a key never matches.
+//
+// D13 (owner decision, 7 Oct 2026; migration 0015): resolving needs a
+// root cause. A resolve without one is refused (422) where the full
+// resolve succeeds. The baseline has no such case, so it is a case ADDED
+// to the run, matched by name, only when it answers 422 where the same
+// person's full resolve of the same complaint answers 200, and otherwise
+// exactly as that full resolve does (refused first by permission,
+// workflow or status). The full resolve case now sends a root cause, a
+// request field like the raise's title, so its answers stand.
+// ---------------------------------------------------------------------
+
+/** D12: the routes whose successful bodies carry sentences, rebuilt in the old words. */
+export const D12_ROUTES: readonly string[] = ['GET /api/complaints/:id', 'GET /api/complaints/sites'];
+
+/** Gujarati script: a sentence written for the Complaints area since D12. */
+export function isGujarati(text: unknown): boolean {
+  return typeof text === 'string' && /[\u0A80-\u0AFF]/.test(text);
+}
+
+/**
+ * D12 on a complaint detail's `actions`: the run's map against the
+ * frozen baseline map. True only when they have the same actions with
+ * the same allowed flags, and every reason that differs is a Gujarati
+ * sentence where the baseline had a sentence too.
+ */
+export function actionsDifferInWordsOnly(
+  run: Readonly<Record<string, { allowed: boolean; reason: string | null }>>,
+  legacy: Readonly<Record<string, { allowed: boolean; reason: string | null }>>,
+): boolean {
+  const names = Object.keys(legacy).sort();
+  if (!same(names, Object.keys(run).sort())) return false;
+  let differs = false;
+  for (const name of names) {
+    const a = run[name]!;
+    const b = legacy[name]!;
+    if (a.allowed !== b.allowed) return false;
+    if (a.reason === b.reason) continue;
+    if (a.reason === null || b.reason === null || !isGujarati(a.reason)) return false;
+    differs = true;
+  }
+  return differs;
+}
+
+/** D12 for a digest difference: rebuilt in the old words, the body is the baseline's exactly. */
+function languageIdFor(d: Difference, world: IntendedWorld): string | null {
+  if (d.kind !== 'field' || d.field !== 'digest') return null;
+  const c = world.runCases[d.key];
+  if (c?.legacyWhy !== 'D12' || !c.legacyDigest || c.legacyDigest !== d.baseline) return null;
+  return D12_ROUTES.includes(splitKey(d.key).route) ? 'D12' : null;
+}
+
+/**
+ * Plan 6.3.2: every case the run rebuilt for D12 (a body whose words
+ * changed) that the baseline also answered 200 must show as a D12
+ * difference: its rebuilt body is the baseline's, its own is not. (A
+ * case the baseline refused, D2's for instance, has no baseline body to
+ * compare and is that entry's.) One line per miss.
+ */
+export function missingLanguage(diffs: readonly Difference[], world: IntendedWorld): string[] {
+  const seen = new Set(diffs.filter((d) => languageIdFor(d, world) === 'D12').map((d) => d.key));
+  return Object.entries(world.runCases)
+    .filter(
+      ([key, c]) =>
+        c.legacyWhy === 'D12' &&
+        D12_ROUTES.includes(splitKey(key).route) &&
+        c.status === 200 &&
+        world.baselineCases?.[key]?.status === 200 &&
+        !seen.has(key),
+    )
+    .map(([key]) => `D12 rebuilt ${key} in the old words, but it did not match the baseline`);
+}
+
+/** D13: the full resolve case each D13 case is judged against. */
+export const D13_RESOLVE_CASE = 'POST /api/complaints/:id/resolve [note-and-photo]';
+
+/** D13: the resolve case without a root cause (cases.ts). */
+export const D13_CASE = 'POST /api/complaints/:id/resolve [without-root-cause]';
+
+/**
+ * D13 for one difference: the case without a root cause, ADDED to the
+ * run, answering 422 where the same person's full resolve of the same
+ * complaint answers 200, or else exactly as that one does. Nothing else.
+ */
+export function rootCauseIdFor(d: Difference, world?: IntendedWorld): string | null {
+  if (d.kind !== 'case-only-in-run' || !world) return null;
+  const { kase, who } = splitKey(d.key);
+  if (kase !== D13_CASE) return null;
+  const full = world.runCases[`${D13_RESOLVE_CASE} |${who}`];
+  const run = world.runCases[d.key];
+  if (!full || !run || full.status === undefined) return null;
+  if (full.status === 200) return run.status === 422 ? 'D13' : null;
+  return run.status === full.status ? 'D13' : null;
+}
+
+/** Plan 6.3.2: D13's case is in every run, and someone who may resolve must have been refused for the root cause. */
+export function missingRootCause(diffs: readonly Difference[], world: IntendedWorld): string[] {
+  const hits = diffs.filter((d) => rootCauseIdFor(d, world) === 'D13');
+  return hits.some((d) => world.runCases[d.key]?.status === 422)
+    ? []
+    : [`D13 lists ${D13_CASE}, but no resolve without a root cause was refused for it`];
+}
+
+// ---------------------------------------------------------------------
 // D10 (owner decision, 6 Oct 2026): two report routes no screen calls
 // are removed. GET /reports/variance/periods (static period labels; the
 // frontend keeps its own, lib/periods.ts) and GET /reports/variance/
@@ -463,7 +614,11 @@ export function intendedIdFor(d: Difference, world?: IntendedWorld): string | nu
   if (d10) return d10;
   const d11 = optionalFieldsIdFor(d, world);
   if (d11) return d11;
+  const d13 = rootCauseIdFor(d, world);
+  if (d13) return d13;
   if (world) {
+    const d12 = languageIdFor(d, world);
+    if (d12) return d12;
     const id = approvalsIdFor(d, world);
     if (id) return id;
   }
@@ -613,8 +768,9 @@ export function switchOverIdFor(d: Difference, world: IntendedWorld): string | n
  * Against a PRE-SWITCH build's answers (a shadow-mode build, which
  * already carried D1, D5, D6 and D7): only D2, D3 and D4 may differ, and
  * D8, D9 and D10, which came after that build (migration 0013; the
- * removed report routes), and the complaint title's D7 (`title` only)
- * and D11 (migration 0014). Anything
+ * removed report routes), the complaint title's D7 (`title` only)
+ * and D11 (migration 0014), and D12 and D13 with the root cause's D7
+ * (7 Oct 2026; migration 0015). Anything
  * else, including a difference that would be D1 or D7 against the old
  * baseline, is unmatched.
  */
@@ -627,7 +783,9 @@ export function matchSwitchOnly(diffs: readonly Difference[], world: IntendedWor
       approvalsIdFor(d, world) ??
       removedRouteIdFor(d) ??
       titleOnlyIdFor(d) ??
-      optionalFieldsIdFor(d, world);
+      optionalFieldsIdFor(d, world) ??
+      languageIdFor(d, world) ??
+      rootCauseIdFor(d, world);
     if (id) matched[id] = (matched[id] ?? 0) + 1;
     else unmatched.push(d);
   }

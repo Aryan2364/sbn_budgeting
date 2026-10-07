@@ -104,7 +104,8 @@ describe('complaint workflow: permission x workflow (P5, A1)', () => {
     assert.equal(checkAction('resolve', viewer('supervisor', null), subject('in_progress')).allowed, true);
     assert.equal(
       checkAction('resolve', viewer('supervisor', null), subject('closed')).reason,
-      'This complaint is already closed.',
+      // Gujarati (owner, 7 Oct 2026): "This complaint is already closed."
+      'આ ફરિયાદ પહેલેથી બંધ છે.',
     );
   });
 
@@ -112,7 +113,8 @@ describe('complaint workflow: permission x workflow (P5, A1)', () => {
     const c = subject('open');
     const got = checkAction('reassign', viewer('supervisor', 'reassign'), c);
     assert.equal(got.failure, 'permission');
-    assert.equal(got.reason, 'Only Mahesh Manager, the manager, can reassign this.');
+    // "Only Mahesh Manager, the manager, can reassign this." (Gujarati, owner, 7 Oct 2026)
+    assert.equal(got.reason, 'ફક્ત મેનેજર Mahesh Manager જ આ ફરિયાદ બીજાને સોંપી શકે છે.');
     // No manager named, or the key not held at all: the permission layer's own sentence.
     assert.equal(checkAction('reassign', viewer('supervisor', 'reassign'), { ...c, manager: null }).reason, REFUSED);
     assert.equal(checkAction('reassign', viewer('supervisor', 'reassign', true), c).reason, REFUSED);

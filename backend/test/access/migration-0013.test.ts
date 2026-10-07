@@ -64,9 +64,10 @@ describe('migration 0013: complaints without approval, members at Team', { skip:
     );
     versionBefore = await accessVersion(db.client);
     const applied = await db.migrate();
-    // 0013 first; the later migrations (0014: complaint title) after it.
+    // 0013 first; the later migrations (0014: complaint title; 0015: root
+    // cause, whose check must accept every complaint 0013 closed) after it.
     assert.equal(applied[0], '0013_complaints_no_approval');
-    assert.deepEqual(applied.slice(1), ['0014_complaint_title']);
+    assert.deepEqual(applied.slice(1), ['0014_complaint_title', '0015_complaint_root_cause']);
   });
 
   after(async () => {

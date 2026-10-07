@@ -1,6 +1,8 @@
 import { UnprocessableEntityException } from '@nestjs/common';
 import type { PoolClient } from 'pg';
 
+import { noSupervisorReason } from './messages';
+
 /**
  * Routing, run ONCE at raise time (CONTRACT sections 3 and 10).
  *
@@ -38,11 +40,10 @@ export interface RoutingSnapshot {
 /**
  * The sentence for a site nobody could receive a complaint at. One
  * function, so the raise 422 and the site picker's `reason` (GET
- * /complaints/sites) can never drift apart.
+ * /complaints/sites) can never drift apart. In Gujarati (owner,
+ * 7 Oct 2026), with every other complaints sentence, in messages.ts.
  */
-export function noSupervisorReason(siteName: string): string {
-  return `${siteName} has no supervisor who can sign in yet, so this complaint would reach nobody. Ask a budget administrator to set one on the site.`;
-}
+export { noSupervisorReason };
 
 interface SitePeopleRow {
   supervisor_id: string | null;

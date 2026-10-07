@@ -472,6 +472,17 @@ export const ROUTES: Record<string, RouteSpec> = {
       {
         name: 'note-and-photo',
         multipart: () => ({
+          // `rootCause`: required from 7 Oct 2026 (owner; migration 0015).
+          // A request field, so the baseline's answers hold (like the
+          // raise's title).
+          fields: { resolutionNote: NOTE, rootCause: 'Found by the access harness' },
+          files: [{ field: 'photos', filename: 'fixed.png', type: 'image/png', data: TINY_PNG }],
+        }),
+      },
+      // D13 (owner, 7 Oct 2026): resolving without a root cause is refused.
+      {
+        name: 'without-root-cause',
+        multipart: () => ({
           fields: { resolutionNote: NOTE },
           files: [{ field: 'photos', filename: 'fixed.png', type: 'image/png', data: TINY_PNG }],
         }),

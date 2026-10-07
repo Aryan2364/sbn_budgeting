@@ -16,9 +16,9 @@ import { SectionTabs } from "@/components/ui/section-tabs"
  * everyone and an empty one says why it is empty.
  */
 export const COMPLAINT_TABS: { value: ComplaintTab; label: string }[] = [
-  { value: "assigned", label: "Assigned to me" },
-  { value: "raised", label: "Raised by me" },
-  { value: "all", label: "All" },
+  { value: "assigned", label: "મને સોંપેલી" },
+  { value: "raised", label: "મેં નોંધાવેલી" },
+  { value: "all", label: "બધી" },
 ]
 
 export function ComplaintTabs({

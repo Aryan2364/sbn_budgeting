@@ -223,7 +223,8 @@ describe('complaints lane: scope through the routes (P3b)', { skip: dbTestsEnabl
       note: 'Moving it',
     });
     assert.equal(noWork.status, 422);
-    assert.match(noWork.body.message, /can't start or resolve complaints/);
+    // "... can't start or resolve complaints ..." (Gujarati, owner, 7 Oct 2026)
+    assert.match(noWork.body.message, /ફરિયાદ પર કામ શરૂ કરી કે ઉકેલી શકતા નથી/);
     const toRaiser = await call('manager', 'POST', `/complaints/${F.K.in_progress}/reassign`, {
       supervisorId: F.U.raiser,
       note: 'Moving it',

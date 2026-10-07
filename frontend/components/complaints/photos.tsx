@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/dialog"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { GU_COMMON } from "@/components/complaints/gu"
 
 /**
  * The photos on a complaint: thumbnails, and a viewer that opens one
@@ -32,7 +33,20 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
  *
  * No dead ends: a photo that fails to load says so and offers Retry,
  * and the viewer always offers Download.
+ *
+ * In Gujarati (owner, 7 Oct 2026).
  */
+
+const GU = {
+  /** "Photo of the problem 2, of 3". */
+  nth: (label: string, n: number, of: number) => `${label} ${n}, ${of} માંથી`,
+  open: (name: string) => `${name} ખોલો`,
+  notLoaded: "ફોટો ખૂલ્યો નથી",
+  addedBy: (name: string, when: string) => `${name} એ ${when} ના રોજ ઉમેર્યો`,
+  previous: "પાછલો ફોટો",
+  next: "આગળનો ફોટો",
+  download: "ફોટો ડાઉનલોડ કરો",
+}
 export function PhotoGrid({
   complaintId,
   photos,
@@ -40,7 +54,7 @@ export function PhotoGrid({
 }: {
   complaintId: string
   photos: ComplaintPhoto[]
-  /** "Photo from the raise", used in each thumbnail's accessible name. */
+  /** "સમસ્યાનો ફોટો", used in each thumbnail's accessible name. */
   label: string
 }) {
   const [open, setOpen] = React.useState<number | null>(null)
@@ -53,7 +67,7 @@ export function PhotoGrid({
             <Thumbnail
               complaintId={complaintId}
               photo={photo}
-              label={`${label} ${index + 1} of ${photos.length}`}
+              label={GU.nth(label, index + 1, photos.length)}
               onOpen={() => setOpen(index)}
             />
           </li>
@@ -91,10 +105,10 @@ function Thumbnail({
     return (
       <div className="flex aspect-square flex-col items-center justify-center gap-2 rounded-lg border border-border-light bg-surface-sunken p-2 text-center">
         <ImageOffIcon className="size-4 text-text-secondary" aria-hidden="true" />
-        <span className="text-meta text-text-secondary">Photo not loaded</span>
+        <span className="text-meta text-text-secondary">{GU.notLoaded}</span>
         <Button type="button" variant="secondary" size="sm" onClick={() => setAttempt((a) => a + 1)}>
           <RefreshCwIcon />
-          Retry
+          {GU_COMMON.tryAgain}
         </Button>
       </div>
     )
@@ -108,7 +122,7 @@ function Thumbnail({
     <button
       type="button"
       onClick={onOpen}
-      aria-label={`Open ${label}`}
+      aria-label={GU.open(label)}
       className={cn(
         "tap-area block aspect-square w-full cursor-pointer overflow-hidden rounded-lg border border-border-light bg-surface-sunken",
         "outline-none focus-visible:outline-2 focus-visible:[outline-style:solid] focus-visible:outline-offset-2 focus-visible:outline-primary-ring",
@@ -164,20 +178,18 @@ function PhotoViewer({
         }}
       >
         <DialogHeader>
-          <DialogTitle>
-            {label} {index + 1} of {photos.length}
-          </DialogTitle>
+          <DialogTitle>{GU.nth(label, index + 1, photos.length)}</DialogTitle>
         </DialogHeader>
         <div className="flex min-h-0 flex-1 flex-col gap-3 p-4">
           <DialogDescription>
-            Added by {photo.uploadedBy.name} on {formatDateTime(photo.uploadedAt)}
+            {GU.addedBy(photo.uploadedBy.name, formatDateTime(photo.uploadedAt))}
           </DialogDescription>
           <div className="flex min-h-64 flex-1 items-center justify-center overflow-hidden rounded-lg bg-surface-sunken">
             {state.status === "ready" ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img
                 src={state.url}
-                alt={`${label} ${index + 1}`}
+                alt={GU.nth(label, index + 1, photos.length)}
                 className="max-h-[60vh] w-full object-contain max-sm:max-h-[70dvh]"
               />
             ) : state.status === "failed" ? (
@@ -185,7 +197,7 @@ function PhotoViewer({
                 <p className="text-body text-text-secondary">{state.message}</p>
                 <Button type="button" variant="secondary" onClick={() => setAttempt((a) => a + 1)}>
                   <RefreshCwIcon />
-                  Try again
+                  {GU_COMMON.tryAgain}
                 </Button>
               </div>
             ) : (
@@ -196,10 +208,10 @@ function PhotoViewer({
         <DialogFooter className="max-sm:flex-wrap">
           {many ? (
             <span className="mr-auto flex gap-2">
-              <NavButton label="Previous photo" onClick={() => go(-1)}>
+              <NavButton label={GU.previous} onClick={() => go(-1)}>
                 <ChevronLeftIcon />
               </NavButton>
-              <NavButton label="Next photo" onClick={() => go(1)}>
+              <NavButton label={GU.next} onClick={() => go(1)}>
                 <ChevronRightIcon />
               </NavButton>
             </span>
@@ -216,11 +228,11 @@ function PhotoViewer({
               }
             >
               <DownloadIcon />
-              Download photo
+              {GU.download}
             </Button>
           ) : null}
           <Button type="button" onClick={onClose}>
-            Close
+            {GU_COMMON.close}
           </Button>
         </DialogFooter>
       </DialogContent>

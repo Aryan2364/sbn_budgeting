@@ -10,6 +10,7 @@ import { CurrentUser, type AuthUser } from '../common/current-user';
 import { ListQueryDto } from '../common/list-query.dto';
 import type { ListResult, MatchInfo } from '../common/list-query';
 import { NoteDto, RaiseComplaintDto, ReassignDto, ResolveDto } from './complaints.dto';
+import { ComplaintsForbiddenFilter } from './forbidden.filter';
 import {
   ComplaintsService, type ComplaintDetail, type ComplaintRow, type ComplaintSite, type ComplaintSummary, type Tab,
 } from './complaints.service';
@@ -35,8 +36,15 @@ import {
  * service): `complaints.complaints.view` for every read, and each
  * action's own key on its write (404 outside view, 403 outside the
  * action). The workflow layer then decides as before.
+ *
+ * Every sentence a person reads from these routes is Gujarati (owner
+ * decision, 7 Oct 2026; messages.ts). The access layer's own 403
+ * sentences are English and shared with every module, so
+ * `ComplaintsForbiddenFilter` says them in Gujarati here: same status,
+ * same fields, only the words differ (equivalence D12).
  */
 @Controller('complaints')
+@UseFilters(ComplaintsForbiddenFilter)
 export class ComplaintsController {
   constructor(private readonly complaints: ComplaintsService) {}
 
@@ -136,7 +144,7 @@ export class ComplaintsController {
     @Body() body: ResolveDto,
     @UploadedFiles() files?: UploadedPhoto[],
   ): Promise<ComplaintDetail> {
-    return this.complaints.resolve(user, access, id, body.resolutionNote, files);
+    return this.complaints.resolve(user, access, id, body, files);
   }
 
   @Post(':id/reassign')

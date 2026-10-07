@@ -4,7 +4,7 @@ import * as React from "react"
 
 import { pick, type CategoryPick } from "@/lib/api"
 import { complaintsApi, type ComplaintSiteOption } from "@/lib/complaints-api"
-import { errorMessage } from "@/components/shell/session"
+import { guError } from "@/components/complaints/gu"
 
 /**
  * The two masters every complaint screen picks from: sites and
@@ -43,7 +43,7 @@ export function useComplaintMasters({ activeOnly }: { activeOnly: boolean }) {
       })
       .catch((caught: unknown) => {
         if (!cancelled) {
-          setState({ sites: null, categories: null, error: errorMessage(caught), attempt })
+          setState({ sites: null, categories: null, error: guError(caught), attempt })
         }
       })
     return () => {

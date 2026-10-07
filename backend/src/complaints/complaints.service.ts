@@ -8,7 +8,6 @@ import type { Pool, PoolClient } from 'pg';
 
 import { can as holds, type AccessContext } from '../access/access-context';
 import type { PermissionKey } from '../access/catalogue';
-import { reasonFor } from '../access/permission.guard';
 import { RoleMapService } from '../access/role-map.service';
 import {
   assertRecordAccess, canSelect, createSiteWhere, scopeWhere, type Param, type RecordCan,
@@ -19,6 +18,10 @@ import { runListQuery, type ListResult, type MatchInfo } from '../common/list-qu
 import { PG_POOL } from '../db/db.module';
 import { notify } from '../notifications/notify';
 import type { RaiseComplaintDto, ReassignDto } from './complaints.dto';
+import {
+  ACT, NOT_FOUND, NOTIFY, PHOTO_GONE, RAISE as RAISE_SAYS, SEARCH_LABEL, alreadyMoved, notAnId, notHeld, refusedFor,
+  unknownStatus, unknownTab,
+} from './messages';
 import {
   ACTION_NAMES, PERMISSION_ACTIONS, allActions, checkAction, type ActionCheck, type ActionName,
   type ComplaintStatus, type PermissionAction, type PermissionSubject, type PersonRef, type Viewer,
@@ -81,6 +84,12 @@ export interface ComplaintDetail extends ComplaintRow {
   resolvedAt: string | null;
   closedAt: string | null;
   resolutionNote: string | null;
+  /**
+   * Why the problem happened, written when resolving (owner decision,
+   * 7 Oct 2026; migration 0015). Null until resolved, and on complaints
+   * closed before 0015.
+   */
+  rootCause: string | null;
   resolvedBy: PersonRef | null;
   closedBy: PersonRef | null;
   photos: Array<{
@@ -150,7 +159,12 @@ export interface ComplaintSite {
 /** The picker is unpaginated, so it is capped; far above today's site count. */
 export const SITE_PICKER_LIMIT = 1000;
 
-/** The bySite bucket for complaints raised before sites (1 Oct 2026). */
+/**
+ * The bySite bucket for complaints raised before sites (1 Oct 2026).
+ * Left in English on purpose: it is data in the summary (the bucket's
+ * name), not a message, and the dashboard recognises the bucket by its
+ * null id and names it in Gujarati itself (owner, 7 Oct 2026).
+ */
 const NO_SITE_NAME = 'No site (older complaint)';
 
 // ---------------------------------------------------------------------
@@ -202,7 +216,7 @@ const DETAIL_SELECT = `${ROW_SELECT},
   c.complainant_phone as "complainantPhone", c.location_note as "locationNote",
   ${personOrNull('mg')} as manager,
   c.started_at as "startedAt", c.resolved_at as "resolvedAt", c.closed_at as "closedAt",
-  c.resolution_note as "resolutionNote",
+  c.resolution_note as "resolutionNote", c.root_cause as "rootCause",
   ${personOrNull('rv')} as "resolvedBy", ${personOrNull('cl')} as "closedBy"`;
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -271,27 +285,22 @@ function tabSql(tab: Tab, me: () => string): string {
   }
 }
 
-const NOT_FOUND =
-  "That complaint doesn't exist, or it wasn't sent to you. Check the link, or open it from your complaints list.";
-
-const EVENT_VERB: Record<string, string> = {
-  started: 'started',
-  resolved: 'resolved',
-  closed: 'closed',
-};
-
 /**
  * The workflow's viewer: who is asking, and the permission layer's
  * answer for THIS complaint per permission action. A key not held at
  * any scope is absent from `may` (canSelect leaves it out) and reads as
  * that permission's sentence. Never a role or a level (plan 6.2).
+ *
+ * A refusal is said in Gujarati (owner, 7 Oct 2026): `refusedFor` is
+ * the access layer's `recordReason` (the sentence canSelect computed in
+ * SQL) in Gujarati, from the same scopes, so the answer is the same.
  */
 function viewerOf(access: AccessContext, c: DetailCore): Viewer {
   const may = {} as Record<PermissionAction, true | string>;
   const held = {} as Record<PermissionAction, boolean>;
   for (const action of PERMISSION_ACTIONS) {
     const answer = c.may[action];
-    may[action] = answer === true ? true : (answer ?? reasonFor(CAN_ACTIONS[action]));
+    may[action] = answer === true ? true : refusedFor(access, CAN_ACTIONS[action]);
     held[action] = holds(access, CAN_ACTIONS[action]);
   }
   return { id: access.userId, may, held };
@@ -311,7 +320,7 @@ function answersFor(
   for (const name of ACTION_NAMES) {
     const { allowed, reason } = checks[name];
     actions[name] = { allowed, reason };
-    if (holds(access, ACTION_KEY[name])) can[name] = allowed ? true : (reason ?? reasonFor(ACTION_KEY[name]));
+    if (holds(access, ACTION_KEY[name])) can[name] = allowed ? true : (reason ?? notHeld(ACTION_KEY[name]));
   }
   return { can, actions };
 }
@@ -346,7 +355,7 @@ export class ComplaintsService {
   ): Promise<ListResult<ComplaintRow & MatchInfo>> {
     const tab = (tabRaw ?? 'all') as Tab;
     if (!TABS.includes(tab)) {
-      throw new BadRequestException(`Unknown tab "${tabRaw}". Use one of: ${TABS.join(', ')}.`);
+      throw new BadRequestException(unknownTab(tabRaw, TABS));
     }
     return runListQuery<ComplaintRow>(
       this.pool,
@@ -357,20 +366,20 @@ export class ComplaintsService {
         select: ROW_SELECT,
         // The row's main line is the reference and the title together
         // (owner, 6 Oct 2026), so a hit on either needs no "matched in" note.
-        titleField: { sql: `(${REFERENCE_SQL} || ' ' || c.title)`, label: 'Title' },
+        titleField: { sql: `(${REFERENCE_SQL} || ' ' || c.title)`, label: SEARCH_LABEL.title },
         // Every text a person would search a complaint by. The resolution
         // note is left out on purpose: it is not on the row, and a match
         // on text the list never shows looks like a wrong result.
         searchFields: [
-          { sql: 'c.description', label: 'Description' },
-          { sql: 'c.complainant_name', label: 'Complainant' },
-          { sql: 'c.complainant_phone', label: 'Complainant phone' },
-          { sql: 'st.name', label: 'Site' },
-          { sql: 'l.name', label: 'Location' },
-          { sql: 'c.location_note', label: 'Location note' },
-          { sql: 'cc.name', label: 'Category' },
-          { sql: 'sv.name', label: 'Supervisor' },
-          { sql: 'rb.name', label: 'Raised by' },
+          { sql: 'c.description', label: SEARCH_LABEL.description },
+          { sql: 'c.complainant_name', label: SEARCH_LABEL.complainant },
+          { sql: 'c.complainant_phone', label: SEARCH_LABEL.complainantPhone },
+          { sql: 'st.name', label: SEARCH_LABEL.site },
+          { sql: 'l.name', label: SEARCH_LABEL.location },
+          { sql: 'c.location_note', label: SEARCH_LABEL.locationNote },
+          { sql: 'cc.name', label: SEARCH_LABEL.category },
+          { sql: 'sv.name', label: SEARCH_LABEL.supervisor },
+          { sql: 'rb.name', label: SEARCH_LABEL.raisedBy },
         ],
         sortable: {
           raisedAt: 'c.raised_at',
@@ -390,7 +399,7 @@ export class ComplaintsService {
             const list = value.split(',').map((s) => s.trim()).filter(Boolean);
             const bad = list.find((s) => !STATUSES.includes(s as ComplaintStatus));
             if (bad) {
-              throw new BadRequestException(`Unknown status "${bad}". Use one of: ${STATUSES.join(', ')}.`);
+              throw new BadRequestException(unknownStatus(bad, STATUSES));
             }
             return `c.status = any(${param(list)}::text[])`;
           },
@@ -567,7 +576,7 @@ export class ComplaintsService {
       [photoId, id],
     );
     const row = rows[0];
-    if (!row) throw new NotFoundException('That photo no longer exists. Refresh the complaint.');
+    if (!row) throw new NotFoundException(PHOTO_GONE);
 
     // 404 when the bytes are gone, 503 when the store is unreachable.
     const { stream, bytes } = await openStored(row.storage_key);
@@ -588,9 +597,7 @@ export class ComplaintsService {
     // Optional (owner, 6 Oct 2026): none is null; one that is given must
     // still be a full number.
     if (body.complainantPhone && body.complainantPhone.replace(/\D/g, '').length < 10) {
-      throw new UnprocessableEntityException(
-        `"${body.complainantPhone}" is not a full phone number. Enter all 10 digits, like 98250 12345.`,
-      );
+      throw new UnprocessableEntityException(RAISE_SAYS.shortPhone(body.complainantPhone));
     }
 
     let stored: StoredPhoto[] = [];
@@ -608,10 +615,10 @@ export class ComplaintsService {
         );
         const found = siteRows[0];
         if (!found) {
-          throw new UnprocessableEntityException('That site no longer exists. Choose another one.');
+          throw new UnprocessableEntityException(RAISE_SAYS.siteGone);
         }
         if (!found.allowed) {
-          const reason = `You can raise complaints only on sites you can choose from, and ${found.name} is not one of them. Choose another site.`;
+          const reason = RAISE_SAYS.siteNotYours(found.name);
           throw new ForbiddenException({ error: 'forbidden', permission: RAISE, reason, message: reason });
         }
         const site = { id: found.id, name: found.name };
@@ -621,12 +628,10 @@ export class ComplaintsService {
         );
         const category = catRows[0];
         if (!category) {
-          throw new UnprocessableEntityException('That category no longer exists. Choose another one.');
+          throw new UnprocessableEntityException(RAISE_SAYS.categoryGone);
         }
         if (!category.is_active) {
-          throw new UnprocessableEntityException(
-            `${category.name} is no longer in use. Choose another category.`,
-          );
+          throw new UnprocessableEntityException(RAISE_SAYS.categoryRetired(category.name));
         }
 
         const routing = await resolveRouting(client, site);
@@ -664,12 +669,12 @@ export class ComplaintsService {
           photoCount: stored.length,
         });
 
-        const what = `${category.name} at ${site.name}`;
+        const what = NOTIFY.what(site.name, category.name);
         // The notification quotes the complaint by its title, its heading
         // everywhere (owner, 6 Oct 2026); the description is optional.
         await notify(client, created.id, user.id, short(body.title), [
-          { userId: routing.supervisor.id, kind: 'assigned', title: `New complaint ${created.reference} for you: ${what}` },
-          { userId: routing.manager?.id, kind: 'copied', title: `${created.reference} raised: ${what}` },
+          { userId: routing.supervisor.id, kind: 'assigned', title: NOTIFY.assigned(created.reference, what) },
+          { userId: routing.manager?.id, kind: 'copied', title: NOTIFY.copied(created.reference, what) },
         ]);
         return created.id;
       });
@@ -701,35 +706,41 @@ export class ComplaintsService {
     user: AuthUser,
     access: AccessContext,
     id: string,
-    resolutionNote: string | undefined,
+    body: { resolutionNote?: string; rootCause?: string },
     files: UploadedPhoto[] | undefined,
   ): Promise<ComplaintDetail> {
     let stored: StoredPhoto[] = [];
     return this.act(
       user, access, id, 'resolve',
       async (client, c) => {
-        const note = requireNote(
-          resolutionNote,
-          'Add a resolution note saying what was done. Resolving needs a note.',
-        );
+        // Why it happened (owner, 7 Oct 2026; migration 0015), what was
+        // done, and at least one photo of the fix: all three required,
+        // checked in the order the Resolve dialog asks them.
+        const rootCause = requireNote(body.rootCause, ACT.needRootCause);
+        const note = requireNote(body.resolutionNote, ACT.needResolutionNote);
         const photos = checkPhotos(files, { min: 1, max: MAX_PHOTOS });
 
         // Resolving closes it: there is no approval step (owner, 5 Oct 2026).
         await client.query(
           `update complaints /*scope-exempt: follows the scoped, locked read of this complaint (act)*/
-           set status = 'closed', resolution_note = $2, resolved_at = now(), resolved_by = $3,
-               closed_at = now(), closed_by = $3, updated_at = now()
+           set status = 'closed', resolution_note = $2, root_cause = $4, resolved_at = now(),
+               resolved_by = $3, closed_at = now(), closed_by = $3, updated_at = now()
            where id = $1`,
-          [id, note, user.id],
+          [id, note, user.id, rootCause],
         );
         // Numbered after any earlier resolution's photos; act() holds the
         // row lock, so no other resolve can choose the same names.
         stored = await storePhotos(photos, await this.photoPlace(client, id, 'resolve'));
         await this.insertPhotos(client, id, 'resolve', stored, user.id);
-        await this.event(client, id, 'resolved', user.id, note, c.status, 'closed', { photoCount: stored.length });
+        // The timeline line carries the note; the root cause rides in its
+        // payload, so the resolve's line shows both.
+        await this.event(client, id, 'resolved', user.id, note, c.status, 'closed', {
+          photoCount: stored.length,
+          rootCause,
+        });
 
         await notify(client, id, user.id, short(note), [
-          { userId: c.raisedBy.id, kind: 'closed', title: `${c.reference} was resolved and closed by ${user.name}` },
+          { userId: c.raisedBy.id, kind: 'closed', title: NOTIFY.closed(c.reference, user.name) },
         ]);
       },
       // A refused or failed resolve leaves no orphan files behind. Run
@@ -741,10 +752,7 @@ export class ComplaintsService {
 
   reassign(user: AuthUser, access: AccessContext, id: string, body: ReassignDto): Promise<ComplaintDetail> {
     return this.act(user, access, id, 'reassign', async (client, c) => {
-      const note = requireNote(
-        body.note,
-        'Add a note saying why it is being reassigned. Reassigning needs a note.',
-      );
+      const note = requireNote(body.note, ACT.needReassignNote);
       // The new supervisor is chosen through the people Pick, which the
       // reassign key needs at All: anyone the caller may pick who may work
       // on complaints (start and resolve them) and can sign in.
@@ -758,20 +766,16 @@ export class ComplaintsService {
       );
       const target = rows[0];
       if (!target) {
-        throw new UnprocessableEntityException('That person no longer exists. Choose someone else.');
+        throw new UnprocessableEntityException(ACT.personGone);
       }
       if (!target.can_work) {
-        throw new UnprocessableEntityException(
-          `${target.name} can't start or resolve complaints, so they couldn't work on this one. Choose someone who can.`,
-        );
+        throw new UnprocessableEntityException(ACT.cannotWork(target.name));
       }
       if (!target.can_receive) {
-        throw new UnprocessableEntityException(
-          `${target.name} can't sign in, so they couldn't work on this complaint. Choose someone else, or give them a login first.`,
-        );
+        throw new UnprocessableEntityException(ACT.cannotSignIn(target.name));
       }
       if (target.id === c.supervisor.id) {
-        throw new UnprocessableEntityException(`${target.name} is already the supervisor on this complaint.`);
+        throw new UnprocessableEntityException(ACT.alreadySupervisor(target.name));
       }
 
       await client.query(
@@ -785,15 +789,15 @@ export class ComplaintsService {
         to,
       });
       await notify(client, id, user.id, short(note), [
-        { userId: to.id, kind: 'assigned', title: `${c.reference} was reassigned to you by ${user.name}` },
-        { userId: c.supervisor.id, kind: 'reassigned_away', title: `${c.reference} was reassigned to ${to.name}` },
+        { userId: to.id, kind: 'assigned', title: NOTIFY.reassignedToYou(c.reference, user.name) },
+        { userId: c.supervisor.id, kind: 'reassigned_away', title: NOTIFY.reassignedAway(c.reference, to.name) },
       ]);
     });
   }
 
   comment(user: AuthUser, access: AccessContext, id: string, noteRaw: string | undefined): Promise<ComplaintDetail> {
     return this.act(user, access, id, 'comment', async (client) => {
-      const note = requireNote(noteRaw, 'Type a comment before sending it.');
+      const note = requireNote(noteRaw, ACT.needComment);
       await this.event(client, id, 'comment', user.id, note, null, null);
     });
   }
@@ -891,7 +895,7 @@ export class ComplaintsService {
     viewer: Viewer,
     check: ActionCheck,
   ): Promise<Error> {
-    const reason = check.reason ?? 'That action is not available.';
+    const reason = check.reason ?? ACT.notAvailable;
     if (check.failure === 'permission') {
       const permission = ACTION_KEY[action];
       return new ForbiddenException({ error: 'forbidden', permission, reason, message: reason });
@@ -908,16 +912,13 @@ export class ComplaintsService {
       [id],
     );
     const last = rows[0];
-    const verb = last ? EVENT_VERB[last.kind] : undefined;
-    if (!last || !verb) {
+    const moved = last ? alreadyMoved(last.kind, { you: last.actor_id === viewer.id, name: last.name }) : null;
+    if (!moved) {
       // Nothing has moved it since it was raised: not stale, just not
       // applicable yet. Still a 409, with the state explained.
-      return new ConflictException(`${reason} Refresh to see its current state.`);
+      return new ConflictException(`${reason} ${ACT.refresh}`);
     }
-    const who = last.actor_id === viewer.id ? 'you' : (last.name ?? 'someone else');
-    return new ConflictException(
-      `This complaint was already ${verb} by ${who}. Refresh to see its current state.`,
-    );
+    return new ConflictException(`${moved} ${ACT.refresh}`);
   }
 
   /**
@@ -998,7 +999,7 @@ export class ComplaintsService {
 
 function uuidOr400(value: string, name: string): string {
   if (!UUID_RE.test(value)) {
-    throw new BadRequestException(`${name} must be an id from the list.`);
+    throw new BadRequestException(notAnId(name));
   }
   return value;
 }

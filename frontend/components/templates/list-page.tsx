@@ -66,6 +66,7 @@ function ListSearch({
   placeholder,
   className,
   onClear,
+  clearLabel = "Clear search",
   ...props
 }: Omit<React.ComponentProps<"input">, "placeholder"> & {
   /** "Search projects". Names the record type. */
@@ -74,6 +75,8 @@ function ListSearch({
   label: string
   /** Clears the field. Without it no clear button is drawn. */
   onClear?: () => void
+  /** The clear button's name, for a screen in another language. Defaults to "Clear search". */
+  clearLabel?: string
 }) {
   /**
    * Section 27.1: "A clear button appears inside the field once there
@@ -110,14 +113,14 @@ function ListSearch({
                   type="button"
                   variant="in-field"
                   size="icon-sm"
-                  aria-label="Clear search"
+                  aria-label={clearLabel}
                   onClick={onClear}
                 />
               }
             >
               <XIcon />
             </TooltipTrigger>
-            <TooltipContent side="bottom">Clear search</TooltipContent>
+            <TooltipContent side="bottom">{clearLabel}</TooltipContent>
           </Tooltip>
         </InputGroupAddon>
       ) : null}
@@ -178,6 +181,21 @@ function pageSlots(page: number, totalPages: number): (number | "gap")[] {
  * On a phone only the current page number stays between Previous and
  * Next, so the bar fits a 360px screen.
  */
+/** ListPagination's words; any left out stay English. */
+interface ListPaginationText {
+  /** "1–25 of 148", from the formatted numbers. */
+  range?: (from: string, to: string, total: string) => string
+  previous?: string
+  next?: string
+  previousLabel?: string
+  nextLabel?: string
+  /** "Page 3", from the formatted number. */
+  page?: (n: string) => string
+}
+
+const englishRange = (from: string, to: string, total: string) => `${from}–${to} of ${total}`
+const englishPage = (n: string) => `Page ${n}`
+
 function ListPagination({
   page,
   pageSize,
@@ -185,6 +203,7 @@ function ListPagination({
   onPageChange,
   emptyLabel,
   loadingLabel = "Loading",
+  text,
   className,
 }: {
   /** 1-based. */
@@ -197,6 +216,11 @@ function ListPagination({
   emptyLabel: React.ReactNode
   /** Said while `total` is null. */
   loadingLabel?: React.ReactNode
+  /**
+   * The bar's own words, for a screen in another language (the Gujarati
+   * complaints list). Each defaults to today's English.
+   */
+  text?: ListPaginationText
   className?: string
 }) {
   const totalPages = total ? Math.max(1, Math.ceil(total / Math.max(1, pageSize))) : 1
@@ -214,14 +238,18 @@ function ListPagination({
           ? loadingLabel
           : total === 0
             ? emptyLabel
-            : `${formatNumber((current - 1) * pageSize + 1)}–${formatNumber(
-                Math.min(current * pageSize, total),
-              )} of ${formatNumber(total)}`}
+            : (text?.range ?? englishRange)(
+                formatNumber((current - 1) * pageSize + 1),
+                formatNumber(Math.min(current * pageSize, total)),
+                formatNumber(total),
+              )}
       </PaginationCount>
       <Pagination>
         <PaginationContent>
           <PaginationItem>
             <PaginationPrevious
+              {...(text?.previous ? { text: text.previous } : {})}
+              {...(text?.previousLabel ? { "aria-label": text.previousLabel } : {})}
               aria-disabled={!canPrevious || undefined}
               onClick={() => canPrevious && go(current - 1)}
             />
@@ -239,7 +267,7 @@ function ListPagination({
                   >
                     <PaginationLink
                       isActive={slot === current}
-                      aria-label={`Page ${formatNumber(slot)}`}
+                      aria-label={(text?.page ?? englishPage)(formatNumber(slot))}
                       className="tabular-nums"
                       onClick={() => go(slot)}
                     >
@@ -251,6 +279,8 @@ function ListPagination({
             : null}
           <PaginationItem>
             <PaginationNext
+              {...(text?.next ? { text: text.next } : {})}
+              {...(text?.nextLabel ? { "aria-label": text.nextLabel } : {})}
               aria-disabled={!canNext || undefined}
               onClick={() => canNext && go(current + 1)}
             />
@@ -267,3 +297,4 @@ export {
   ListDataArea,
   ListPagination,
 }
+export type { ListPaginationText }

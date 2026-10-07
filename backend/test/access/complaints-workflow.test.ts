@@ -18,6 +18,9 @@ import { SKIP_REASON, dbTestsEnabled, openScratchDatabase, type ScratchDb } from
  * supervisor and manager from the site and reads no designation. The
  * detail's `can` and its `actions` alias say exactly what the route then
  * does.
+ *
+ * Owner decisions, 7 Oct 2026: resolving also needs a root cause
+ * (migration 0015), and every sentence these routes send is Gujarati.
  */
 
 const VIEW_ONLY = 'f5000000-0000-4000-8000-000000000001';
@@ -57,10 +60,18 @@ describe('complaints workflow layer through the routes (P5, A1-A3)', { skip: dbT
   const act = (user: string, id: string, action: string, body: unknown = NOTE) =>
     call(user, 'POST', `/complaints/${id}/${action}`, body);
 
-  /** Resolve with a note and one photo (multipart), as the screen does. */
-  function resolve(user: string, id: string) {
+  /**
+   * Resolve with a note, a root cause and one photo (multipart), as the
+   * screen does. `fields` overrides or (with undefined) leaves one out.
+   */
+  function resolve(user: string, id: string, fields: Record<string, string | undefined> = {}) {
     const form = new FormData();
-    form.append('resolutionNote', 'Fixed it');
+    const values: Record<string, string | undefined> = {
+      resolutionNote: 'Fixed it',
+      rootCause: 'The joint was loose',
+      ...fields,
+    };
+    for (const [k, v] of Object.entries(values)) if (v !== undefined) form.append(k, v);
     form.append('photos', new Blob([F.TINY_PNG], { type: 'image/png' }), 'fixed.png');
     return send(user, 'POST', `/complaints/${id}/resolve`, form);
   }
@@ -132,14 +143,77 @@ describe('complaints workflow layer through the routes (P5, A1-A3)', { skip: dbT
     assert.equal(res.status, 200, JSON.stringify(res.body));
     assert.equal(res.body.status, 'closed');
     assert.equal(res.body.resolutionNote, 'Fixed it');
+    assert.equal(res.body.rootCause, 'The joint was loose');
     assert.equal(res.body.resolvedBy.id, F.U.supervisor);
     assert.equal(res.body.closedBy.id, F.U.supervisor);
     assert.ok(res.body.closedAt);
     assert.equal(res.body.photos.filter((p: { stage: string }) => p.stage === 'resolve').length, 1);
     assert.equal(res.body.events.at(-1).kind, 'resolved');
     assert.equal(res.body.events.at(-1).toStatus, 'closed');
-    // Resolving again is a stale action on a closed complaint (409).
-    assert.equal((await resolve('supervisor', F.K.closed)).status, 409);
+    // Resolving again is a stale action on a closed complaint (409),
+    // which says who moved it and the way forward, in Gujarati.
+    const again = await resolve('supervisor', F.K.closed);
+    assert.equal(again.status, 409);
+    assert.match(again.body.message, /ફરિયાદ ફરી લોડ કરો\.$/);
+  });
+
+  it('root cause (owner, 7 Oct 2026): required to resolve, saved, returned and on the timeline', async () => {
+    const missing = 'સમસ્યાનું મૂળ કારણ લખો: સમસ્યા કેમ થઈ. ફરિયાદ ઉકેલવા માટે આ જરૂરી છે.';
+    // Left out, or blank after trimming: 422 saying so, and nothing changes.
+    for (const rootCause of [undefined, '', '   \n  ']) {
+      const res = await resolve('supervisor', F.K.open, { rootCause });
+      assert.equal(res.status, 422, JSON.stringify(res.body));
+      assert.equal(res.body.message, missing);
+    }
+    const still = await call('supervisor', 'GET', `/complaints/${F.K.open}`);
+    assert.equal(still.body.status, 'open');
+    assert.equal(still.body.rootCause, null);
+
+    // Over 2000 characters: 400 from the body check, in Gujarati.
+    const long = await resolve('supervisor', F.K.open, { rootCause: 'y'.repeat(2001) });
+    assert.equal(long.status, 400, JSON.stringify(long.body));
+    assert.ok(JSON.stringify(long.body).includes('2000 અક્ષર સુધીમાં'), JSON.stringify(long.body));
+
+    // Someone who may not resolve is told that first, not "add a root cause".
+    const notTheirs = await resolve('manager', F.K.open, { rootCause: undefined });
+    assert.equal(notTheirs.status, 403);
+    assert.match(notTheirs.body.message, /^ફક્ત સોંપાયેલા સુપરવાઇઝર .* જ આ ફરિયાદ ઉકેલી શકે છે\.$/);
+
+    // Saved trimmed, exactly 2000 is fine, and the resolve's timeline line carries it.
+    const text = `  ${'z'.repeat(2000)}  `;
+    const ok = await resolve('supervisor', F.K.open, { rootCause: text });
+    assert.equal(ok.status, 200, JSON.stringify(ok.body));
+    assert.equal(ok.body.rootCause, 'z'.repeat(2000));
+    const line = ok.body.events.at(-1);
+    assert.equal(line.kind, 'resolved');
+    assert.equal(line.note, 'Fixed it');
+    assert.equal(line.payload.rootCause, 'z'.repeat(2000));
+    // (Each request is rolled back after it answers, so the answer itself is the proof.)
+  });
+
+  it('root cause: complaints closed before 0015 keep none; a later close without one is refused by the database', async () => {
+    // F.K.closed was closed before the migration: no root cause, still valid.
+    const old = await call('complaints_admin', 'GET', `/complaints/${F.K.closed}`);
+    assert.equal(old.body.status, 'closed');
+    assert.equal(old.body.rootCause, null);
+    // The backstop: closing now without a root cause breaks the check;
+    // a blank one breaks the text check.
+    await assert.rejects(
+      db.client.query(
+        `update complaints
+            set status = 'closed', resolution_note = 'Fixed', resolved_at = now(), resolved_by = supervisor_id,
+                closed_at = now(), closed_by = supervisor_id
+          where id = $1`,
+        [F.K.in_progress],
+      ),
+      /complaints_root_cause_when_resolved/,
+    );
+    await assert.rejects(
+      db.client.query(`update complaints set root_cause = '  ' where id = $1`, [F.K.in_progress]),
+      /complaints_root_cause_text/,
+    );
+    // An old closed row can still be touched: the cutoff is when 0015 ran.
+    await db.client.query(`update complaints set updated_at = now() where id = $1`, [F.K.closed]);
   });
 
   it('there is no approve or send back', async () => {
@@ -160,7 +234,8 @@ describe('complaints workflow layer through the routes (P5, A1-A3)', { skip: dbT
     const admin = await act('complaints_admin', F.K.open, 'start', {});
     assert.equal(admin.status, 403);
     assert.equal(admin.body.permission, undefined, 'a workflow refusal, not the permission layer');
-    assert.match(admin.body.message, /Only Suresh Supervisor, the assigned supervisor, can start work on this/);
+    // "Only Suresh Supervisor, the assigned supervisor, can start work on this." (Gujarati)
+    assert.equal(admin.body.message, 'ફક્ત સોંપાયેલા સુપરવાઇઝર Suresh Supervisor જ આ ફરિયાદ પર કામ શરૂ કરી શકે છે.');
     assert.equal((await act('manager', F.K.open, 'start', {})).status, 403);
     assert.equal((await act('supervisor', F.K.open, 'start', {})).status, 200);
   });
@@ -174,6 +249,10 @@ describe('complaints workflow layer through the routes (P5, A1-A3)', { skip: dbT
       const res = await act('no_module', F.K.open, action, body);
       assert.equal(res.status, 403, action);
       assert.equal(res.body.permission, key, action);
+      // The access layer's sentence, said in Gujarati on these routes; same fields.
+      assert.equal(res.body.error, 'forbidden', action);
+      assert.match(res.body.message, /^ફક્ત .* પરવાનગી ધરાવતા લોકો જ આ કરી શકે છે\.$/, action);
+      assert.equal(res.body.reason, res.body.message, action);
     }
     // Their detail: `can` lists only held keys (none); the alias still has all four, refused.
     const detail = await call('no_module', 'GET', `/complaints/${F.K.open}`);
@@ -182,7 +261,7 @@ describe('complaints workflow layer through the routes (P5, A1-A3)', { skip: dbT
     assert.deepEqual(Object.keys(detail.body.actions).sort(), ['comment', 'reassign', 'resolve', 'start']);
     for (const name of ['start', 'resolve', 'reassign', 'comment']) {
       assert.equal(detail.body.actions[name].allowed, false, name);
-      assert.match(detail.body.actions[name].reason, /^Only people allowed to /, name);
+      assert.match(detail.body.actions[name].reason, /^ફક્ત .* પરવાનગી ધરાવતા લોકો જ આ કરી શકે છે\.$/, name);
     }
   });
 
@@ -208,7 +287,7 @@ describe('complaints workflow layer through the routes (P5, A1-A3)', { skip: dbT
     }
     // The detail names the person who can, never a role (D1).
     const detail = await call('supervisor', 'GET', `/complaints/${F.K.open}`);
-    assert.equal(detail.body.can.reassign, 'Only Mahesh Manager, the manager, can reassign this.');
+    assert.equal(detail.body.can.reassign, 'ફક્ત મેનેજર Mahesh Manager જ આ ફરિયાદ બીજાને સોંપી શકે છે.');
   });
 
   it("the detail's `can` is the full answer per action, and `actions` is its alias", async () => {
@@ -262,6 +341,9 @@ describe('complaints workflow layer through the routes (P5, A1-A3)', { skip: dbT
       assert.equal(siteB.supervisor, null);
       const res = await raise('raiser', F.S.b, F.CC.no_approval);
       assert.equal(res.status, 422);
+      // One sentence for both, in Gujarati: the picker's reason and the raise's 422.
+      assert.match(res.body.message, /માટે લૉગિન કરી શકે એવા કોઈ સુપરવાઇઝર હજી નથી/);
+      assert.equal((siteB as unknown as { reason: string }).reason, res.body.message);
       // Nor can an inactive person be made the supervisor by reassigning.
       assert.equal(
         (await act('manager', F.K.open, 'reassign', { note: 'x', supervisorId: F.U.supervisor2 })).status,

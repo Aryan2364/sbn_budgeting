@@ -95,25 +95,25 @@ export function checkPhotos(
   if (list.length < min) {
     throw new UnprocessableEntityException(
       min === 1
-        ? 'Add a photo of the fix. Resolving needs at least one photo.'
-        : `Add at least ${min} photos.`,
+        ? 'કામ પૂરું થયાનો ઓછામાં ઓછો એક ફોટો ઉમેરો. ફરિયાદ ઉકેલવા માટે ફોટો જરૂરી છે.'
+        : `ઓછામાં ઓછા ${min} ફોટા ઉમેરો.`,
     );
   }
   if (list.length > max) {
     throw new UnprocessableEntityException(
-      `You sent ${list.length} photos. Up to ${max} are allowed, so remove ${list.length - max}.`,
+      `તમે ${list.length} ફોટા મોકલ્યા છે. વધુમાં વધુ ${max} ફોટા ચાલે, તેથી ${list.length - max} ફોટા દૂર કરો.`,
     );
   }
   return list.map((file) => {
     if (file.size > MAX_PHOTO_BYTES || file.buffer.length > MAX_PHOTO_BYTES) {
       throw new UnprocessableEntityException(
-        `${file.originalname} is larger than 5 MB. Choose a smaller photo.`,
+        `${file.originalname} 5 MB કરતાં મોટો છે. નાનો ફોટો પસંદ કરો.`,
       );
     }
     const contentType = sniffImageType(file.buffer);
     if (!contentType) {
       throw new UnprocessableEntityException(
-        `${file.originalname} is not a JPEG, PNG or WebP image. Choose a photo and try again.`,
+        `${file.originalname} JPEG, PNG કે WebP ફોટો નથી. ફોટો પસંદ કરીને ફરી પ્રયાસ કરો.`,
       );
     }
     return { file, contentType };
@@ -139,8 +139,9 @@ export function initPhotoStorage(): PhotoStore {
   return store;
 }
 
-const SAVE_FAILED = 'The photos could not be saved. Try again.';
-const LOAD_FAILED = 'The photo could not be loaded. Try again in a moment.';
+// Gujarati (owner, 7 Oct 2026), like every complaints message.
+const SAVE_FAILED = 'ફોટા સાચવી શકાયા નથી. ફરી પ્રયાસ કરો.';
+const LOAD_FAILED = 'ફોટો ખૂલી શક્યો નથી. થોડી વાર પછી ફરી પ્રયાસ કરો.';
 
 export interface StoredPhoto {
   storageKey: string;
@@ -288,9 +289,9 @@ export class PhotoUploadErrorFilter implements ExceptionFilter {
 
     let reworded: string | null = null;
     if (exception instanceof PayloadTooLargeException) {
-      reworded = 'A photo is larger than 5 MB. Choose a smaller photo, or let the app compress it.';
+      reworded = 'એક ફોટો 5 MB કરતાં મોટો છે. નાનો ફોટો પસંદ કરો.';
     } else if (/^(Too many files|Unexpected field)/.test(message)) {
-      reworded = `Up to ${MAX_PHOTOS} photos are allowed, sent in the "photos" field. Remove the extra ones.`;
+      reworded = `વધુમાં વધુ ${MAX_PHOTOS} ફોટા ચાલે. વધારાના ફોટા દૂર કરો.`;
     }
 
     if (reworded) {

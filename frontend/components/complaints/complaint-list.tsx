@@ -15,7 +15,6 @@ import {
   type ComplaintRow,
   type ComplaintTab,
 } from "@/lib/complaints-api"
-import { errorMessage } from "@/components/shell/session"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardLink, CardTitle } from "@/components/ui/card"
 import { EmptyState } from "@/components/ui/empty-state"
@@ -46,6 +45,7 @@ import {
 } from "@/components/complaints/complaint-filter"
 import { ageLabel, ComplaintStatusBadge } from "@/components/complaints/status"
 import { useComplaintMasters } from "@/components/complaints/use-masters"
+import { GU_COMMON, GU_PAGINATION, guError } from "@/components/complaints/gu"
 
 /**
  * `/complaints` — section 11.1's list page with section 33 tabs.
@@ -73,7 +73,29 @@ import { useComplaintMasters } from "@/components/complaints/use-masters"
  *
  * A complaint is filed against a site (CONTRACT §10); one raised before
  * sites has none and shows its location in the Site column instead.
+ *
+ * Every word is Gujarati (owner, 7 Oct 2026). The "matched in" label
+ * under a row comes from the server, which names the field in Gujarati.
  */
+
+const GU = {
+  loading: "ફરિયાદો લોડ થઈ રહી છે",
+  search: "ફરિયાદ શોધો",
+  clearSearch: "શોધ સાફ કરો",
+  results: (n: number) => `${formatNumber(n)} પરિણામ`,
+  loadFailed: "ફરિયાદો ખૂલી શકી નથી",
+  noMatchSearch: (q: string) => `“${q}” સાથે મેળ ખાતી કોઈ ફરિયાદ નથી`,
+  noMatchFilters: "આ ફિલ્ટર સાથે મેળ ખાતી કોઈ ફરિયાદ નથી",
+  noMatchBody: "શોધ અને ફિલ્ટર દૂર કરવાથી આખું ટેબ ફરી દેખાશે.",
+  clearAll: "શોધ અને ફિલ્ટર દૂર કરો",
+  showAll: "બધી ફરિયાદો જુઓ",
+  reference: "નંબર",
+  complaint: "ફરિયાદ",
+  raised: "નોંધાઈ",
+  age: "સમય",
+  sortBy: (label: string) => `${label} પ્રમાણે ગોઠવો`,
+  cardMeta: (date: string, age: string) => `${date} ના રોજ નોંધાઈ · ${age}`,
+}
 
 const TAB_VALUES = COMPLAINT_TABS.map((t) => t.value)
 const DEFAULT_SORT = "raisedAt"
@@ -131,18 +153,18 @@ const EMPTY_COPY: Record<
   { heading: string; body: string; action: "raise" | "all" }
 > = {
   assigned: {
-    heading: "Nothing is assigned to you",
-    body: "Complaints raised at a site you supervise appear here until you resolve them.",
+    heading: "તમને કોઈ ફરિયાદ સોંપાઈ નથી",
+    body: "તમે જે સાઇટના સુપરવાઇઝર છો ત્યાં નોંધાયેલી ફરિયાદો, તમે ઉકેલો ત્યાં સુધી અહીં દેખાશે.",
     action: "all",
   },
   raised: {
-    heading: "You have not raised a complaint yet",
-    body: "Complaints you raise appear here, so you can follow them until they close.",
+    heading: "તમે હજી કોઈ ફરિયાદ નોંધાવી નથી",
+    body: "તમે નોંધાવો તે ફરિયાદો અહીં દેખાશે, જેથી તે બંધ થાય ત્યાં સુધી તમે તેને જોઈ શકો.",
     action: "raise",
   },
   all: {
-    heading: "No complaints yet",
-    body: "Complaints you raise, or that are sent to you, appear here.",
+    heading: "હજી કોઈ ફરિયાદ નથી",
+    body: "તમે નોંધાવો તે, અથવા તમને મોકલાય તે ફરિયાદો અહીં દેખાશે.",
     action: "raise",
   },
 }
@@ -256,7 +278,7 @@ export function ComplaintList() {
         }
       })
       .catch((caught: unknown) => {
-        if (!cancelled) setAnswer({ request, result: null, error: errorMessage(caught) })
+        if (!cancelled) setAnswer({ request, result: null, error: guError(caught) })
       })
     return () => {
       cancelled = true
@@ -301,14 +323,15 @@ export function ComplaintList() {
     )
 
   const copy = EMPTY_COPY[state.tab]
-  const noun = (n: number) => `${formatNumber(n)} ${n === 1 ? "complaint" : "complaints"}`
+  const noun = GU_COMMON.count
 
   let body: React.ReactNode
   if (phase === "failed") {
     body = (
       <EmptyState
         variant="failed"
-        heading="The complaints could not be loaded"
+        heading={GU.loadFailed}
+        actionLabel={GU_COMMON.tryAgain}
         onAction={() => setAttempt((a) => a + 1)}
       >
         {answer.error}
@@ -319,16 +342,15 @@ export function ComplaintList() {
       <EmptyState
         variant="nothing-found"
         heading={
-          state.search.trim()
-            ? `No complaints match “${state.search.trim()}”`
-            : "No complaints match these filters"
+          state.search.trim() ? GU.noMatchSearch(state.search.trim()) : GU.noMatchFilters
         }
+        actionLabel={GU.clearAll}
         onAction={() => {
           setSearchInput("")
           setState((s) => ({ ...s, search: "", filters: {}, page: 1 }))
         }}
       >
-        Clearing the search and filters will show the whole tab again.
+        {GU.noMatchBody}
       </EmptyState>
     )
   } else if (showsNothingYet) {
@@ -336,7 +358,7 @@ export function ComplaintList() {
       <EmptyState
         variant="nothing-yet"
         heading={copy.heading}
-        actionLabel={copy.action === "raise" ? "Raise complaint" : "Show all complaints"}
+        actionLabel={copy.action === "raise" ? GU_COMMON.raise : GU.showAll}
         onAction={() =>
           copy.action === "raise" ? router.push("/complaints/new") : switchTab("all")
         }
@@ -366,12 +388,12 @@ export function ComplaintList() {
   return (
     <PageFrame className="max-sm:px-4">
       <PageHeader
-        title="Complaints"
-        meta={result ? noun(total) : knownEmpty ? noun(0) : "Loading complaints"}
+        title={GU_COMMON.complaints}
+        meta={result ? noun(total) : knownEmpty ? noun(0) : GU.loading}
         actions={
           <Button render={<Link href="/complaints/new" />} nativeButton={false}>
             <PlusIcon />
-            Raise complaint
+            {GU_COMMON.raise}
           </Button>
         }
       />
@@ -380,16 +402,17 @@ export function ComplaintList() {
 
       <ListToolbar className="max-sm:flex-col max-sm:items-stretch">
         <ListSearch
-          label="Search complaints"
-          placeholder="Search complaints"
+          label={GU.search}
+          placeholder={GU.search}
           value={searchInput}
           onChange={(event) => setSearchInput(event.target.value)}
           onClear={() => setSearchInput("")}
+          clearLabel={GU.clearSearch}
           className="max-sm:w-full [&_input]:max-sm:text-base"
         />
         {state.search.trim() && phase === "ready" ? (
           <span className="text-label text-text-secondary">
-            {formatNumber(total)} {total === 1 ? "result" : "results"}
+            {GU.results(total)}
           </span>
         ) : null}
         <ComplaintFilterButton
@@ -416,7 +439,8 @@ export function ComplaintList() {
             total={result ? total : knownEmpty ? 0 : phase === "loading" ? null : 0}
             onPageChange={(next) => setState((s) => ({ ...s, page: next }))}
             emptyLabel={noun(0)}
-            loadingLabel="Loading complaints"
+            loadingLabel={GU.loading}
+            text={GU_PAGINATION}
           />
         }
       >
@@ -446,7 +470,7 @@ function SortHeader({
     <button
       type="button"
       onClick={() => onSort(sortKey)}
-      aria-label={`Sort by ${label.toLowerCase()}`}
+      aria-label={GU.sortBy(label)}
       className={cn(
         "flex w-full min-w-0 cursor-pointer items-center gap-1 rounded-lg text-label",
         "outline-none focus-visible:outline-2 focus-visible:[outline-style:solid] focus-visible:outline-offset-2 focus-visible:outline-on-brand",
@@ -489,18 +513,18 @@ function ComplaintTable({
       <TableHeader>
         <TableRow>
           <TableHead className="w-col-ref">
-            <SortHeader label="Reference" sortKey="number" sort={sort} direction={direction} onSort={onSort} />
+            <SortHeader label={GU.reference} sortKey="number" sort={sort} direction={direction} onSort={onSort} />
           </TableHead>
-          <TableHead>Complaint</TableHead>
+          <TableHead>{GU.complaint}</TableHead>
           <TableHead>
-            <SortHeader label="Site" sortKey="site" sort={sort} direction={direction} onSort={onSort} />
+            <SortHeader label={GU_COMMON.site} sortKey="site" sort={sort} direction={direction} onSort={onSort} />
           </TableHead>
-          <TableHead className="hidden lg:table-cell">Supervisor</TableHead>
-          <TableHead className="w-col-status">Status</TableHead>
+          <TableHead className="hidden lg:table-cell">{GU_COMMON.supervisor}</TableHead>
+          <TableHead className="w-col-status">{GU_COMMON.status}</TableHead>
           <TableHead numeric className="w-col-date">
-            <SortHeader label="Raised" sortKey="raisedAt" sort={sort} direction={direction} onSort={onSort} numeric />
+            <SortHeader label={GU.raised} sortKey="raisedAt" sort={sort} direction={direction} onSort={onSort} numeric />
           </TableHead>
-          <TableHead numeric className="w-col-count">Age</TableHead>
+          <TableHead numeric className="w-col-count">{GU.age}</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -586,8 +610,8 @@ function ComplaintCards({ rows }: { rows: Array<ComplaintRow & Matchable> }) {
                   {complaintPlace(row)} · {row.category.name}
                 </p>
                 <p className="text-meta text-text-muted">
-                  <span className="tabular-nums">{row.reference}</span> · Raised {formatDate(row.raisedAt)} · Age{" "}
-                  {ageLabel(row.ageDays).toLowerCase()}
+                  <span className="tabular-nums">{row.reference}</span> ·{" "}
+                  {GU.cardMeta(formatDate(row.raisedAt), ageLabel(row.ageDays))}
                 </p>
               </CardContent>
             </Card>

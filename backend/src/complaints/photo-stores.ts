@@ -72,8 +72,9 @@ export function uploadRoot(): string {
 
 export class DiskPhotoStore implements PhotoStore {
   readonly description: string;
+  // Gujarati (owner, 7 Oct 2026), like every complaints message.
   readonly missingMessage =
-    "That photo's file is missing on the server. Ask an admin to check the uploads folder.";
+    'આ ફોટાની ફાઇલ સર્વર પર મળી નથી. એડમિનિસ્ટ્રેટરને uploads ફોલ્ડર તપાસવા કહો.';
 
   constructor(private readonly root: string = uploadRoot()) {
     this.description = `local disk at ${root}`;
@@ -155,7 +156,7 @@ function isNotFound(error: unknown): boolean {
 
 export class R2PhotoStore implements PhotoStore {
   readonly description: string;
-  readonly missingMessage = 'That photo is no longer available.';
+  readonly missingMessage = 'આ ફોટો હવે ઉપલબ્ધ નથી.';
 
   /**
    * @param prefix replaces the `complaints/` head of a storage key, so

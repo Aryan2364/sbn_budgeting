@@ -12,7 +12,7 @@ import {
   type ComplaintSiteOption,
 } from "@/lib/complaints-api"
 import { useCan } from "@/lib/permissions"
-import { errorMessage, useSession } from "@/components/shell/session"
+import { useSession } from "@/components/shell/session"
 import { Banner, BannerAction, BannerDescription, BannerTitle } from "@/components/ui/banner"
 import { Button } from "@/components/ui/button"
 import {
@@ -20,17 +20,12 @@ import {
   filesToSend,
   isBusy,
   type FileUploadItem,
-  type FileUploadText,
 } from "@/components/ui/file-upload"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Textarea } from "@/components/ui/textarea"
 import { ctrlEnterSaves } from "@/components/ui/keyboard-shortcuts"
-import {
-  isChanged,
-  useUnsavedChanges,
-  type UnsavedChangesText,
-} from "@/components/ui/unsaved-changes"
+import { isChanged, useUnsavedChanges } from "@/components/ui/unsaved-changes"
 import { EmptyState } from "@/components/ui/empty-state"
 import { PermissionTooltip } from "@/components/ui/permission-tooltip"
 import { RecordBreadcrumb } from "@/components/forms/record-breadcrumb"
@@ -43,6 +38,7 @@ import {
 import { PageHeader } from "@/components/templates/page"
 import { Choice } from "@/components/complaints/choice"
 import { useComplaintMasters } from "@/components/complaints/use-masters"
+import { GU_COMMON, GU_UNSAVED_RAISE, GU_UPLOAD, guError } from "@/components/complaints/gu"
 
 /**
  * `/complaints/new` — the raise form (section 11.3, and the agreed
@@ -77,7 +73,9 @@ const PHONE_TEXT = "max-sm:text-base"
  * Every word this screen shows, in Gujarati. The field labels are in the
  * JSX below. Names of people and places are passed in and kept as they
  * are. Text that comes from the server (a 422 routing message, say) is
- * shown as the server sent it.
+ * shown as the server sent it, and the server writes it in Gujarati too
+ * (owner, 7 Oct 2026); the words shared with the other complaints
+ * screens are in gu.ts.
  */
 const GU = {
   // Page
@@ -151,69 +149,6 @@ const GU = {
   submitting: "ફરિયાદ નોંધાઈ રહી છે…",
   noSupervisorReason: (site: string | undefined) =>
     `${site ?? "આ સાઇટ"} માટે હજી કોઈ સુપરવાઇઝર નથી, તેથી આ ફરિયાદ કોઈને પહોંચશે નહીં. બીજી સાઇટ પસંદ કરો.`,
-}
-
-/**
- * The leave warning, in its create wording: nothing exists until the
- * complaint is submitted, and there is no draft to save
- * (KIT-PENDING-leave-warning.md).
- */
-const GU_UNSAVED: UnsavedChangesText = {
-  title: "આ ફરિયાદ છોડી દેવી છે?",
-  description: "તમે ભરેલી માહિતી જતી રહેશે.",
-  stay: "ભરવાનું ચાલુ રાખો",
-  leave: "છોડી દો",
-}
-
-/** The photo upload's own words (it stays English on other screens). */
-const GU_UPLOAD: FileUploadText = {
-  typeList: (names) =>
-    names.length === 1
-      ? names[0]
-      : `${names.slice(0, -1).join(", ")} અથવા ${names[names.length - 1]}`,
-  limits: ({ types, maxSize, maxFiles }) =>
-    [
-      types ? `${types}.` : null,
-      maxFiles === 1 ? `${maxSize} સુધી.` : `દરેક ફોટો ${maxSize} સુધી.`,
-      maxFiles > 1 ? `વધુમાં વધુ ${maxFiles} ફોટા.` : null,
-    ]
-      .filter(Boolean)
-      .join(" "),
-  full: ({ count, maxFiles }) =>
-    `${maxFiles} માંથી ${count} ફોટા ઉમેર્યા છે. બીજો ફોટો ઉમેરવા માટે એક ફોટો દૂર કરો.`,
-  drag: ({ maxFiles }) =>
-    maxFiles === 1
-      ? "ફોટો અહીં ખેંચીને મૂકો, અથવા પસંદ કરો."
-      : "ફોટા અહીં ખેંચીને મૂકો, અથવા પસંદ કરો.",
-  touch: ({ maxFiles, camera }) =>
-    camera
-      ? `ફોટો પાડો અથવા ${maxFiles === 1 ? "ફોટો" : "ફોટા"} પસંદ કરો.`
-      : `${maxFiles === 1 ? "ફોટો" : "ફોટા"} પસંદ કરો.`,
-  takeButton: () => "ફોટો પાડો",
-  chooseButton: ({ maxFiles }) => (maxFiles === 1 ? "ફોટો પસંદ કરો" : "ફોટા પસંદ કરો"),
-  unreadable: ({ name }) =>
-    `${name} ફોટો તરીકે ખૂલી શક્યો નથી. JPG કે PNG ફોટો પસંદ કરો, અથવા ફોટો ફરીથી પાડો.`,
-  tooLarge: ({ name, size, maxSize }) =>
-    `${name} ${size} નો છે, જે ${maxSize} ની મર્યાદા કરતાં મોટો છે. નાનો ફોટો પસંદ કરો.`,
-  wrongType: ({ name, types }) =>
-    types
-      ? `${name} ${types} ફોટો નથી. ${types} ફોટો પસંદ કરો.`
-      : `${name} આ પ્રકારની ફાઇલ ચાલતી નથી. બીજો ફોટો પસંદ કરો.`,
-  tooMany: ({ name, maxFiles }) =>
-    `${name} ઉમેરાયો નથી, કારણ કે વધુમાં વધુ ${maxFiles} ફોટા ઉમેરી શકાય. બીજો ફોટો ઉમેરવા માટે એક ફોટો દૂર કરો.`,
-  preparing: () => "ફોટો તૈયાર થઈ રહ્યો છે",
-  uploading: ({ percent }) => `અપલોડ થઈ રહ્યો છે, ${percent}%`,
-  uploadFailed: ({ name }) => `${name} અપલોડ થયો નથી. ફરી પ્રયાસ કરો, અથવા તેને દૂર કરો.`,
-  retry: "ફરી પ્રયાસ કરો",
-  download: "ડાઉનલોડ કરો",
-  downloadLabel: ({ name }) => `${name} ડાઉનલોડ કરો`,
-  remove: "દૂર કરો",
-  removeLabel: ({ name }) => `${name} દૂર કરો`,
-  confirmTitle: () => "ફોટો દૂર કરવો છે?",
-  confirmBody: ({ name, context }) =>
-    `${name} ${context ? `${context} માંથી ` : ""}દૂર થઈ જશે. પછી પાછો લાવી શકાશે નહીં.`,
-  confirmCancel: "રદ કરો",
-  confirmAction: () => "ફોટો દૂર કરો",
 }
 
 /** The API's limit on a title (RaiseComplaintDto). */
@@ -295,7 +230,7 @@ export function RaiseComplaintForm() {
     changed: !done && (isChanged(values, initial) || photos.length > 0),
     noun: "complaint",
     mode: "create",
-    text: GU_UNSAVED,
+    text: GU_UNSAVED_RAISE,
   })
 
   const set = <K extends keyof Values>(key: K, value: Values[K]) => {
@@ -356,7 +291,7 @@ export function RaiseComplaintForm() {
       router.push(`/complaints/${detail.id}?raised=1`)
     } catch (caught) {
       const routing = caught instanceof ApiError && caught.status === 422
-      setFailure({ message: errorMessage(caught), routing })
+      setFailure({ message: guError(caught), routing })
       setSaving(false)
       // Scroll the form's own scroller to the banner, never the page
       // frame around it (scrollIntoView would move every ancestor).
@@ -400,7 +335,7 @@ export function RaiseComplaintForm() {
         <FormScrollArea>
           <div className="mx-auto w-full max-w-content-max p-6 max-sm:px-4">
             <RecordBreadcrumb
-              trail={[{ label: "Complaints", href: "/complaints" }]}
+              trail={[{ label: GU_COMMON.complaints, href: "/complaints" }]}
               current={GU.title}
               label={GU.breadcrumbLabel}
             />

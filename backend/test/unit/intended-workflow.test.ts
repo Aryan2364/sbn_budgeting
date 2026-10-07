@@ -56,13 +56,17 @@ describe('intended differences D1, D8 and D9 (complaint workflow)', () => {
     assert.equal(intendedIdFor(diff(all, 'status', 200, 400), world({ [all]: { base: 200, run: 400 } })), null);
   });
 
-  it('D8: exactly the dropped keys are gone (with D7 adding `can`, and `title` from 0014)', () => {
+  it('D8: exactly the dropped keys are gone (with D7 adding `can`, `title` from 0014 and `rootCause` from 0015)', () => {
     const w = world();
     const detail = `GET /api/complaints/:id |raiser|${O}`;
     const base = ['actions', 'approver', 'ceo', 'hod', 'id', 'requiresApproval', 'status'];
-    assert.equal(intendedIdFor(diff(detail, 'keys', base, ['actions', 'can', 'id', 'status', 'title']), w), 'D8');
-    assert.equal(intendedIdFor(diff(detail, 'keys', base, ['actions', 'can', 'hod', 'id', 'status', 'title']), w), null, 'one kept');
-    assert.equal(intendedIdFor(diff(detail, 'keys', base, ['actions', 'can', 'status', 'title']), w), null, 'one more lost');
+    assert.equal(intendedIdFor(diff(detail, 'keys', base, ['actions', 'can', 'id', 'rootCause', 'status', 'title']), w), 'D8');
+    assert.equal(
+      intendedIdFor(diff(detail, 'keys', base, ['actions', 'can', 'hod', 'id', 'rootCause', 'status', 'title']), w),
+      null,
+      'one kept',
+    );
+    assert.equal(intendedIdFor(diff(detail, 'keys', base, ['actions', 'can', 'rootCause', 'status', 'title']), w), null, 'one more lost');
     const counts = 'GET /api/complaints/counts |raiser';
     assert.equal(intendedIdFor(diff(counts, 'keys', ['all', 'approval', 'assigned', 'raised'], ['all', 'assigned', 'raised']), w), 'D8');
     const cats = 'GET /api/complaint-categories |complaints_admin';

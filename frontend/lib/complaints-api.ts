@@ -67,7 +67,7 @@ export interface ComplaintRow {
  * raised before sites, its location. Every screen names it this way.
  */
 export function complaintPlace(row: Pick<ComplaintRow, "site" | "location">): string {
-  return row.site?.name ?? row.location?.name ?? "No site"
+  return row.site?.name ?? row.location?.name ?? "સાઇટ નથી"
 }
 
 export type ActionName = "start" | "resolve" | "reassign" | "comment"
@@ -114,6 +114,12 @@ export interface ComplaintDetail extends ComplaintRow {
   resolvedAt: string | null
   closedAt: string | null
   resolutionNote: string | null
+  /**
+   * Why the problem happened, written when resolving (owner, 7 Oct 2026;
+   * required from then). Null until resolved, and on complaints resolved
+   * before it was asked.
+   */
+  rootCause: string | null
   resolvedBy: PersonRef | null
   closedBy: PersonRef | null
   photos: ComplaintPhoto[]
@@ -233,10 +239,12 @@ export async function postMultipart<T>(
   for (const file of files.files) form.append(files.name, file, file.name)
 
   // One request path (lib/api.ts): same auth, deadline and error mapping.
+  // Every multipart call is a complaints screen, so its own words are
+  // Gujarati (owner, 7 Oct 2026).
   return api.postForm<T>(path, form, {
     timeoutMs: UPLOAD_TIMEOUT_MS,
-    timeoutMessage: "The upload took too long. Check your signal and try again. Nothing was saved.",
-    statusMessages: { 413: "Those photos are too large to send. Remove one and try again." },
+    timeoutMessage: "અપલોડમાં ઘણો સમય લાગ્યો. નેટવર્ક તપાસીને ફરી પ્રયાસ કરો. કંઈ સાચવાયું નથી.",
+    statusMessages: { 413: "ફોટા મોકલવા માટે ખૂબ મોટા છે. એક ફોટો દૂર કરીને ફરી પ્રયાસ કરો." },
   })
 }
 
@@ -278,10 +286,11 @@ export const complaintsApi = {
 
   start: (id: string) => api.post<ComplaintDetail>(`/complaints/${id}/start`, {}),
 
-  resolve: (id: string, resolutionNote: string, photos: File[]) =>
+  /** What was done, why it happened (root cause), and 1-3 photos of the fix: all required. */
+  resolve: (id: string, body: { resolutionNote: string; rootCause: string }, photos: File[]) =>
     postMultipart<ComplaintDetail>(
       `/complaints/${id}/resolve`,
-      { resolutionNote },
+      { resolutionNote: body.resolutionNote, rootCause: body.rootCause },
       { name: "photos", files: photos },
     ),
 
@@ -323,6 +332,10 @@ export const notificationsApi = {
 // Authenticated photo loading
 // ---------------------------------------------------------------
 
+/** The photo loader's words, Gujarati like every complaints screen. */
+const PHOTO_GONE = "આ ફોટો હવે ઉપલબ્ધ નથી."
+const PHOTO_FAILED = "ફોટો ખૂલી શક્યો નથી. ઇન્ટરનેટ કનેક્શન તપાસીને ફરી પ્રયાસ કરો."
+
 type PhotoState =
   | { status: "loading"; url: null }
   | { status: "ready"; url: string }
@@ -356,13 +369,7 @@ export function useAuthPhoto(path: string | null, attempt = 0): PhotoState {
       signal: AbortSignal.timeout(PHOTO_TIMEOUT_MS),
     })
       .then(async (response) => {
-        if (!response.ok) {
-          throw new Error(
-            response.status === 404
-              ? "This photo is no longer available."
-              : "The photo could not be loaded.",
-          )
-        }
+        if (!response.ok) throw new Error(response.status === 404 ? PHOTO_GONE : PHOTO_FAILED)
         const blob = await response.blob()
         if (cancelled) return
         objectUrl = URL.createObjectURL(blob)
@@ -374,10 +381,7 @@ export function useAuthPhoto(path: string | null, attempt = 0): PhotoState {
           status: "failed",
           url: null,
           key,
-          message:
-            caught instanceof Error && caught.message.startsWith("This photo")
-              ? caught.message
-              : "The photo could not be loaded. Check your connection and try again.",
+          message: caught instanceof Error && caught.message === PHOTO_GONE ? PHOTO_GONE : PHOTO_FAILED,
         })
       })
 

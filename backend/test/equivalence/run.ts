@@ -62,8 +62,10 @@ import {
   matchIntended,
   matchSwitchOnly,
   missingApprovals,
+  missingLanguage,
   missingOptionalFields,
   missingRemovals,
+  missingRootCause,
   missingSwitchOver,
   moduleLookup,
   type ApprovalsWorld,
@@ -405,6 +407,10 @@ if (require.main === module) {
       if (!opts.only) missing.push(...missingRemovals(differences));
       // D11 too: its raise cases are in every run, and someone may raise.
       if (!opts.only) missing.push(...missingOptionalFields(differences, intendedWorld));
+      // D12: every body the run rebuilt in the old words matched; D13: a
+      // resolve without a root cause was refused for someone who may resolve.
+      if (!opts.only) missing.push(...missingLanguage(differences, intendedWorld));
+      if (!opts.only) missing.push(...missingRootCause(differences, intendedWorld));
 
       if (approvalsMissing.length) {
         process.stdout.write(`FAIL: ${approvalsMissing.length} D8/D9 change(s) missing.\n`);

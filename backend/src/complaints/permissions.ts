@@ -24,8 +24,8 @@
  *   - `permission`: the permission layer refused (403, naming the key).
  *     The route's own scoped read has usually answered this already.
  *   - `person`: you are not the one who can do this. The reason names
- *     who can ("Only Ramesh Patel, the assigned supervisor, can resolve
- *     this"). 403 until P11 (legacy L1), then 409.
+ *     who can ("ફક્ત સોંપાયેલા સુપરવાઇઝર Ramesh Patel જ આ ફરિયાદ
+ *     ઉકેલી શકે છે."). 403 until P11 (legacy L1), then 409.
  *   - `status`: the complaint is not in a state where this applies. In
  *     the detail it explains the state; a route answers 409 with who
  *     moved it, because the caller's screen was stale.
@@ -87,11 +87,26 @@ export interface ActionCheck {
 
 const ALLOWED: ActionCheck = { allowed: true, reason: null, failure: null };
 
-const STATUS_LABEL: Record<ComplaintStatus, string> = {
-  open: 'open',
-  in_progress: 'in progress',
-  closed: 'closed',
-};
+/**
+ * The refusal sentences, in Gujarati (owner decision, 7 Oct 2026: the
+ * whole Complaints area is Gujarati). Each names the person who CAN act,
+ * never a role (D1). `person()` and `status()` add the full stop.
+ */
+const SAYS = {
+  onlyManagerReassigns: (manager: string) => `ફક્ત મેનેજર ${manager} જ આ ફરિયાદ બીજાને સોંપી શકે છે.`,
+  onlySupervisorStarts: (supervisor: string) =>
+    `ફક્ત સોંપાયેલા સુપરવાઇઝર ${supervisor} જ આ ફરિયાદ પર કામ શરૂ કરી શકે છે`,
+  onlySupervisorResolves: (supervisor: string) =>
+    `ફક્ત સોંપાયેલા સુપરવાઇઝર ${supervisor} જ આ ફરિયાદ ઉકેલી શકે છે`,
+  /** Start refused by status; `open` never is (start is allowed there). */
+  cannotStartAgain: {
+    open: 'આ ફરિયાદ ખુલ્લી છે',
+    in_progress: 'આ ફરિયાદ પર કામ પહેલેથી ચાલુ છે, તેથી ફરીથી શરૂ કરી શકાય નહીં',
+    closed: 'આ ફરિયાદ બંધ છે, તેથી તેના પર ફરીથી કામ શરૂ કરી શકાય નહીં',
+  } satisfies Record<ComplaintStatus, string>,
+  alreadyClosed: 'આ ફરિયાદ પહેલેથી બંધ છે',
+  closedNoReassign: 'આ ફરિયાદ બંધ છે, તેથી હવે બીજાને સોંપી શકાય નહીં',
+} as const;
 
 export function checkAction(action: ActionName, viewer: Viewer, c: PermissionSubject): ActionCheck {
   // 1. The permission layer.
@@ -99,26 +114,24 @@ export function checkAction(action: ActionName, viewer: Viewer, c: PermissionSub
   if (may !== true) {
     // Reassign held, but not at a scope reaching this complaint: say who can.
     const who = action === 'reassign' && viewer.held.reassign ? c.manager : null;
-    return permission(who ? `Only ${who.name}, the manager, can reassign this.` : may);
+    return permission(who ? SAYS.onlyManagerReassigns(who.name) : may);
   }
 
   // 2. The workflow layer.
   const supervisor = viewer.id === c.supervisor.id;
   switch (action) {
     case 'start':
-      if (!supervisor) return person(`Only ${c.supervisor.name}, the assigned supervisor, can start work on this`);
-      if (c.status !== 'open') {
-        return status(`This complaint is ${STATUS_LABEL[c.status]}, so it can't be started again`);
-      }
+      if (!supervisor) return person(SAYS.onlySupervisorStarts(c.supervisor.name));
+      if (c.status !== 'open') return status(SAYS.cannotStartAgain[c.status]);
       return ALLOWED;
 
     case 'resolve':
-      if (!supervisor) return person(`Only ${c.supervisor.name}, the assigned supervisor, can resolve this`);
-      if (c.status === 'closed') return status('This complaint is already closed');
+      if (!supervisor) return person(SAYS.onlySupervisorResolves(c.supervisor.name));
+      if (c.status === 'closed') return status(SAYS.alreadyClosed);
       return ALLOWED;
 
     case 'reassign':
-      if (c.status === 'closed') return status('This complaint is closed, so it can no longer be reassigned');
+      if (c.status === 'closed') return status(SAYS.closedNoReassign);
       return ALLOWED;
 
     case 'comment':

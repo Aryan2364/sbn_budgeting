@@ -2,8 +2,8 @@ import * as React from "react"
 import { CircleCheckIcon, CircleDotIcon, ClockIcon } from "lucide-react"
 
 import type { ComplaintStatus } from "@/lib/complaints-api"
-import { formatNumber } from "@/lib/format"
 import { Badge } from "@/components/ui/badge"
+import { GU_COMMON, GU_STATUS } from "@/components/complaints/gu"
 
 /**
  * The complaint status-to-colour map, defined ONCE (FRONTEND_RULES 2.4:
@@ -26,14 +26,18 @@ import { Badge } from "@/components/ui/badge"
  * Locked statuses (38.3): Closed. A closed complaint takes no further
  * action; the detail page shows every action disabled with the
  * server's reason.
+ *
+ * The labels are Gujarati (owner, 7 Oct 2026), the same three words on
+ * every complaints screen: ખુલ્લી (Open), કામ ચાલુ (In progress),
+ * બંધ (Closed).
  */
 export const STATUS_META: Record<
   ComplaintStatus,
   { label: string; variant: "warning" | "neutral" | "success"; icon: React.ReactNode }
 > = {
-  open: { label: "Open", variant: "warning", icon: <CircleDotIcon /> },
-  in_progress: { label: "In progress", variant: "neutral", icon: <ClockIcon /> },
-  closed: { label: "Closed", variant: "success", icon: <CircleCheckIcon /> },
+  open: { label: GU_STATUS.open, variant: "warning", icon: <CircleDotIcon /> },
+  in_progress: { label: GU_STATUS.in_progress, variant: "neutral", icon: <ClockIcon /> },
+  closed: { label: GU_STATUS.closed, variant: "success", icon: <CircleCheckIcon /> },
 }
 
 /** In the order the work moves. Filters and the dashboard use it. */
@@ -58,6 +62,5 @@ export function ComplaintStatusBadge({ status }: { status: ComplaintStatus }) {
  * (raised to now, or raised to closed); this only phrases them.
  */
 export function ageLabel(days: number): string {
-  if (days <= 0) return "Today"
-  return `${formatNumber(days)} ${days === 1 ? "day" : "days"}`
+  return GU_COMMON.age(days)
 }
