@@ -5,8 +5,19 @@ import { Dialog as DialogPrimitive } from "@base-ui/react/dialog"
 import { XIcon } from "lucide-react"
 
 import { cn } from "@/lib/utils"
+import { useLayout } from "@/lib/layout"
 import { BandScope, HeaderBand } from "@/components/ui/header-band"
 import { Button } from "@/components/ui/button"
+import {
+  Sheet,
+  SheetBody,
+  SheetContent,
+  SheetDescription,
+  SheetFooter,
+  SheetHeader,
+  registerLayerTitle,
+  textOf,
+} from "@/components/ui/sheet"
 
 /**
  * Section 24. Three widths exist: small 400px for confirmations,
@@ -20,9 +31,26 @@ import { Button } from "@/components/ui/button"
  *
  * Never open a dialog from inside a dialog. If it needs to lead
  * somewhere else, it should be a page.
+ *
+ * ON PHONE (41.8 rule 10) the size decides the form, and the caller
+ * never chooses: a small dialog becomes a bottom sheet, a medium or
+ * large one a full-screen layer with the app bar. Both are sheet.tsx's,
+ * so Android back, the swipe, steps and focus are its machinery, not a
+ * copy. The caller writes the same Dialog, DialogContent, DialogHeader,
+ * DialogBody and DialogFooter in both layouts.
  */
 function Dialog({ ...props }: DialogPrimitive.Root.Props) {
-  return <DialogPrimitive.Root data-slot="dialog" {...props} />
+  /*
+   * The kit's Sheet root, in both layouts. Sheet is the same Base UI
+   * dialog root (sheet.tsx imports it from the same module), renders no
+   * DOM and passes every prop through, so the desktop dialog behaves as
+   * before. It adds what the phone forms need: whether the dialog is
+   * open, and a close that goes through onOpenChange, so Android back
+   * closes it and the unsaved-changes guard can refuse (41.4 rule 9,
+   * 11.3 rule 10). One root in both layouts, so a foldable changing
+   * layout does not remount the trigger (41.2 rule 3).
+   */
+  return <Sheet data-slot="dialog" {...props} />
 }
 
 function DialogTrigger({ ...props }: DialogPrimitive.Trigger.Props) {
@@ -64,6 +92,15 @@ function DialogContent({
   size?: "sm" | "md" | "lg"
   showCloseButton?: boolean
 }) {
+  const { layout } = useLayout()
+  if (layout === "phone") {
+    return (
+      <PhoneDialogContent size={size} showCloseButton={showCloseButton} {...props}>
+        {children}
+      </PhoneDialogContent>
+    )
+  }
+
   /**
    * Section 24, enforced HERE rather than trusted to the caller.
    *
@@ -123,7 +160,7 @@ function DialogContent({
             // Section 24: the widths are maximums. Below them the dialog
             // is the screen less 16px a side, so a large dialog at 768px
             // is 736px and never touches the edge.
-            "fixed top-1/2 left-1/2 z-(--z-dialog) flex max-h-[80vh] w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 flex-col",
+            "fixed top-1/2 left-1/2 z-(--z-dialog) flex max-h-[80dvh] w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 flex-col",
             "rounded-xl border border-border-light bg-surface text-body text-text-primary shadow-dialog outline-none",
             "data-[size=sm]:max-w-dialog-sm data-[size=md]:max-w-dialog-md data-[size=lg]:max-w-dialog-lg",
             // Section 5.6: fade with a slight scale from 98%, slow; out at
@@ -179,6 +216,153 @@ function DialogContent({
         </DialogPrimitive.Popup>
       </DialogPortal>
     </BandScope>
+  )
+}
+
+/** The words of the first DialogTitle among these elements, at any depth. */
+function titleText(node: React.ReactNode): string | null {
+  for (const child of React.Children.toArray(node)) {
+    if (!React.isValidElement<{ children?: React.ReactNode }>(child)) continue
+    if (child.type === DialogTitle) return textOf(child.props.children)
+    const inner = titleText(child.props.children)
+    if (inner !== null) return inner
+  }
+  return null
+}
+
+function isElementOf<P = React.ComponentProps<"div">>(
+  child: React.ReactNode,
+  type: unknown
+): child is React.ReactElement<P> {
+  return React.isValidElement(child) && child.type === type
+}
+
+/**
+ * Section 41.8 rule 10 - the dialog on phone. The caller's parts are
+ * handed to sheet.tsx as its own, one for one: DialogHeader becomes
+ * SheetHeader (its DialogDescription a SheetDescription, so it leaves the
+ * band as on desktop, 36.3), DialogBody becomes SheetBody, DialogFooter
+ * becomes SheetFooter. DialogTitle and DialogClose are already the Base
+ * UI parts the sheet uses, so they stay as they are.
+ *
+ *   - sm: a bottom sheet (41.8 rules 1 to 9): the header band in the form
+ *     its depth gives it, the scrolling body, the footer's buttons
+ *     sharing its width, the close button in the band.
+ *   - md and lg: a full-screen layer (sheet.tsx, presentation="screen"):
+ *     the app bar with the dialog's title and a back arrow, the body
+ *     scrolling under it, the footer as the action bar on the keyboard.
+ *
+ * WHAT CHANGES ON THE WAY, ALL PHONE ONLY, EACH FOR A RULE:
+ *
+ *   - The caller's className is not applied. It was written for the
+ *     centred 400-800px box (position, width, radius: the command
+ *     palette's `top-1/3 rounded-xl! p-0`), and both phone forms own
+ *     their own box; applied, it would pull a full-screen layer a third
+ *     of the way down the screen.
+ *   - In the full-screen layer, a DialogClose in the footer is left out.
+ *     41.7 rule 3: "Cancel is the back arrow", and the back arrow closes
+ *     the layer through the same onOpenChange. A footer left with nothing
+ *     has no action bar (41.6 rule 9). A Cancel that is a plain Button
+ *     with its own onClick cannot be told from a real action and stays:
+ *     write Cancel as a DialogClose.
+ *   - In the full-screen layer, a control in DialogHeader's band other
+ *     than the title (a three-dot menu) moves to the app bar's actions,
+ *     which hold two icon buttons or one text button (41.4 rule 4).
+ *   - In the full-screen layer, the footer is the action bar: at most two
+ *     buttons once a DialogClose is left out (41.6 rule 8); more throws
+ *     in development.
+ *   - In the full-screen layer with no header or footer (the command
+ *     palette), a DialogTitle among the content is hidden, not removed:
+ *     it still names the layer, and the app bar shows its words, so a
+ *     screen reader does not meet the title twice.
+ *   - A dialog with no header or footer keeps its content unwrapped, as
+ *     on desktop: no padding and no second scroller round content that
+ *     brings its own (section 1 rule 8).
+ */
+function PhoneDialogContent({
+  children,
+  size,
+  showCloseButton,
+  ...props
+}: Omit<DialogPrimitive.Popup.Props, "className"> & {
+  size: "sm" | "md" | "lg"
+  showCloseButton: boolean
+}) {
+  const screen = size !== "sm"
+  const items = React.Children.toArray(children)
+
+  const header = items.filter((c) => isElementOf(c, DialogHeader)).map((child) => {
+    const { children: parts, ...headerProps } = (child as React.ReactElement<React.ComponentProps<"div">>).props
+    return (
+      <SheetHeader key={(child as React.ReactElement).key} {...headerProps}>
+        {React.Children.toArray(parts).map((part) =>
+          isElementOf<DialogPrimitive.Description.Props>(part, DialogDescription) ? (
+            <SheetDescription key={part.key} {...part.props} />
+          ) : (
+            part
+          )
+        )}
+      </SheetHeader>
+    )
+  })
+
+  const footer = items.filter((c) => isElementOf(c, DialogFooter)).flatMap((child) => {
+    const { children: buttons, ...footerProps } = (child as React.ReactElement<React.ComponentProps<"div">>).props
+    const kept = React.Children.toArray(buttons).filter(
+      (button) => !(screen && isElementOf(button, DialogClose))
+    )
+    return kept.length === 0
+      ? []
+      : [
+          <SheetFooter key={(child as React.ReactElement).key} {...footerProps}>
+            {kept}
+          </SheetFooter>,
+        ]
+  })
+
+  const rest = items.filter((c) => !isElementOf(c, DialogHeader) && !isElementOf(c, DialogFooter))
+  // Decided on what the caller wrote, before any DialogClose was left
+  // out: a body whose footer held only Close still scrolls as a body.
+  const assemble = header.length > 0 || items.some((c) => isElementOf(c, DialogFooter))
+
+  let body: React.ReactNode
+  if (assemble) {
+    const only = rest.length === 1 ? rest[0] : null
+    body =
+      rest.length === 0 ? null : isElementOf(only, DialogBody) ? (
+        <SheetBody key={only.key} {...only.props} />
+      ) : (
+        <SheetBody>{rest}</SheetBody>
+      )
+  } else if (screen) {
+    body = rest.map((child) =>
+      isElementOf(child, DialogTitle) ? (
+        <div key={child.key} hidden>
+          {child}
+        </div>
+      ) : (
+        child
+      )
+    )
+  } else {
+    // A bottom sheet always has a body; this one neither pads nor
+    // scrolls, for the reason above.
+    body = <SheetBody className="flex flex-col overflow-hidden p-0">{rest}</SheetBody>
+  }
+
+  return (
+    <SheetContent
+      side="bottom"
+      presentation={screen ? "screen" : "sheet"}
+      screenTitle={screen ? (titleText(children) ?? "") : undefined}
+      showCloseButton={showCloseButton}
+      data-size={size}
+      {...props}
+    >
+      {header}
+      {body}
+      {footer}
+    </SheetContent>
   )
 }
 
@@ -270,6 +454,14 @@ function DialogDescription({
     />
   )
 }
+
+/*
+ * On phone a medium or large dialog's header band is the app bar (41.8
+ * rule 10): the part holding the DialogTitle stays the title, and every
+ * other control in the band moves to the app bar's actions. This tells
+ * sheet.tsx which part is the title.
+ */
+registerLayerTitle(DialogTitle)
 
 export {
   Dialog,

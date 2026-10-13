@@ -84,20 +84,35 @@ function InputGroupAddon({
   )
 }
 
+/*
+ * Icon buttons only, each INSIDE the group's field, so each is the
+ * in-field size (6.2's exception, 6.3.1): 32px on desktop, 36px on phone
+ * (41.9 rule 2), never a control height. --h-control-sm is the small
+ * BUTTON's height and becomes 44px on phone, which would fill a 44px field
+ * edge to edge and paint over its border (6.5).
+ *
+ * There are no text sizes. A word with no fill and no border reads as
+ * plain text (6.1 rule 5), and the quiet in-field variant has neither.
+ *
+ * These are the ONLY size classes the button gets: InputGroupButton
+ * passes size={null} to Button, so Button's own default size
+ * (h-control px-4) is not added underneath. It used to be, and since
+ * tailwind-merge does not recognise the kit's named sizes it kept both,
+ * and Tailwind emits size-* before h-*, so h-control won the height:
+ * icon-xs was 32 wide by 36 tall, overflowing the field's 34px content box
+ * (6.5). icon-sm was 36 by 36. Both are now 32 by 32 on desktop.
+ */
 const inputGroupButtonVariants = cva(
-  "flex items-center gap-2 text-sm",
+  "flex items-center gap-2",
   {
     variants: {
       size: {
-        xs: "h-control-sm gap-1 rounded-lg px-3 [&>svg:not([class*='size-'])]:size-4",
-        sm: "",
-        "icon-xs":
-          "size-control-sm rounded-lg p-0 has-[>svg]:p-0",
-        "icon-sm": "size-control p-0 has-[>svg]:p-0",
+        "icon-xs": "size-icon-in-field rounded-lg p-0 has-[>svg]:p-0",
+        "icon-sm": "size-icon-in-field p-0 has-[>svg]:p-0",
       },
     },
     defaultVariants: {
-      size: "xs",
+      size: "icon-xs",
     },
   }
 )
@@ -106,7 +121,7 @@ function InputGroupButton({
   className,
   type = "button",
   variant = "in-field",
-  size = "xs",
+  size = "icon-xs",
   ...props
 }: Omit<React.ComponentProps<typeof Button>, "size" | "type"> &
   VariantProps<typeof inputGroupButtonVariants> & {
@@ -115,6 +130,7 @@ function InputGroupButton({
   return (
     <Button
       type={type}
+      size={null}
       data-size={size}
       variant={variant}
       className={cn(inputGroupButtonVariants({ size }), className)}

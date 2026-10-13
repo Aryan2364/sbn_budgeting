@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation"
 import * as React from "react"
 
+import { useLayout } from "@/lib/layout"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -13,6 +14,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
+import { whenLayersSettled } from "@/components/ui/sheet"
 
 /**
  * Section 11.3 rule 10: leaving a form with unsaved changes asks first.
@@ -49,7 +51,40 @@ import {
  *
  * Not caught: the browser's own Back and Forward buttons. The App Router
  * has no hook to cancel them, and a guard that traps Back would be worse
- * than the loss it prevents.
+ * than the loss it prevents. On phone that includes Android's back (41.4
+ * rule 9); a form there keeps a draft (lib/drafts.ts), so what was typed
+ * is offered again rather than lost.
+ *
+ * A control that leaves the page without being a link - the phone's back
+ * arrow, which is the form's Cancel on phone (41.7 rule 3) - carries
+ * data-leaves-page and is caught the same way: its click waits for the
+ * answer, and Leave clicks it again, unguarded.
+ *
+ * ON PHONE, LEAVING WAITS FOR THE WARNING TO GO. The warning holds a
+ * history entry of its own while open (alert-dialog.tsx, 41.4 rule 9),
+ * and closing it steps back off that entry - a step that lands a moment
+ * later. Started at once, the back arrow's own step back (or a link's
+ * push) raced it, and the person landed two screens back, or off the
+ * site. So on phone, Leave closes the warning, waits until it has
+ * finished closing (onOpenChangeComplete) and its entry is gone
+ * (whenLayersSettled in sheet.tsx), and only then leaves: one screen back
+ * from the back arrow, or exactly where the link pointed. Closing a dialog
+ * or sheet through `guard` does not wait: the warning and the dialog
+ * close together, and the layer queue takes both entries in one step.
+ * On desktop nothing has an entry, and Leave leaves at once, as always.
+ *
+ * ONE ASKS. Several forms on a page may each be changed. The first
+ * listener to catch a click asks, and stops every other one hearing it
+ * (stopImmediatePropagation), so one leaving press never opens two
+ * warnings; and the replayed click of a data-leaves-page control passes
+ * every instance (`replaying`, shared by them all), so a second changed
+ * form never catches the click the first one let through. Only the asking
+ * form's onLeave runs.
+ *
+ * `onLeave` runs when the person chooses Leave (or "Leave without
+ * saving"), by any of the routes above, before they leave. A phone form
+ * passes its draft's clear(): choosing Leave discards the draft (41.7
+ * rule 15).
  */
 
 /** True when two plain value objects differ, in any key, at any depth. */
@@ -78,6 +113,13 @@ function interceptableHref(event: MouseEvent): string | null {
   // A link to a spot on this same page is not leaving it.
   if (url.pathname === window.location.pathname && url.search === window.location.search) return null
   return url.pathname + url.search + url.hash
+}
+
+/** A click on a control marked data-leaves-page (not a link). */
+function leavesPage(event: MouseEvent): HTMLElement | null {
+  if (event.defaultPrevented || event.button !== 0) return null
+  const el = (event.target as Element | null)?.closest?.(LEAVES_PAGE)
+  return el instanceof HTMLElement && !(el instanceof HTMLAnchorElement) ? el : null
 }
 
 /** Fixed words, or words built from the form's `noun`. */
@@ -128,15 +170,50 @@ type Options = {
   mode?: UnsavedChangesMode
   /** The dialog's own words. Keys not given keep the mode's English words. */
   text?: Partial<UnsavedChangesText>
+  /**
+   * Runs when the person chooses to leave, before they go: a phone form's
+   * draft.clear() (41.7 rule 15).
+   */
+  onLeave?: () => void
 }
 
-function useUnsavedChanges({ changed, noun, mode = "edit", text }: Options) {
-  const router = useRouter()
-  const [open, setOpen] = React.useState(false)
-  const pending = React.useRef<(() => void) | null>(null)
+/** Marks a control that leaves the page without being a link (the phone's back arrow). */
+const LEAVES_PAGE = "[data-leaves-page]"
 
-  const ask = React.useCallback((leave: () => void) => {
-    pending.current = leave
+/**
+ * Set while Leave re-clicks a data-leaves-page control, so it passes - the
+ * listener of every useUnsavedChanges on the page, not only the one that
+ * asked (ONE ASKS, above). The click is dispatched synchronously, so it is
+ * set for exactly that click.
+ */
+let replaying = false
+
+/** What Leave does once chosen. */
+type PendingLeave = {
+  leave: () => void
+  /**
+   * It moves through history (the back arrow, a link), so on phone it
+   * waits for the warning's own history entry to be gone first.
+   */
+  navigates: boolean
+}
+
+function useUnsavedChanges({ changed, noun, mode = "edit", text, onLeave }: Options) {
+  const router = useRouter()
+  const phone = useLayout().layout === "phone"
+  const [open, setOpen] = React.useState(false)
+  const pending = React.useRef<PendingLeave | null>(null)
+  // A navigating Leave chosen on phone, run once the warning has closed.
+  const afterClose = React.useRef<(() => void) | null>(null)
+  // The latest onLeave, read when Leave is chosen, without re-running the
+  // effect below for a new function each render.
+  const leaveHook = React.useRef(onLeave)
+  React.useEffect(() => {
+    leaveHook.current = onLeave
+  })
+
+  const ask = React.useCallback((leave: () => void, navigates: boolean) => {
+    pending.current = { leave, navigates }
     setOpen(true)
   }, [])
 
@@ -146,11 +223,29 @@ function useUnsavedChanges({ changed, noun, mode = "edit", text }: Options) {
     // Capture phase on the window, so it runs before React's own click
     // handling and the router's Link never sees the click.
     const onClick = (event: MouseEvent) => {
+      if (replaying) return
+      const leaver = leavesPage(event)
+      if (leaver) {
+        event.preventDefault()
+        event.stopImmediatePropagation()
+        ask(() => {
+          // Gone while the warning was up (the page changed under it):
+          // nothing is left to press.
+          if (!leaver.isConnected) return
+          replaying = true
+          try {
+            leaver.click()
+          } finally {
+            replaying = false
+          }
+        }, true)
+        return
+      }
       const href = interceptableHref(event)
       if (!href) return
       event.preventDefault()
-      event.stopPropagation()
-      ask(() => router.push(href))
+      event.stopImmediatePropagation()
+      ask(() => router.push(href), true)
     }
     const onBeforeUnload = (event: BeforeUnloadEvent) => {
       event.preventDefault()
@@ -183,10 +278,23 @@ function useUnsavedChanges({ changed, noun, mode = "edit", text }: Options) {
         ask(() => {
           setDialogOpen(false)
           onDiscard?.()
-        })
+        }, false)
       },
     [changed, ask]
   )
+
+  /** Leave was chosen: the form's onLeave, then the leave itself. */
+  const chooseLeave = () => {
+    const chosen = pending.current
+    pending.current = null
+    setOpen(false)
+    if (!chosen) return
+    leaveHook.current?.()
+    // On phone a move through history waits for the warning's own entry
+    // to go (ON PHONE, LEAVING WAITS, above); onOpenChangeComplete runs it.
+    if (phone && chosen.navigates) afterClose.current = chosen.leave
+    else chosen.leave()
+  }
 
   const t = { ...TEXT[mode], ...text }
   const warning = (
@@ -198,6 +306,14 @@ function useUnsavedChanges({ changed, noun, mode = "edit", text }: Options) {
           pending.current = null
         }
       }}
+      onOpenChangeComplete={(isOpen) => {
+        const leave = afterClose.current
+        if (isOpen || !leave) return
+        afterClose.current = null
+        // The close has committed by now, so its step back off the
+        // warning's entry has been asked for; this waits for it to land.
+        void whenLayersSettled().then(leave)
+      }}
     >
       <AlertDialogContent>
         <AlertDialogHeader>
@@ -206,14 +322,7 @@ function useUnsavedChanges({ changed, noun, mode = "edit", text }: Options) {
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel>{t.stay}</AlertDialogCancel>
-          <AlertDialogAction
-            onClick={() => {
-              const leave = pending.current
-              pending.current = null
-              setOpen(false)
-              leave?.()
-            }}
-          >
+          <AlertDialogAction onClick={chooseLeave}>
             {t.leave}
           </AlertDialogAction>
         </AlertDialogFooter>

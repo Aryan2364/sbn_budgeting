@@ -7,6 +7,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
+import { useLayout } from "@/lib/layout"
 
 /**
  * Section 26: **disable** an individual action the user can see but
@@ -42,6 +43,16 @@ import {
  * pointer or focus leaving). The wrapper takes the tap-area extension,
  * because the disabled control's own extension has pointer-events-none
  * and a tap on it would fall straight through.
+ *
+ * **On phone (41.8 rule 17) this is the ONE tooltip that opens.**
+ * tooltip.tsx keeps every other tooltip shut there, because a phone has
+ * no hover; a disabled reason is let through with `disabledReason`. It
+ * opens on a tap and closes on the NEXT tap anywhere: elsewhere on the
+ * screen (Base UI's outside press, as on desktop), on the reason itself,
+ * or on the same control again, which on desktop would keep it open.
+ * Focus from an attached keyboard still opens it, because Base UI opens
+ * on keyboard focus only (focus-visible), never on the focus a tap
+ * gives. Hover cannot open it: Base UI's tooltip hover is mouse-only.
  *
  * `allowed` renders the children untouched — no wrapper, no extra
  * element — so the permitted path is exactly what it was before this
@@ -89,12 +100,15 @@ function DeniedReason({
   children: React.ReactNode
 }) {
   const [open, setOpen] = React.useState(false)
+  const phone = useLayout().layout === "phone"
 
   return (
-    <Tooltip open={open} onOpenChange={setOpen}>
+    <Tooltip disabledReason open={open} onOpenChange={setOpen}>
       <TooltipTrigger
         closeOnClick={false}
-        onClick={() => setOpen(true)}
+        // Desktop: a press opens it and keeps it open. Phone: the next
+        // tap closes it, this control included (41.8 rule 17).
+        onClick={() => setOpen(phone ? (wasOpen) => !wasOpen : true)}
         render={
           <span
             // Focusable so the reason reaches a keyboard user, who has
@@ -108,7 +122,14 @@ function DeniedReason({
       >
         {children}
       </TooltipTrigger>
-      <TooltipContent side="bottom">{reason}</TooltipContent>
+      <TooltipContent
+        side="bottom"
+        // A tap on the reason itself is "the next tap" too. Base UI does
+        // not count a press inside the popup as an outside press.
+        onClick={phone ? () => setOpen(false) : undefined}
+      >
+        {reason}
+      </TooltipContent>
     </Tooltip>
   )
 }

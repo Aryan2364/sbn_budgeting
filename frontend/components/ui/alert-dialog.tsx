@@ -4,7 +4,29 @@ import * as React from "react"
 import { AlertDialog as AlertDialogPrimitive } from "@base-ui/react/alert-dialog"
 
 import { cn } from "@/lib/utils"
+import { useLayout } from "@/lib/layout"
 import { Button } from "@/components/ui/button"
+import {
+  SHARE_THE_WIDTH,
+  useLayerHistory,
+  useLayerRoot,
+  type CloseOutcome,
+} from "@/components/ui/sheet"
+
+/**
+ * How the dialog's Cancel tells the root where it is, so Android back can
+ * press it: the node now, and the node it held before (so a Cancel that
+ * leaves only clears its own place).
+ */
+const CancelContext = React.createContext<
+  ((node: HTMLElement | null, previous: HTMLElement | null) => void) | null
+>(null)
+
+/** Hands an element to a ref of either kind - the caller's own ref on Cancel. */
+function assignRef<T>(ref: React.Ref<T> | undefined, value: T | null) {
+  if (typeof ref === "function") ref(value)
+  else if (ref) ref.current = value
+}
 
 /**
  * Section 15. Any irreversible action opens this. Never delete on a
@@ -21,23 +43,70 @@ import { Button } from "@/components/ui/button"
  *
  * Section 24: confirmations close only via Cancel or the action, so
  * Escape is blocked here and the backdrop is inert.
+ *
+ * ON PHONE, Android back acts as Cancel (decision 22 in
+ * OVERNIGHT_DECISIONS.md, 41.4 rule 9): letting it fall through would
+ * leave the page under an open confirmation. While open, the dialog holds
+ * one history entry, through sheet.tsx's machinery (useLayerHistory), the
+ * same queue and listener every bottom sheet uses. A back press that is
+ * not the kit's own presses the dialog's AlertDialogCancel - the same
+ * click, the same onOpenChange with Base UI's close-press reason, the
+ * same onClick if the caller gave Cancel one. Over a sheet with unsaved
+ * changes that makes back "Stay": the warning closes and the sheet stays.
+ * With no Cancel rendered, it closes through onOpenChange all the same.
+ * A Cancel that is disabled (an action under way) or a close the caller
+ * refuses keeps the dialog and its entry, so the press never reaches the
+ * page. On desktop nothing is pushed and nothing changes.
  */
 function AlertDialog({
   onOpenChange,
+  actionsRef,
   ...props
 }: AlertDialogPrimitive.Root.Props) {
+  const refuseEscape = React.useCallback(
+    (open: boolean, eventDetails: AlertDialogPrimitive.Root.ChangeEventDetails) => {
+      if (!open && eventDetails.reason === "escape-key") {
+        eventDetails.cancel()
+        return
+      }
+      onOpenChange?.(open, eventDetails)
+    },
+    [onOpenChange]
+  )
+  const { open, actions, handleOpenChange, request, requestClose } = useLayerRoot({
+    open: props.open,
+    defaultOpen: props.defaultOpen,
+    onOpenChange: refuseEscape,
+    actionsRef,
+  })
+
+  const cancel = React.useRef<HTMLElement | null>(null)
+  const placeCancel = React.useCallback(
+    (node: HTMLElement | null, previous: HTMLElement | null) => {
+      if (node) cancel.current = node
+      else if (cancel.current === previous) cancel.current = null
+    },
+    []
+  )
+  const pressCancel = React.useCallback((): CloseOutcome => {
+    const button = cancel.current
+    const outcome = button?.isConnected ? request(() => button.click()) : requestClose()
+    // Not closed - refused, or a disabled Cancel - is never let through.
+    return outcome ?? "canceled"
+  }, [request, requestClose])
+
+  const { layout } = useLayout()
+  useLayerHistory(layout === "phone" && open, pressCancel)
+
   return (
-    <AlertDialogPrimitive.Root
-      data-slot="alert-dialog"
-      onOpenChange={(open, eventDetails) => {
-        if (!open && eventDetails.reason === "escape-key") {
-          eventDetails.cancel()
-          return
-        }
-        onOpenChange?.(open, eventDetails)
-      }}
-      {...props}
-    />
+    <CancelContext.Provider value={placeCancel}>
+      <AlertDialogPrimitive.Root
+        data-slot="alert-dialog"
+        actionsRef={actions}
+        onOpenChange={handleOpenChange}
+        {...props}
+      />
+    </CancelContext.Provider>
   )
 }
 
@@ -71,7 +140,19 @@ function AlertDialogOverlay({
   )
 }
 
-/** Section 24: a confirmation is the small dialog, 400px. */
+/**
+ * Section 24: a confirmation is the small dialog, 400px.
+ *
+ * ON PHONE it stays a centred dialog (41.8 rule 11), not a bottom sheet:
+ * the screen width less 16px a side, and less the side safe areas too, so
+ * a phone held sideways keeps it clear of the notch (41.13 rule 2). It is
+ * centred between the safe areas rather than on the screen, which only
+ * differs when they are uneven. Section 24's 400px stays its maximum,
+ * which a phone held upright never reaches. It never closes on a swipe
+ * (it has none) or the backdrop (Base UI's alert dialog ignores it), and
+ * Escape is refused above (24 rule 3). Phone-only classes go through the
+ * `phone:` variant, so the desktop dialog is untouched.
+ */
 function AlertDialogContent({
   className,
   ...props
@@ -83,6 +164,9 @@ function AlertDialogContent({
         data-slot="alert-dialog-content"
         className={cn(
           "fixed top-1/2 left-1/2 z-(--z-dialog) flex w-[calc(100%-2rem)] max-w-dialog-sm -translate-x-1/2 -translate-y-1/2 flex-col",
+          // Spacing in px on phone (41.9 rule 7): --spacing * 8 is 32px,
+          // where 2rem is 34px on iPhone's system body font.
+          "phone:left-[calc(50%_+_(var(--safe-left)_-_var(--safe-right))_/_2)] phone:w-[calc(100%_-_var(--spacing)_*_8_-_var(--safe-left)_-_var(--safe-right))]",
           "rounded-xl border border-border-light bg-surface text-body text-text-primary shadow-dialog outline-none",
           "data-open:animate-in data-open:fade-in-0 data-open:zoom-in-98 data-open:animation-duration-(--duration-slow) data-open:ease-enter",
           "data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-98 data-closed:animation-duration-(--duration-medium) data-closed:ease-exit",
@@ -95,7 +179,7 @@ function AlertDialogContent({
            * button, off the bottom of the screen. A confirmation whose
            * Cancel cannot be reached is worse than no confirmation.
            */
-          "max-h-[80vh] overflow-hidden",
+          "max-h-[80dvh] overflow-hidden",
           className
         )}
         {...props}
@@ -138,6 +222,17 @@ function AlertDialogHeader({
   )
 }
 
+/**
+ * Section 15 rule 4 and 11.3 rule 7: Cancel on the left, the action on
+ * the right.
+ *
+ * On phone (41.8 rule 11) the two buttons sit side by side and share the
+ * width. A control's height is a minimum there (41.9 rule 7): a label
+ * that wraps at the largest text size, in half the width, makes its
+ * button taller rather than being clipped, and the pair stay the same
+ * height. The classes are sheet.tsx's SHARE_THE_WIDTH, the one copy,
+ * all behind `phone:`.
+ */
 function AlertDialogFooter({
   className,
   ...props
@@ -147,6 +242,8 @@ function AlertDialogFooter({
       data-slot="alert-dialog-footer"
       className={cn(
         "flex shrink-0 items-center justify-end gap-2 border-t border-border-light bg-surface-sunken px-4 py-3",
+        "phone:items-stretch",
+        SHARE_THE_WIDTH,
         className
       )}
       {...props}
@@ -200,15 +297,31 @@ function AlertDialogCancel({
   className,
   variant = "secondary",
   size = "default",
+  ref,
   ...props
 }: AlertDialogPrimitive.Close.Props &
-  Pick<React.ComponentProps<typeof Button>, "variant" | "size">) {
+  Pick<React.ComponentProps<typeof Button>, "variant" | "size"> & {
+    ref?: React.Ref<HTMLButtonElement>
+  }) {
+  // Puts itself where AlertDialog's Android back can press it. Renders no
+  // DOM of its own, so the button is exactly as before.
+  const placeCancel = React.useContext(CancelContext)
+  const own = React.useRef<HTMLButtonElement | null>(null)
+  const setRef = React.useCallback(
+    (node: HTMLButtonElement | null) => {
+      placeCancel?.(node, own.current)
+      own.current = node
+      assignRef(ref, node)
+    },
+    [placeCancel, ref]
+  )
   return (
     <AlertDialogPrimitive.Close
       data-slot="alert-dialog-cancel"
       className={cn(className)}
       render={<Button variant={variant} size={size} />}
       {...props}
+      ref={setRef}
     />
   )
 }

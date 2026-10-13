@@ -2,6 +2,7 @@
 
 import { Tooltip as TooltipPrimitive } from "@base-ui/react/tooltip"
 
+import { useLayout } from "@/lib/layout"
 import { cn } from "@/lib/utils"
 
 /**
@@ -27,8 +28,38 @@ function TooltipProvider({
   )
 }
 
-function Tooltip({ ...props }: TooltipPrimitive.Root.Props) {
-  return <TooltipPrimitive.Root data-slot="tooltip" {...props} />
+/**
+ * ON PHONE (41.8 rules 16 to 18) A TOOLTIP NEVER OPENS. A phone has no
+ * hover, so nothing there may depend on one: an icon-only button relies
+ * on its screen-reader label and the phone icon set (41.9 rule 9), and
+ * cut text is clamped or shown in full one tap away.
+ *
+ * The one exception is the reason a control is disabled (section 26),
+ * which opens on a tap (41.8 rule 17). Only permission-tooltip.tsx sets
+ * `disabledReason`; nothing else should.
+ *
+ * It is done through Base UI's own `disabled`, which wins over a
+ * controlled `open` as well as over hover and focus, so a caller that
+ * holds its own open state cannot open one on phone either. On desktop
+ * the caller's `disabled` passes through untouched.
+ */
+function Tooltip({
+  disabledReason = false,
+  disabled,
+  ...props
+}: TooltipPrimitive.Root.Props & {
+  /** This tooltip is the reason a control is disabled: the one tooltip shown on phone. */
+  disabledReason?: boolean
+}) {
+  const { layout } = useLayout()
+  const closedOnPhone = layout === "phone" && !disabledReason
+  return (
+    <TooltipPrimitive.Root
+      data-slot="tooltip"
+      disabled={closedOnPhone ? true : disabled}
+      {...props}
+    />
+  )
 }
 
 /**

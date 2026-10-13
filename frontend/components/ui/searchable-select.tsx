@@ -4,6 +4,7 @@ import * as React from "react"
 import { ChevronDownIcon } from "lucide-react"
 
 import { cn } from "@/lib/utils"
+import { useLayout } from "@/lib/layout"
 import {
   Command,
   CommandEmpty,
@@ -14,8 +15,21 @@ import {
 } from "@/components/ui/command"
 import { Button } from "@/components/ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { selectTriggerClassName } from "@/components/ui/select"
+import {
+  CHOOSE_TITLE,
+  phoneSheetTitle,
+  selectTriggerClassName,
+} from "@/components/ui/select"
+import {
+  Sheet,
+  SheetBody,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  useSheetStep,
+} from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
+import { PHONE_WORDS } from "@/lib/phone-words"
 
 /**
  * One option found by a server search (`search` below).
@@ -32,6 +46,8 @@ export interface SearchOption {
 
 /** Kit 27.1: search runs 300 ms after the user stops typing. */
 const SEARCH_DELAY_MS = 300
+
+const DEFAULT_SEARCH_PLACEHOLDER = "Search"
 
 /** A Pick answers with at most 50 matches (access plan 6.1.4 item 7). */
 const DEFAULT_LIMIT = 50
@@ -76,6 +92,15 @@ const DEFAULT_LIMIT = 50
  *   nothing is typed ("All sites", "None").
  * - Where the match is in `detail` rather than the label, the row shows
  *   it, with the matched text in body strong weight (kit 27.1).
+ *
+ * ON PHONE (41.7 rule 7, 41.8 rule 8) the same trigger opens a bottom
+ * sheet at full height, titled by the field's label, with the search box
+ * fixed at the top and the rows scrolling below it, so the keyboard never
+ * covers the list. The search box is never focused by itself (41.8 rule
+ * 19). Choosing a row closes the sheet and focus returns to the trigger.
+ * Inside another bottom sheet the list opens as a full-height step of it
+ * instead (41.8 rules 8 and 9). The caller never chooses (41.3 rule 4).
+ * That phone form is useSearchPicker below, shared with MultiSelect.
  */
 function SearchableSelect({
   options = {},
@@ -83,7 +108,7 @@ function SearchableSelect({
   onValueChange,
   id,
   placeholder = "Select an option",
-  searchPlaceholder = "Search",
+  searchPlaceholder = DEFAULT_SEARCH_PLACEHOLDER,
   emptyMessage,
   disabled,
   className,
@@ -110,12 +135,188 @@ function SearchableSelect({
   /** The most rows shown. A full answer says there may be more. */
   limit?: number
 }) {
-  const [open, setOpen] = React.useState(false)
   const remote = search !== undefined
+  /** Labels of the rows the user chose, so the trigger can name them. */
+  const [chosenLabels, setChosenLabels] = React.useState<Record<string, string>>({})
 
-  // ------------------------------------------------------------------
-  // Server search state (unused when `search` is absent)
-  // ------------------------------------------------------------------
+  const triggerLabel = value
+    ? options[value] ?? chosenLabels[value] ?? selectedLabel ?? undefined
+    : undefined
+
+  /*
+   * The search box and the rows, for the popover and the phone sheet
+   * alike (kit 3bb95d1's useSearchPicker, hand-merged with Tracking's
+   * server search). The server-search state lives in OptionsBody, so it
+   * starts fresh each time the list opens (the empty search asked again,
+   * so a person added since is there), and a phone sheet step, drawn as
+   * it was given when it opened, still updates as the person types.
+   */
+  const body = (close: () => void, onPhone: boolean) => (
+    <OptionsBody
+      options={options}
+      value={value}
+      remote={remote}
+      search={search}
+      limit={limit}
+      // On phone the search box placeholder is the phone's own word
+      // where the caller kept the default (plan-phone D7).
+      searchPlaceholder={
+        onPhone && searchPlaceholder === DEFAULT_SEARCH_PLACEHOLDER
+          ? PHONE_WORDS.a11y.search
+          : searchPlaceholder
+      }
+      emptyMessage={emptyMessage}
+      onPick={(next, option) => {
+        if (option) setChosenLabels((current) => ({ ...current, [option.value]: option.label }))
+        onValueChange?.(next, option)
+        close()
+      }}
+    />
+  )
+
+  const { phone, open, setOpen, onOpenChange, trigger, sheet } = useSearchPicker((close) =>
+    body(close, true)
+  )
+
+  return (
+    <Popover open={open} onOpenChange={onOpenChange}>
+      <PopoverTrigger
+        render={
+          <button
+            ref={trigger}
+            id={id}
+            type="button"
+            disabled={disabled}
+            aria-haspopup="listbox"
+            data-slot="searchable-select-trigger"
+            data-placeholder={triggerLabel ? undefined : ""}
+            className={cn("group", selectTriggerClassName, className)}
+          />
+        }
+      >
+        <span className="flex-1 truncate text-left">{triggerLabel ?? placeholder}</span>
+        {/* The trigger, not the icon, carries data-popup-open, so the
+            chevron reads it through the group (16.1: up while open). */}
+        <ChevronDownIcon className="pointer-events-none size-4 shrink-0 text-text-secondary transition-transform group-data-popup-open:rotate-180" />
+      </PopoverTrigger>
+      {phone ? (
+        sheet
+      ) : (
+        <PopoverContent align="start" className="w-(--anchor-width) gap-0 p-0">
+          {body(() => setOpen(false), false)}
+        </PopoverContent>
+      )}
+    </Popover>
+  )
+}
+
+/**
+ * The phone sheet's body for a searchable list: it does not scroll
+ * itself. The search box stays fixed at its top and the list below is
+ * the one thing that scrolls (41.8 rule 8, 1 rule 8).
+ */
+const PHONE_SEARCH_BODY = "flex flex-col overflow-hidden p-0"
+
+/**
+ * The open state and phone form of a searchable picker, written once for
+ * SearchableSelect and MultiSelect (4 rule 4). Each keeps its own Popover
+ * and trigger, which take `open`, `onOpenChange` and `trigger`. On
+ * desktop this is only that open state; the popover is the caller's.
+ *
+ * On phone (41.7 rule 7) an open becomes:
+ *   - `sheet`: a bottom sheet at full height (41.8 rule 8), titled by the
+ *     field's label (11.3), the search box fixed at the top, focus back
+ *     to the trigger on close (16.4); or,
+ *   - inside another bottom sheet, a full-height step of it with a back
+ *     arrow (41.8 rules 8 and 9), and `sheet` is nothing.
+ *
+ * `options(close, asStep)` draws the search box and the rows. `close`
+ * shuts the sheet, or returns from the step. A step is drawn as it was
+ * given when it opened (sheet.tsx), so `asStep` tells the caller to give
+ * rows that change while it is open state of their own.
+ */
+function useSearchPicker(
+  options: (close: () => void, asStep: boolean) => React.ReactNode
+) {
+  const phone = useLayout().layout === "phone"
+  const step = useSheetStep()
+  const trigger = React.useRef<HTMLButtonElement | null>(null)
+  const [open, setOpen] = React.useState(false)
+  const [title, setTitle] = React.useState(CHOOSE_TITLE)
+
+  const onOpenChange = (next: boolean) => {
+    if (!phone || !next) {
+      setOpen(next)
+      return
+    }
+    // The field's label names the sheet: the Label above it (11.3).
+    const name = phoneSheetTitle(trigger.current, { content: false }) ?? CHOOSE_TITLE
+    if (step.inSheet) {
+      // 39.3: the step returns focus to what had it when it opened.
+      trigger.current?.focus({ preventScroll: true })
+      step.open({
+        title: name,
+        // 41.8 rule 8: a searchable list takes the sheet's full height
+        // as a step too, so the keyboard never covers the list.
+        fullHeight: true,
+        content: (
+          <SheetBody className={PHONE_SEARCH_BODY}>{options(step.back, true)}</SheetBody>
+        ),
+      })
+      return
+    }
+    setTitle(name)
+    setOpen(true)
+  }
+
+  const sheet =
+    phone && !step.inSheet ? (
+      <Sheet open={open} onOpenChange={(next) => setOpen(next)}>
+        <SheetContent
+          side="bottom"
+          // 41.8 rule 8: a searchable list opens at full height.
+          fullHeight
+          // 16.4: focus returns to the trigger on close.
+          finalFocus={trigger}
+        >
+          <SheetHeader>
+            <SheetTitle>{title}</SheetTitle>
+          </SheetHeader>
+          <SheetBody className={PHONE_SEARCH_BODY}>
+            {options(() => setOpen(false), false)}
+          </SheetBody>
+        </SheetContent>
+      </Sheet>
+    ) : null
+
+  return { phone, open, setOpen, onOpenChange, trigger, sheet }
+}
+
+/**
+ * The search box and the rows: the popover's content, and the phone
+ * sheet's. Local mode filters `options` in the browser; with `search`
+ * the rows come from the server (see SearchableSelect). Its state is its
+ * own, so it starts fresh each time the list opens.
+ */
+function OptionsBody({
+  options,
+  value,
+  remote,
+  search,
+  limit,
+  searchPlaceholder,
+  emptyMessage,
+  onPick,
+}: {
+  options: Record<string, string>
+  value?: string
+  remote: boolean
+  search?: (query: string) => Promise<SearchOption[]>
+  limit: number
+  searchPlaceholder: string
+  emptyMessage?: string | ((query: string) => string)
+  onPick: (value: string, option?: SearchOption) => void
+}) {
   const [query, setQuery] = React.useState("")
   /** null until the first answer since opening has landed. */
   const [rows, setRows] = React.useState<SearchOption[] | null>(null)
@@ -123,15 +324,13 @@ function SearchableSelect({
   const [answered, setAnswered] = React.useState("")
   const [failed, setFailed] = React.useState(false)
   const [attempt, setAttempt] = React.useState(0)
-  /** Labels of the rows the user chose, so the trigger can name them. */
-  const [chosenLabels, setChosenLabels] = React.useState<Record<string, string>>({})
   const searchRef = React.useRef(search)
   React.useEffect(() => {
     searchRef.current = search
   })
 
   React.useEffect(() => {
-    if (!remote || !open) return
+    if (!remote) return
     let cancelled = false
     // Opening (and an emptied box) asks at once; typing waits for the pause.
     const delay = query.trim() === "" ? 0 : SEARCH_DELAY_MS
@@ -153,29 +352,7 @@ function SearchableSelect({
       cancelled = true
       window.clearTimeout(timer)
     }
-  }, [remote, open, query, limit, attempt])
-
-  function handleOpenChange(next: boolean) {
-    setOpen(next)
-    if (!next && remote) {
-      // A fresh start next time: the empty search, asked again, so a
-      // person added since is there.
-      setQuery("")
-      setRows(null)
-      setAnswered("")
-      setFailed(false)
-    }
-  }
-
-  function choose(next: string, option?: SearchOption) {
-    if (option) setChosenLabels((current) => ({ ...current, [option.value]: option.label }))
-    onValueChange?.(next, option)
-    handleOpenChange(false)
-  }
-
-  const triggerLabel = value
-    ? options[value] ?? chosenLabels[value] ?? selectedLabel ?? undefined
-    : undefined
+  }, [remote, query, limit, attempt])
 
   const empty =
     typeof emptyMessage === "function"
@@ -183,114 +360,99 @@ function SearchableSelect({
       : emptyMessage ??
         (remote && answered ? `Nothing matches '${answered}'.` : "Nothing matches that search.")
 
-  return (
-    <Popover open={open} onOpenChange={handleOpenChange}>
-      <PopoverTrigger
-        render={
-          <button
-            id={id}
-            type="button"
-            disabled={disabled}
-            aria-haspopup="listbox"
-            data-slot="searchable-select-trigger"
-            data-placeholder={triggerLabel ? undefined : ""}
-            className={cn("group", selectTriggerClassName, className)}
-          />
-        }
-      >
-        <span className="flex-1 truncate text-left">{triggerLabel ?? placeholder}</span>
-        {/* The trigger, not the icon, carries data-popup-open, so the
-            chevron reads it through the group (16.1: up while open). */}
-        <ChevronDownIcon className="pointer-events-none size-4 shrink-0 text-text-secondary transition-transform group-data-popup-open:rotate-180" />
-      </PopoverTrigger>
-      <PopoverContent align="start" className="w-(--anchor-width) gap-0 p-0">
-        {remote ? (
-          <Command shouldFilter={false}>
-            <CommandInput placeholder={searchPlaceholder} value={query} onValueChange={setQuery} />
-            <CommandList className="max-h-menu-max overflow-y-auto">
-              {failed ? (
-                // Section 13: a failed load says so and offers the way on.
-                <div className="flex flex-col items-center gap-2 px-3 py-6 text-center text-body text-text-secondary">
-                  <span>The list could not be loaded.</span>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={() => {
-                      setFailed(false)
-                      setAttempt((a) => a + 1)
-                    }}
-                  >
-                    Try again
-                  </Button>
-                </div>
-              ) : rows === null ? (
-                // Section 14: the shape of the rows that are coming.
-                <div aria-busy="true" className="flex flex-col gap-2 p-3">
-                  <Skeleton className="h-4 w-3/4" />
-                  <Skeleton className="h-4 w-1/2" />
-                  <Skeleton className="h-4 w-2/3" />
-                </div>
-              ) : (
-                <>
-                  {rows.length === 0 && (answered !== "" || Object.keys(options).length === 0) ? (
-                    <CommandEmpty>{empty}</CommandEmpty>
-                  ) : null}
-                  <CommandGroup>
-                    {answered === ""
-                      ? Object.entries(options).map(([v, label]) => (
-                          <OptionRow
-                            key={`fixed:${v}`}
-                            itemValue={`fixed:${v}`}
-                            label={label}
-                            chosen={v === value}
-                            onSelect={() => choose(v)}
-                          />
-                        ))
-                      : null}
-                    {rows.map((option) => (
-                      <OptionRow
-                        key={option.value}
-                        itemValue={`row:${option.value}`}
-                        label={option.label}
-                        detail={option.detail}
-                        match={answered}
-                        chosen={option.value === value}
-                        onSelect={() => choose(option.value, option)}
-                      />
-                    ))}
-                  </CommandGroup>
-                  {rows.length >= limit ? (
-                    <p className="px-3 pt-1 pb-2 text-meta text-text-muted">
-                      Showing the first {limit}. Type to narrow the list.
-                    </p>
-                  ) : null}
-                </>
-              )}
-            </CommandList>
-          </Command>
-        ) : (
-          <Command>
-            {/* Fixed at the top: it is a sibling of the list, not inside
-                its scroll container. */}
-            <CommandInput placeholder={searchPlaceholder} />
-            <CommandList className="max-h-menu-max overflow-y-auto">
-              <CommandEmpty>{empty}</CommandEmpty>
+  if (remote) {
+    return (
+      <Command shouldFilter={false}>
+        <CommandInput placeholder={searchPlaceholder} value={query} onValueChange={setQuery} />
+        <CommandList className="max-h-menu-max overflow-y-auto">
+          {failed ? (
+            // Section 13: a failed load says so and offers the way on.
+            <div className="flex flex-col items-center gap-2 px-3 py-6 text-center text-body text-text-secondary">
+              <span>The list could not be loaded.</span>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => {
+                  setFailed(false)
+                  setAttempt((a) => a + 1)
+                }}
+              >
+                Try again
+              </Button>
+            </div>
+          ) : rows === null ? (
+            // Section 14: the shape of the rows that are coming.
+            <div aria-busy="true" className="flex flex-col gap-2 p-3">
+              <Skeleton className="h-4 w-3/4" />
+              <Skeleton className="h-4 w-1/2" />
+              <Skeleton className="h-4 w-2/3" />
+            </div>
+          ) : (
+            <>
+              {rows.length === 0 && (answered !== "" || Object.keys(options).length === 0) ? (
+                <CommandEmpty>{empty}</CommandEmpty>
+              ) : null}
               <CommandGroup>
-                {Object.entries(options).map(([v, label]) => (
+                {answered === ""
+                  ? Object.entries(options).map(([v, label]) => (
+                      <OptionRow
+                        key={`fixed:${v}`}
+                        itemValue={`fixed:${v}`}
+                        label={label}
+                        chosen={v === value}
+                        onSelect={() => onPick(v)}
+                      />
+                    ))
+                  : null}
+                {rows.map((option) => (
                   <OptionRow
-                    key={v}
-                    itemValue={label}
-                    label={label}
-                    chosen={v === value}
-                    onSelect={() => choose(v)}
+                    key={option.value}
+                    itemValue={`row:${option.value}`}
+                    label={option.label}
+                    detail={option.detail}
+                    match={answered}
+                    chosen={option.value === value}
+                    onSelect={() => onPick(option.value, option)}
                   />
                 ))}
               </CommandGroup>
-            </CommandList>
-          </Command>
-        )}
-      </PopoverContent>
-    </Popover>
+              {rows.length >= limit ? (
+                <p className="px-3 pt-1 pb-2 text-meta text-text-muted">
+                  Showing the first {limit}. Type to narrow the list.
+                </p>
+              ) : null}
+            </>
+          )}
+        </CommandList>
+      </Command>
+    )
+  }
+
+  // The chosen row's cmdk value, which is its label.
+  const chosenLabel = value !== undefined ? options[value] : undefined
+  return (
+    // Phone: the chosen row is the one cmdk marks while no key has moved
+    // its highlight, so it alone is aria-selected and no other row turns
+    // grey (command.tsx). Ignored on desktop.
+    <Command chosenValue={chosenLabel}>
+      {/* Fixed at the top: it is a sibling of the list, not inside
+          its scroll container. */}
+      <CommandInput placeholder={searchPlaceholder} />
+      <CommandList className="max-h-menu-max overflow-y-auto">
+        <CommandEmpty>{empty}</CommandEmpty>
+        <CommandGroup>
+          {Object.entries(options).map(([v, label]) => (
+            <OptionRow
+              key={v}
+              itemValue={label}
+              label={label}
+              chosen={v === value}
+              onSelect={() => onPick(v)}
+            />
+          ))}
+        </CommandGroup>
+      </CommandList>
+    </Command>
   )
 }
 
@@ -333,8 +495,9 @@ function OptionRow({
           "bg-primary-subtle text-primary-text data-selected:bg-primary-subtle data-selected:text-primary-text"
       )}
     >
-      <span className="flex min-w-0 flex-1 items-baseline gap-2">
-        <span className="min-w-0 truncate">
+      {/* Phone: the label wraps rather than truncating (41.9 rule 7). */}
+      <span className="flex min-w-0 flex-1 items-baseline gap-2 phone:flex-wrap">
+        <span className="min-w-0 truncate phone:break-words phone:whitespace-normal">
           <Highlight text={label} match={match} />
         </span>
         {detail ? (
@@ -362,4 +525,4 @@ function Highlight({ text, match }: { text: string; match?: string }) {
   )
 }
 
-export { SearchableSelect }
+export { SearchableSelect, useSearchPicker }

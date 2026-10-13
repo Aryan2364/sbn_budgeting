@@ -5,6 +5,9 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation"
 
 import { Count } from "@/components/ui/badge"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Truncate } from "@/components/ui/truncate"
+import { useLayout } from "@/lib/layout"
+import { cn } from "@/lib/utils"
 
 /**
  * Section 33. A list page's optional fifth zone.
@@ -38,6 +41,20 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
  * **`useSearchParams` requires a Suspense boundary above it** when the
  * page it sits on is prerendered. Render it inside one, or the route
  * opts out of static rendering without saying so.
+ *
+ * **On phone (41.4 rule 21)** the bar sits directly under the app bar and
+ * stays there while the content scrolls beneath it: sticky, at the app
+ * bar's height plus the top safe area. Pass it to PageHeader's `tabs`, so
+ * it sits under the page's app bar and above the meta line. It runs edge
+ * to edge, cancelling the phone content area's side padding (16px plus
+ * the side safe areas, 41.4 rule 20, or the wider padding of the centred
+ * column held sideways, 41.13 rule 10) and padding back by the safe
+ * areas only, so the border-light line spans the screen like the app
+ * bar above it. The tabs share the width equally
+ * and each label truncates to one line (section 8). The tab height stays
+ * fixed: a label that cannot wrap never needs the taller control of 41.9
+ * rule 7. The component switches itself through useLayout() and the
+ * `phone:` variant (41.3 rule 4); the desktop bar is untouched.
  */
 
 export interface SectionTab {
@@ -74,6 +91,7 @@ export function SectionTabs({
   const router = useRouter()
   const pathname = usePathname()
   const searchParams = useSearchParams()
+  const { layout } = useLayout()
 
   if (tabs.length > 4) {
     throw new Error(
@@ -95,15 +113,32 @@ export function SectionTabs({
         params.set(param, String(next))
         router.replace(`${pathname}?${params.toString()}`, { scroll: false })
       }}
-      // shrink-0: fixed chrome. Only the data area scrolls beneath it.
-      className="mt-6 shrink-0"
+      className={cn(
+        // shrink-0: fixed chrome. Only the data area scrolls beneath it.
+        "mt-6 shrink-0",
+        // Phone, 41.4 rule 21: pinned under the app bar (56px plus the
+        // top safe area), on a surface fill so rows never show through.
+        "phone:sticky phone:top-[calc(var(--spacing-topbar)_+_var(--safe-top))] phone:z-(--z-sticky) phone:mt-0 phone:bg-surface",
+        // Touching the app bar at rest. Right after the page's app bar
+        // (PageHeader's `tabs`, or the next sibling of a PageHeader with
+        // no meta line), it cancels the bar's 16px bottom margin. As the
+        // first child under the shell's fallback bar, it cancels the
+        // content area's 16px top padding. Then 16px above the first
+        // block, as below the app bar (41.4 rule 20).
+        "phone:first:-mt-4 phone:[[data-slot=app-bar]+&]:-mt-4 phone:mb-4",
+        // Edge to edge: out by exactly the content area's side padding,
+        // which it publishes (content-area.tsx); 16px plus the safe area
+        // where it does not, as outside the shell.
+        "phone:ml-[calc(var(--content-pad-left,calc(var(--spacing)_*_4_+_var(--safe-left)))_*_-1)]",
+        "phone:mr-[calc(var(--content-pad-right,calc(var(--spacing)_*_4_+_var(--safe-right)))_*_-1)]"
+      )}
     >
-      {/* Four labels with counts do not fit a 360px phone (the agreed
-          phone exception for the field screens). The row scrolls
-          sideways rather than wrapping, which keeps the 2px accent on one
-          line; a horizontal scroller inside the vertical page is allowed
-          (section 1 rule 8). On wider screens nothing overflows and this
-          wrapper is inert.
+      {/* Four labels with counts do not fit a 360px window in the desktop
+          layout (the agreed exception for the field screens). The row
+          scrolls sideways rather than wrapping, which keeps the 2px accent
+          on one line; a horizontal scroller inside the vertical page is
+          allowed (section 1 rule 8). On wider screens nothing overflows and
+          this wrapper is inert.
 
           overflow-x:auto makes overflow-y compute to auto as well, so
           anything poking out vertically draws a vertical scrollbar - on a
@@ -111,12 +146,28 @@ export function SectionTabs({
           36px tab top and bottom) did exactly that, even on a wide screen.
           p-1 gives that tap area and the 4px focus ring room inside the
           box (-m-1 cancels it, so the layout does not move), and
-          overflow-y-hidden rules out a vertical scrollbar for good. */}
-      <div className="-m-1 overflow-x-auto overflow-y-hidden p-1 [scrollbar-width:thin]">
-        <TabsList className="min-w-max">
+          overflow-y-hidden rules out a vertical scrollbar for good.
+
+          ON PHONE (41.4 rule 21, kit 3bb95d1) the wrapper is inert and the
+          tabs share the full width equally, each label truncated to one
+          line, the count kept beside it. */}
+      <div className="-m-1 overflow-x-auto overflow-y-hidden p-1 [scrollbar-width:thin] phone:m-0 phone:overflow-visible phone:p-0">
+        {/* Back in by the safe areas only, so no tab sits under a notch. */}
+        <TabsList className="min-w-max phone:min-w-0 phone:gap-0 phone:pr-safe-right phone:pl-safe-left">
           {tabs.map((tab) => (
-            <TabsTrigger key={tab.value} value={tab.value}>
-              {tab.label}
+            <TabsTrigger
+              key={tab.value}
+              value={tab.value}
+              className={cn(
+                // Equal shares. min-w-0 lets the label shrink and truncate;
+                // px-2 keeps neighbouring labels 16px apart when both are cut.
+                "phone:min-w-0 phone:flex-1 phone:px-2",
+                // The first and last tab touch the screen edge, where an
+                // outset ring would be cut off. Inset, as 6.3.1 does.
+                "phone:focus-visible:-outline-offset-2"
+              )}
+            >
+              {layout === "phone" ? <Truncate>{tab.label}</Truncate> : tab.label}
               {typeof tab.count === "number" ? <Count value={tab.count} /> : null}
             </TabsTrigger>
           ))}

@@ -4,7 +4,12 @@ import * as React from "react"
 import { Select as SelectPrimitive } from "@base-ui/react/select"
 import { ChevronDownIcon } from "lucide-react"
 
-import { Select, SelectContent, SelectItem } from "@/components/ui/select"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  usePhoneTriggerProps,
+} from "@/components/ui/select"
 import { cn } from "@/lib/utils"
 
 /**
@@ -25,6 +30,12 @@ import { cn } from "@/lib/utils"
  *
  * `label` names the choice for a screen reader, because the trigger shows
  * only the value: "Records per page", not "25".
+ *
+ * ON PHONE the trigger stays in the sentence and the list is the Select's
+ * phone form, through Select itself (41.3 rule 4): a bottom sheet titled
+ * by `label` - "Records per page" - with the options as 48px rows and
+ * the chosen one ticked; a choice closes it and focus returns here (41.8
+ * rules 1 and 7). Inside another bottom sheet, a step of it (rule 9).
  */
 
 type Option<V extends string | number> = { value: V; label: string }
@@ -56,26 +67,7 @@ function InlineChoice<V extends string | number>({
         if (picked) onValueChange(picked.value)
       }}
     >
-      <SelectPrimitive.Trigger
-        data-slot="inline-choice"
-        aria-label={label}
-        className={cn(
-          // The sentence's own type (6.7): inherit it whole.
-          "tap-area inline-flex cursor-pointer items-baseline gap-1 [font:inherit]",
-          "text-primary-text underline decoration-1 underline-offset-2",
-          "rounded-sm outline-none focus-visible:outline-2 focus-visible:[outline-style:solid] focus-visible:outline-offset-2 focus-visible:outline-primary-ring",
-          className
-        )}
-      >
-        <SelectPrimitive.Value />
-        {/* 12px, the one size section 6.7 names; up while open (16.1).
-            Drawn directly rather than through Select.Icon, which adds a
-            text "▼" of its own to the trigger's content. */}
-        <ChevronDownIcon
-          aria-hidden="true"
-          className="pointer-events-none size-3 shrink-0 self-center in-data-popup-open:rotate-180"
-        />
-      </SelectPrimitive.Trigger>
+      <InlineChoiceTrigger label={label} className={className} />
       {/* Section 16.2 asks for the trigger's width, which for a two-digit
           trigger is narrower than the options; the list takes the width
           its options need, and never less than the trigger. */}
@@ -87,6 +79,39 @@ function InlineChoice<V extends string | number>({
         ))}
       </SelectContent>
     </Select>
+  )
+}
+
+/**
+ * The inline trigger. Its own component so it sits inside Select's root,
+ * where, on phone, it reads whether the sheet is open: aria-expanded
+ * while it is, as SelectTrigger does (Base UI's root is held closed
+ * there). Nothing extra on desktop.
+ */
+function InlineChoiceTrigger({ label, className }: { label: string; className?: string }) {
+  const phoneTrigger = usePhoneTriggerProps()
+  return (
+    <SelectPrimitive.Trigger
+      data-slot="inline-choice"
+      aria-label={label}
+      className={cn(
+        // The sentence's own type (6.7): inherit it whole.
+        "tap-area inline-flex cursor-pointer items-baseline gap-1 [font:inherit]",
+        "text-primary-text underline decoration-1 underline-offset-2",
+        "rounded-sm outline-none focus-visible:outline-2 focus-visible:[outline-style:solid] focus-visible:outline-offset-2 focus-visible:outline-primary-ring",
+        className
+      )}
+      {...phoneTrigger}
+    >
+      <SelectPrimitive.Value />
+      {/* 12px, the one size section 6.7 names; up while open (16.1).
+          Drawn directly rather than through Select.Icon, which adds a
+          text "▼" of its own to the trigger's content. */}
+      <ChevronDownIcon
+        aria-hidden="true"
+        className="pointer-events-none size-3 shrink-0 self-center in-data-popup-open:rotate-180"
+      />
+    </SelectPrimitive.Trigger>
   )
 }
 

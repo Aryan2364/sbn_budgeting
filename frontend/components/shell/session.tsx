@@ -20,6 +20,7 @@ import {
 } from "@/lib/permissions"
 import { EmptyState } from "@/components/ui/empty-state"
 import { forgetMyWorkCount } from "@/components/complaints/phone/use-my-work-count"
+import { clearDrafts } from "@/lib/drafts"
 
 /**
  * Who is signed in, for the whole app.
@@ -150,13 +151,16 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   const signOut = React.useCallback(() => {
+    // Kit 41.7 rule 15 (plan-phone D6): a person's drafts go when they
+    // sign out, so the next person on this phone never sees them.
+    if (state.user) clearDrafts(state.user.id)
     setToken(null)
     forgetPermissions()
     // The phone's My work count belongs to this person (plan-phone D10).
     forgetMyWorkCount()
     setState({ status: "out", user: null })
     router.replace("/login")
-  }, [router])
+  }, [router, state.user])
 
   const value = React.useMemo<SessionValue>(
     () => ({

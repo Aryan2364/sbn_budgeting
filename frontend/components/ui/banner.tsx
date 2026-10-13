@@ -7,7 +7,7 @@ import { XIcon } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
-import { Truncate } from "@/components/ui/truncate"
+import { PHONE_TWO_LINES, Truncate } from "@/components/ui/truncate"
 
 /**
  * Section 7.1, the banner: a condition that persists until it is
@@ -46,6 +46,23 @@ import { Truncate } from "@/components/ui/truncate"
  *
  * `layout="block"` (the default) is the stacked title, description and
  * action, for a message inside a form or a dialog that is read whole.
+ *
+ * ON PHONE (41.8 rule 15) `layout="line"` changes shape by itself; the
+ * caller writes the same banner for both layouts (41.3 rule 4):
+ *
+ *     [icon]  The sentence, which may run onto a       [x]
+ *             second line before it is cut...
+ *             Review customers
+ *
+ *   - the sentence may wrap to two lines, then truncates;
+ *   - the action moves to its own line below the sentence, drawn as a
+ *     standing text link, still a button (6.6 rule 5);
+ *   - the close sits top right.
+ *
+ * It is a three-column grid, icon | text | close, with no column gap
+ * (an empty column then costs nothing): the icon and the close carry
+ * their own 12px, the desktop row's gap-3. `layout="block"` is read
+ * whole and wraps freely (7.5 rule 2), so it is the same on phone.
  */
 const bannerVariants = cva(
   "group/banner relative w-full rounded-lg border px-4 text-left text-body",
@@ -69,6 +86,15 @@ const bannerVariants = cva(
         line: [
           "flex items-center gap-3 py-2",
           "*:[svg]:shrink-0 *:[svg:not([class*='size-'])]:size-4",
+          // Phone, 41.8 rule 15: the grid described above. 8px between
+          // the sentence and its action: tightly related (5.1).
+          "phone:grid phone:grid-cols-[auto_minmax(0,1fr)_auto] phone:items-start phone:gap-x-0 phone:gap-y-2",
+          // The icon, top left, 12px from the sentence. One line tall
+          // (h-lh) rather than 16px, so the 16px glyph sits centred on the
+          // sentence's FIRST line, and stays there as the text-size setting
+          // grows the line (41.9 rule 7). The svg keeps its 16px width.
+          "phone:*:[svg]:col-start-1 phone:*:[svg]:row-start-1 phone:*:[svg]:mr-3",
+          "phone:*:[svg:not([class*='size-'])]:h-lh",
         ],
       },
     },
@@ -109,6 +135,12 @@ function Banner({
  * it run onto a second line instead, for the rare banner that explains
  * a disabled control in a narrow field and must be read whole. It is
  * never a list.
+ *
+ * On phone (41.8 rule 15) two lines, then cut, with no tooltip (41.8
+ * rule 16): Truncate's `phoneLines`, or the same clamp on this div when
+ * the sentence is not a plain string. Rule 15 is the route 41.8 rule 18
+ * names for it, and 7.5 rule 1 keeps the sentence short enough that two
+ * lines hold it: the records it counts are on the page its action opens.
  */
 function LineText({
   slot,
@@ -117,13 +149,20 @@ function LineText({
   children,
   ...props
 }: React.ComponentProps<"div"> & { slot: string; wrap?: boolean }) {
+  const plain = !wrap && typeof children === "string"
   return (
     <div
       data-slot={slot}
-      className={cn("min-w-0 flex-1", !wrap && "truncate", className)}
+      className={cn(
+        "min-w-0 flex-1",
+        !wrap && "truncate",
+        !wrap && !plain && PHONE_TWO_LINES,
+        "phone:col-start-2",
+        className
+      )}
       {...props}
     >
-      {!wrap && typeof children === "string" ? <Truncate>{children}</Truncate> : children}
+      {plain ? <Truncate phoneLines={2}>{children}</Truncate> : children}
     </div>
   )
 }
@@ -176,6 +215,39 @@ function BannerDescription({
   )
 }
 
+/*
+ * 41.8 rule 15: on phone a page banner's action is a button drawn as a
+ * standing text link (6.6 rule 5, the standing row of 6.6's table, as
+ * TextLink and Clamp's "Show more" draw it). The caller still passes the
+ * desktop's <Button size="sm" variant="secondary">, so the same banner
+ * serves both layouts (41.3 rule 4); this restyles that button, and only
+ * a direct child Button - a TextLink is already a link.
+ *
+ * Every class beats its button.tsx counterpart on specificity, not on
+ * stylesheet order: the child selector adds an attribute, and the state
+ * lines (hover, active, disabled) add their pseudo-class as button.tsx's
+ * do. So no fill and no border in any state, body size and weight in
+ * primary-text, and the height of its line rather than 44px: tap-area,
+ * which every Button carries, still grows the TAP area to 44px (9 rule
+ * 4, 41.20 check 9). The focus ring is button.tsx's own, primary-ring.
+ *
+ * Underline on hover, as a standing link, and on press: on phone the
+ * pressed state is the only feedback a tap gets (41.9 rule 1), and the
+ * underline is the link's own. Hover is inside (hover: hover) already.
+ */
+const PHONE_ACTION_AS_LINK = [
+  "phone:col-start-2 phone:justify-self-start",
+  "phone:[&>[data-slot=button]]:h-auto phone:[&>[data-slot=button]]:justify-start phone:[&>[data-slot=button]]:rounded-sm",
+  "phone:[&>[data-slot=button]]:border-0 phone:[&>[data-slot=button]]:bg-transparent phone:[&>[data-slot=button]]:px-0",
+  "phone:[&>[data-slot=button]]:text-left phone:[&>[data-slot=button]]:text-body phone:[&>[data-slot=button]]:font-normal phone:[&>[data-slot=button]]:text-primary-text",
+  // A long label wraps rather than pushing past a 320px screen (41.13 rule 7).
+  "phone:[&>[data-slot=button]]:whitespace-normal",
+  "phone:[&>[data-slot=button]]:decoration-1 phone:[&>[data-slot=button]]:underline-offset-2",
+  "phone:[&>[data-slot=button]]:hover:bg-transparent phone:[&>[data-slot=button]]:hover:underline",
+  "phone:[&>[data-slot=button]]:active:bg-transparent phone:[&>[data-slot=button]]:active:underline",
+  "phone:[&>[data-slot=button]]:disabled:bg-transparent phone:[&>[data-slot=button]]:disabled:text-text-muted",
+].join(" ")
+
 /** Section 13: no dead ends. A banner offers a way forward. */
 function BannerAction({ className, ...props }: React.ComponentProps<"div">) {
   const layout = React.useContext(BannerLayoutContext)
@@ -184,7 +256,7 @@ function BannerAction({ className, ...props }: React.ComponentProps<"div">) {
       data-slot="banner-action"
       className={cn(
         layout === "line"
-          ? "flex shrink-0 items-center gap-2"
+          ? ["flex shrink-0 items-center gap-2", PHONE_ACTION_AS_LINK]
           : "mt-2 flex items-center gap-2 group-has-[>svg]/banner:col-start-2",
         className
       )}
@@ -201,6 +273,14 @@ function BannerAction({ className, ...props }: React.ComponentProps<"div">) {
  *
  * Never on a banner that explains why a control is disabled or a record
  * is locked (pending rule 3): hiding it would leave that unexplained.
+ *
+ * On phone (41.8 rule 15) it sits top right, 12px from the sentence, in
+ * the third column of the grid. The phone's icon button is 44px (41.9
+ * rule 2); -my-2 lets it reach 8px into the banner's own padding above
+ * and below, so its x lines up with the sentence's first line and a
+ * one-line banner does not grow to fit the button. The tooltip does not
+ * open on phone (tooltip.tsx); the x needs none (41.9 rule 9) and keeps
+ * its screen-reader label.
  */
 function BannerClose({
   className,
@@ -209,6 +289,7 @@ function BannerClose({
 }: Omit<React.ComponentProps<typeof Button>, "children" | "variant" | "size"> & {
   label?: string
 }) {
+  const layout = React.useContext(BannerLayoutContext)
   return (
     <Tooltip>
       <TooltipTrigger
@@ -219,7 +300,12 @@ function BannerClose({
             size="icon"
             aria-label={label}
             data-slot="banner-close"
-            className={cn("shrink-0", className)}
+            className={cn(
+              "shrink-0",
+              layout === "line" &&
+                "phone:col-start-3 phone:row-start-1 phone:-my-2 phone:ml-3 phone:self-start",
+              className
+            )}
             {...props}
           />
         }

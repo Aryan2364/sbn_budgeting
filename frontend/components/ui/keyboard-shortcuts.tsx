@@ -1,7 +1,9 @@
 "use client"
 
 import * as React from "react"
+import { useRouter } from "next/navigation"
 
+import { useOptionalProgress } from "@/components/shell/progress-bar"
 import { CommandDialog } from "@/components/ui/command"
 import {
   Dialog,
@@ -19,6 +21,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import { isPhoneLayout } from "@/lib/field-keyboard"
 
 /**
  * Section 39. Mount <KeyboardShortcuts> once, around the application.
@@ -36,9 +39,28 @@ import {
  * key of 39.4 is left to the browser. Ctrl+K and "?" do nothing while a
  * dialog is open: section 24 rule 4 never opens a dialog from inside one.
  *
+ * CTRL+K ON PHONE (41.4 rule 5, 41.11 rule 3). On phone the search page
+ * replaces Ctrl+K and command.tsx, so with an attached keyboard Ctrl+K
+ * opens `phoneSearchHref` - the shell's search page, AppShell's own
+ * phoneSearchHref - through the shell's navigation, and never opens the
+ * command palette. With no phoneSearchHref it does nothing on phone. It
+ * also does nothing while a sheet or dialog is open, as on the computer,
+ * and on the search page itself. The layout is read at the moment of the
+ * key press (isPhoneLayout), so the computer's Ctrl+K is exactly as it
+ * was.
+ *
  * The Enter behaviours of 39.2 are per field, so they are helpers the
  * field spreads rather than global keys: enterSends, ctrlEnterSaves and
  * searchBoxKeys, below.
+ *
+ * ON PHONE, ENTER NEVER SENDS AND NEVER SAVES (41.7 rule 6), with the
+ * on-screen keyboard or an attached one: in a comment or message box it
+ * makes a new line and the send button sends, and in a long text field
+ * Ctrl+Enter saves nothing. The helpers ask the layout at the moment of
+ * the key press, so a field spreads the same helper in both layouts and
+ * the desktop behaviour below is unchanged. Enter in a form's other
+ * fields on phone is usePhoneEnter (lib/field-keyboard.ts). Ctrl+S is
+ * not Enter, and stays as it is in both layouts.
  */
 
 type Shortcut = { keys: string; action: string }
@@ -101,18 +123,34 @@ function formToSave(): HTMLFormElement | null {
 function KeyboardShortcuts({
   search,
   searchTitle = "Search",
+  phoneSearchHref,
   extra = [],
   children,
 }: {
   /** What Ctrl+K opens: the product's <Command> list for global search. */
   search?: React.ReactNode
   searchTitle?: string
+  /**
+   * What Ctrl+K opens on phone: the phone search page's address, the one
+   * AppShell takes as phoneSearchHref (41.4 rule 5). Left out, Ctrl+K does
+   * nothing on phone.
+   */
+  phoneSearchHref?: string
   /** A product's own shortcuts, listed in the dialog too (39.5). */
   extra?: Shortcut[]
   children: React.ReactNode
 }) {
   const [searchOpen, setSearchOpen] = React.useState(false)
   const [helpOpen, setHelpOpen] = React.useState(false)
+  const router = useRouter()
+  // The shell's navigation, which drives its loading bar (5.6), where
+  // there is a shell; else the router.
+  const progress = useOptionalProgress()
+  const openPhoneSearch = React.useEffectEvent((href: string) => {
+    if (window.location.pathname === new URL(href, window.location.href).pathname) return
+    if (progress) progress.navigate(href)
+    else router.push(href)
+  })
   // "Ctrl" on the server, the real platform's word once in the browser.
   const mod = React.useSyncExternalStore(
     noSubscribe,
@@ -132,7 +170,13 @@ function KeyboardShortcuts({
           // Taken even inside a dialog, where it opens nothing (24 rule
           // 4), so it does not fall through to the browser's own Ctrl+K.
           event.preventDefault()
-          if (search && !openDialogs().length) setSearchOpen(true)
+          if (openDialogs().length) return
+          if (isPhoneLayout()) {
+            // 41.4 rule 5: on phone the search page, never command.tsx.
+            if (phoneSearchHref) openPhoneSearch(phoneSearchHref)
+            return
+          }
+          if (search) setSearchOpen(true)
           return
         }
         if (key === "s") {
@@ -165,7 +209,7 @@ function KeyboardShortcuts({
     }
     window.addEventListener("keydown", onKeyDown)
     return () => window.removeEventListener("keydown", onKeyDown)
-  }, [search])
+  }, [search, phoneSearchHref])
 
   const context = React.useMemo<ContextValue>(
     () => ({
@@ -230,10 +274,18 @@ function KeyboardShortcuts({
 /**
  * 39.2, a comment or message box: Enter sends, Shift+Enter makes a new
  * line. Spread the result as onKeyDown.
+ *
+ * On phone (41.7 rule 6) Enter makes a new line and only the send button
+ * sends. A box that is a single-line input has no new line to make, so
+ * there Enter does nothing, rather than letting a form around it submit.
  */
 function enterSends(send: () => void) {
   return (event: React.KeyboardEvent) => {
     if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return
+    if (isPhoneLayout()) {
+      if (!(event.target instanceof HTMLTextAreaElement)) event.preventDefault()
+      return
+    }
     event.preventDefault()
     send()
   }
@@ -242,10 +294,14 @@ function enterSends(send: () => void) {
 /**
  * 39.2, a long text field in a form (description, notes): Enter makes a
  * new line, and Ctrl+Enter (Cmd+Enter on a Mac) saves the form.
+ *
+ * On phone Enter makes a new line and Ctrl+Enter saves nothing: saving is
+ * always the Save button (41.7 rule 6).
  */
 function ctrlEnterSaves(event: React.KeyboardEvent<HTMLTextAreaElement>) {
   if (event.key !== "Enter" || event.nativeEvent.isComposing) return
   if (!(isMac() ? event.metaKey : event.ctrlKey)) return
+  if (isPhoneLayout()) return
   event.preventDefault()
   event.currentTarget.form?.requestSubmit()
 }
@@ -254,6 +310,10 @@ function ctrlEnterSaves(event: React.KeyboardEvent<HTMLTextAreaElement>) {
  * 39.2, a search box: Enter runs the search at once (not after the 300ms
  * pause of 27.1), and Escape clears the text first, so only a second
  * Escape closes the layer the box sits in.
+ *
+ * The same on phone: the keyboard's search key runs the search at once
+ * (41.5 rule 2), and running a search saves nothing, so 41.7 rule 6 does
+ * not change it. Spread fieldKeyboard("search") on the box for that key.
  */
 function searchBoxKeys({
   value,

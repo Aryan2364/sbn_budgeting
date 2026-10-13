@@ -45,7 +45,13 @@ function Input({ className, type, ...props }: React.ComponentProps<"input">) {
         "enabled:hover:border-border-strong",
         "disabled:cursor-default disabled:border-border-light disabled:bg-surface-sunken disabled:text-text-muted",
         "aria-invalid:border-danger aria-invalid:focus-visible:outline-danger",
-        "file:mr-3 file:h-control-sm file:border-0 file:bg-transparent file:text-body file:font-medium file:text-text-primary",
+        /*
+         * The file button sits INSIDE the field, so it takes the in-field
+         * height (6.2's exception, 41.9 rule 2): 32px on desktop as
+         * before, 36px on phone. --h-control-sm is the small button's
+         * height, 44px on phone - as tall as the field itself.
+         */
+        "file:mr-3 file:h-icon-in-field file:border-0 file:bg-transparent file:text-body file:font-medium file:text-text-primary",
         className
       )}
       {...props}
