@@ -12,6 +12,9 @@ import {
   type ComplaintSiteOption,
 } from "@/lib/complaints-api"
 import { useCan } from "@/lib/permissions"
+import { useLayout } from "@/lib/layout"
+import { fieldKeyboard, usePhoneEnter } from "@/lib/field-keyboard"
+import { useDraft } from "@/lib/drafts"
 import { useSession } from "@/components/shell/session"
 import { Banner, BannerAction, BannerDescription, BannerTitle } from "@/components/ui/banner"
 import { Button } from "@/components/ui/button"
@@ -36,9 +39,13 @@ import {
   FormScrollArea,
 } from "@/components/templates/form-page"
 import { PageHeader } from "@/components/templates/page"
+import { ActionBar } from "@/components/ui/action-bar"
+import { DraftBanner } from "@/components/ui/draft-banner"
+import { PHONE_WORDS } from "@/lib/phone-words"
 import { Choice } from "@/components/complaints/choice"
 import { useComplaintMasters } from "@/components/complaints/use-masters"
 import { GU_COMMON, GU_UNSAVED_RAISE, GU_UPLOAD, guError } from "@/components/complaints/gu"
+import { refreshMyWorkCount } from "@/components/complaints/phone/use-my-work-count"
 
 /**
  * `/complaints/new` — the raise form (section 11.3, and the agreed
@@ -165,6 +172,8 @@ interface Values {
   complainantPhone: string
   locationNote: string
   description: string
+  /** lib/drafts.ts's DraftValues: only the top level is looked at (41.7 rule 15). */
+  [key: string]: string
 }
 
 type FieldKey = keyof Values | "photos"
@@ -200,6 +209,9 @@ const ORDER: FieldKey[] = ["title", "siteId", "categoryId", "complainantPhone", 
 
 export function RaiseComplaintForm() {
   const router = useRouter()
+  const { layout } = useLayout()
+  const phone = layout === "phone"
+  const phoneEnter = usePhoneEnter()
   const { user } = useSession()
   const masters = useComplaintMasters({ activeOnly: true })
   /**
@@ -229,11 +241,24 @@ export function RaiseComplaintForm() {
   const [failure, setFailure] = React.useState<{ message: string; routing: boolean } | null>(null)
   const bannerRef = React.useRef<HTMLDivElement>(null)
 
+  const changed = !done && (isChanged(values, initial) || photos.length > 0)
   const unsaved = useUnsavedChanges({
-    changed: !done && (isChanged(values, initial) || photos.length > 0),
+    changed,
     noun: "complaint",
     mode: "create",
     text: GU_UNSAVED_RAISE,
+  })
+
+  /**
+   * Plan-phone D6, 5.6: a draft of the raise form, phone only (useDraft
+   * reads and writes nothing on desktop). Photos are never part of it
+   * (they are not in `values`, which holds only the text fields).
+   */
+  const draft = useDraft<Values>({
+    person: user?.id,
+    form: "complaint-raise",
+    values,
+    changed,
   })
 
   const set = <K extends keyof Values>(key: K, value: Values[K]) => {
@@ -291,7 +316,15 @@ export function RaiseComplaintForm() {
         filesToSend(photos),
       )
       setDone(true)
-      router.push(`/complaints/${detail.id}?raised=1`)
+      draft.clear()
+      // Phone (plan 5.6): replace, so Back does not return to an empty
+      // form, and the My work count drops right away. Desktop: unchanged.
+      if (phone) {
+        router.replace(`/complaints/${detail.id}?raised=1`)
+        void refreshMyWorkCount()
+      } else {
+        router.push(`/complaints/${detail.id}?raised=1`)
+      }
     } catch (caught) {
       const routing = caught instanceof ApiError && caught.status === 422
       setFailure({ message: guError(caught), routing })
@@ -310,19 +343,31 @@ export function RaiseComplaintForm() {
   }
 
   if (masters.error) {
+    // Rule 4 (41.1): a failed branch still renders PageHeader, so the
+    // app bar and the back arrow are there even while the form could
+    // not open.
+    const failedBody = (
+      <EmptyState
+        variant="failed"
+        heading={GU.loadFailedHeading}
+        actionLabel={GU.tryAgain}
+        onAction={masters.retry}
+      >
+        {masters.error} {GU.loadFailedNothingSaved}
+      </EmptyState>
+    )
+    if (phone) {
+      return (
+        <>
+          <PageHeader title={GU.title} parent="/complaints" />
+          <div className="mx-auto w-full max-w-content-max p-6">{failedBody}</div>
+        </>
+      )
+    }
     return (
       <FormFrame>
         <FormScrollArea>
-          <div className="mx-auto w-full max-w-content-max p-6 max-sm:px-4">
-            <EmptyState
-              variant="failed"
-              heading={GU.loadFailedHeading}
-              actionLabel={GU.tryAgain}
-              onAction={masters.retry}
-            >
-              {masters.error} {GU.loadFailedNothingSaved}
-            </EmptyState>
-          </div>
+          <div className="mx-auto w-full max-w-content-max p-6 max-sm:px-4">{failedBody}</div>
         </FormScrollArea>
       </FormFrame>
     )
@@ -330,6 +375,276 @@ export function RaiseComplaintForm() {
 
   const noSupervisor = site !== undefined && !site.canReceive
   const busy = saving || isBusy(photos)
+
+  /**
+   * Plan-phone 5.6: one column, no autofocus, the site/category pickers
+   * open as full-height sheets (choice.tsx, already phone-aware), and the
+   * validation and business rules below are exactly the desktop form's -
+   * nothing here is duplicated, only the surrounding layout differs.
+   */
+  const fields = (
+    <>
+      <FormField
+        span={12}
+        label="ફરિયાદનો વિષય"
+        required
+        htmlFor="raise-title"
+        error={errors.title}
+        hint={GU.titleHint}
+      >
+        <Input
+          id="raise-title"
+          value={values.title}
+          maxLength={MAX_TITLE}
+          aria-invalid={Boolean(errors.title) || undefined}
+          onChange={(e) => set("title", e.target.value)}
+          onBlur={blur("title")}
+          className={cn(PHONE_TEXT, "max-sm:max-w-none")}
+          {...fieldKeyboard("text")}
+        />
+      </FormField>
+
+      <FormField
+        span={6}
+        label="સાઇટ"
+        required
+        htmlFor="raise-siteId"
+        error={errors.siteId}
+        hint={
+          site?.canReceive && site.supervisor
+            ? GU.routingHint(site.supervisor.name, site.name)
+            : undefined
+        }
+      >
+        <Choice
+          id="raise-siteId"
+          options={siteOptions}
+          value={values.siteId}
+          onValueChange={(v) => {
+            set("siteId", v)
+            setErrors((e) => ({ ...e, siteId: undefined }))
+          }}
+          onBlur={blur("siteId")}
+          invalid={Boolean(errors.siteId)}
+          placeholder={GU.sitePlaceholder}
+          searchPlaceholder={GU.siteSearch}
+          emptyMessage={GU.siteNoMatch}
+          className="max-w-none sm:max-w-field-max"
+        />
+        {/* Pending banner rule 3: it explains the disabled Submit, so it
+            has no close. All Gujarati, built here; the server's English
+            sentence is not shown. */}
+        {noSupervisor ? (
+          <Banner variant="warning" layout="line" className="mt-2">
+            <TriangleAlertIcon />
+            <BannerDescription wrap>
+              {canEditSites ? GU.noSupervisorAdmin(site.name) : GU.noSupervisorOthers(site.name)}
+            </BannerDescription>
+            {!phone && canEditSites ? (
+              <BannerAction>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  nativeButton={false}
+                  render={<Link href={`/sites/${site.id}/edit`} />}
+                >
+                  {GU.openSite}
+                </Button>
+              </BannerAction>
+            ) : null}
+          </Banner>
+        ) : null}
+      </FormField>
+
+      <FormField
+        span={6}
+        label="ફરિયાદનો પ્રકાર"
+        required
+        htmlFor="raise-categoryId"
+        error={errors.categoryId}
+      >
+        <Choice
+          id="raise-categoryId"
+          options={categoryOptions}
+          value={values.categoryId}
+          onValueChange={(v) => {
+            set("categoryId", v)
+            setErrors((e) => ({ ...e, categoryId: undefined }))
+          }}
+          onBlur={blur("categoryId")}
+          invalid={Boolean(errors.categoryId)}
+          placeholder={GU.categoryPlaceholder}
+          searchPlaceholder={GU.categorySearch}
+          emptyMessage={GU.categoryNoMatch}
+          className="max-w-none sm:max-w-field-max"
+        />
+      </FormField>
+
+      <FormField span={12} label="ફરિયાદની વિગત" htmlFor="raise-description" hint={GU.descriptionHint}>
+        <Textarea
+          id="raise-description"
+          rows={4}
+          value={values.description}
+          onChange={(e) => set("description", e.target.value)}
+          onKeyDown={ctrlEnterSaves}
+          className={PHONE_TEXT}
+          {...fieldKeyboard("longText")}
+        />
+      </FormField>
+
+      <FormField
+        span={6}
+        label="ફરિયાદીનું નામ"
+        htmlFor="raise-complainantName"
+        hint={GU.complainantNameHint}
+      >
+        <Input
+          id="raise-complainantName"
+          value={values.complainantName}
+          onChange={(e) => set("complainantName", e.target.value)}
+          className={cn(PHONE_TEXT, "max-sm:max-w-none")}
+          {...fieldKeyboard("text", { autoComplete: "name" })}
+        />
+      </FormField>
+      <FormField
+        span={4}
+        label="ફરિયાદીનો મોબાઇલ નંબર"
+        required
+        htmlFor="raise-complainantPhone"
+        error={errors.complainantPhone}
+        hint={GU.complainantPhoneHint}
+      >
+        <Input
+          id="raise-complainantPhone"
+          type="tel"
+          placeholder="98765 43210"
+          value={values.complainantPhone}
+          aria-invalid={Boolean(errors.complainantPhone) || undefined}
+          onChange={(e) => set("complainantPhone", e.target.value)}
+          onBlur={blur("complainantPhone")}
+          className={cn(PHONE_TEXT, "max-sm:max-w-none")}
+          {...fieldKeyboard("phone", { last: true })}
+        />
+      </FormField>
+      {/* Only when another person is named: no name means no one. */}
+      {user && values.complainantName.trim() && values.complainantName.trim() !== user.name ? (
+        <p className="col-span-12 -mt-4 flex items-center gap-1 text-label text-text-secondary">
+          <UserIcon className="size-4" aria-hidden="true" />
+          {GU.onBehalfOf(values.complainantName.trim())}
+        </p>
+      ) : null}
+
+      <FormField span={12} label="ચોક્કસ જગ્યા" htmlFor="raise-locationNote" hint={GU.locationNoteHint}>
+        <Textarea
+          id="raise-locationNote"
+          rows={2}
+          value={values.locationNote}
+          onChange={(e) => set("locationNote", e.target.value)}
+          onKeyDown={ctrlEnterSaves}
+          placeholder={GU.locationNotePlaceholder}
+          className={PHONE_TEXT}
+          {...fieldKeyboard("longText")}
+        />
+      </FormField>
+
+      <FormField span={12} label="સમસ્યાના ફોટા" htmlFor="raise-photos" error={errors.photos}>
+        <FileUpload
+          id="raise-photos"
+          value={photos}
+          onChange={(next) => {
+            setPhotos(next)
+            setErrors((e) => ({ ...e, photos: undefined }))
+          }}
+          accept="image/jpeg,image/png,image/webp"
+          maxFiles={MAX_PHOTOS}
+          maxBytes={MAX_PHOTO_BYTES}
+          capture="environment"
+          noun={{ one: "photo", many: "photos" }}
+          text={GU_UPLOAD}
+          disabled={saving}
+          invalid={Boolean(errors.photos)}
+        />
+      </FormField>
+    </>
+  )
+
+  const failureBanner = (
+    <div ref={bannerRef}>
+      {/* Pending banner rule 4: one banner per page. While the site has
+          no supervisor, its banner in the site field is the one that
+          matters, and Submit cannot be pressed. */}
+      {failure && !noSupervisor ? (
+        <Banner variant="danger" className="mt-6">
+          <CircleAlertIcon />
+          <BannerTitle>{failure.routing ? GU.routingFailedTitle : GU.raiseFailedTitle}</BannerTitle>
+          <BannerDescription>
+            {failure.message}
+            {failure.routing ? null : ` ${GU.raiseFailedNext}`}
+          </BannerDescription>
+          {failure.routing ? (
+            <BannerAction className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={() => document.getElementById("raise-siteId")?.focus()}
+              >
+                {GU.chooseAnotherSite}
+              </Button>
+              {/* 41.11 rule 3: a link to a computer-only screen never
+                  appears on phone. */}
+              {!phone && canEditSites && values.siteId ? (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  nativeButton={false}
+                  render={<Link href={`/sites/${values.siteId}/edit`} />}
+                >
+                  {GU.openSite}
+                </Button>
+              ) : null}
+            </BannerAction>
+          ) : null}
+        </Banner>
+      ) : null}
+    </div>
+  )
+
+  const skeleton = (
+    <div className="mt-8 flex flex-col gap-6" aria-hidden="true">
+      {Array.from({ length: 6 }, (_, i) => (
+        <div key={i} className="flex flex-col gap-2">
+          <Skeleton className="h-4 w-24" />
+          <Skeleton className="h-control w-full max-w-field-max" />
+        </div>
+      ))}
+    </div>
+  )
+
+  if (phone) {
+    return (
+      <form onSubmit={submit} noValidate onKeyDown={phoneEnter}>
+        {unsaved.warning}
+        <PageHeader title={GU.title} meta={GU.meta} parent="/complaints" />
+        <div className="mx-auto w-full max-w-content-max px-6 pb-6">
+          <DraftBanner
+            draft={draft}
+            onUse={(kept) => setValues((v) => ({ ...v, ...kept }) as Values)}
+            text={{ ...PHONE_WORDS.draft, note: PHONE_WORDS.draft.photosNotKept }}
+          />
+          {failureBanner}
+          {masters.loading ? skeleton : <div className="mt-8 flex flex-col gap-6">{fields}</div>}
+        </div>
+        <ActionBar label={PHONE_WORDS.a11y.actions}>
+          <PermissionTooltip allowed={!noSupervisor} reason={GU.noSupervisorReason(site?.name)}>
+            <Button type="submit" size="lg" disabled={busy || masters.loading || noSupervisor} className="w-full">
+              {saving ? GU.submitting : GU.submit}
+            </Button>
+          </PermissionTooltip>
+        </ActionBar>
+      </form>
+    )
+  }
 
   return (
     <form onSubmit={submit} noValidate className="h-full">
@@ -344,255 +659,9 @@ export function RaiseComplaintForm() {
             />
             <PageHeader className="mt-4" title={GU.title} meta={GU.meta} />
 
-            <div ref={bannerRef}>
-              {/* Pending banner rule 4: one banner per page. While the
-                  site has no supervisor, its banner in the site field is
-                  the one that matters, and Submit cannot be pressed. */}
-              {failure && !noSupervisor ? (
-                <Banner variant="danger" className="mt-6">
-                  <CircleAlertIcon />
-                  <BannerTitle>
-                    {failure.routing ? GU.routingFailedTitle : GU.raiseFailedTitle}
-                  </BannerTitle>
-                  <BannerDescription>
-                    {failure.message}
-                    {failure.routing ? null : ` ${GU.raiseFailedNext}`}
-                  </BannerDescription>
-                  {failure.routing ? (
-                    <BannerAction className="flex flex-wrap gap-2">
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        size="sm"
-                        onClick={() => document.getElementById("raise-siteId")?.focus()}
-                      >
-                        {GU.chooseAnotherSite}
-                      </Button>
-                      {canEditSites && values.siteId ? (
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          nativeButton={false}
-                          render={<Link href={`/sites/${values.siteId}/edit`} />}
-                        >
-                          {GU.openSite}
-                        </Button>
-                      ) : null}
-                    </BannerAction>
-                  ) : null}
-                </Banner>
-              ) : null}
-            </div>
+            {failureBanner}
 
-            {masters.loading ? (
-              <div className="mt-8 flex flex-col gap-6" aria-hidden="true">
-                {Array.from({ length: 6 }, (_, i) => (
-                  <div key={i} className="flex flex-col gap-2">
-                    <Skeleton className="h-4 w-24" />
-                    <Skeleton className="h-control w-full max-w-field-max" />
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="mt-8 grid grid-cols-12 gap-6">
-                <FormField
-                  span={12}
-                  label="ફરિયાદનો વિષય"
-                  required
-                  htmlFor="raise-title"
-                  error={errors.title}
-                  hint={GU.titleHint}
-                >
-                  <Input
-                    id="raise-title"
-                    value={values.title}
-                    maxLength={MAX_TITLE}
-                    aria-invalid={Boolean(errors.title) || undefined}
-                    onChange={(e) => set("title", e.target.value)}
-                    onBlur={blur("title")}
-                    className={cn(PHONE_TEXT, "max-sm:max-w-none")}
-                  />
-                </FormField>
-
-                <FormField
-                  span={6}
-                  label="સાઇટ"
-                  required
-                  htmlFor="raise-siteId"
-                  error={errors.siteId}
-                  hint={
-                    site?.canReceive && site.supervisor
-                      ? GU.routingHint(site.supervisor.name, site.name)
-                      : undefined
-                  }
-                >
-                  <Choice
-                    id="raise-siteId"
-                    options={siteOptions}
-                    value={values.siteId}
-                    onValueChange={(v) => {
-                      set("siteId", v)
-                      setErrors((e) => ({ ...e, siteId: undefined }))
-                    }}
-                    onBlur={blur("siteId")}
-                    invalid={Boolean(errors.siteId)}
-                    placeholder={GU.sitePlaceholder}
-                    searchPlaceholder={GU.siteSearch}
-                    emptyMessage={GU.siteNoMatch}
-                    className="max-w-none sm:max-w-field-max"
-                  />
-                  {/* Pending banner rule 3: it explains the disabled Submit,
-                      so it has no close. All Gujarati, built here; the
-                      server's English sentence is not shown. */}
-                  {noSupervisor ? (
-                    <Banner variant="warning" layout="line" className="mt-2">
-                      <TriangleAlertIcon />
-                      <BannerDescription wrap>
-                        {canEditSites
-                          ? GU.noSupervisorAdmin(site.name)
-                          : GU.noSupervisorOthers(site.name)}
-                      </BannerDescription>
-                      {canEditSites ? (
-                        <BannerAction>
-                          <Button
-                            variant="secondary"
-                            size="sm"
-                            nativeButton={false}
-                            render={<Link href={`/sites/${site.id}/edit`} />}
-                          >
-                            {GU.openSite}
-                          </Button>
-                        </BannerAction>
-                      ) : null}
-                    </Banner>
-                  ) : null}
-                </FormField>
-
-                <FormField
-                  span={6}
-                  label="ફરિયાદનો પ્રકાર"
-                  required
-                  htmlFor="raise-categoryId"
-                  error={errors.categoryId}
-                >
-                  <Choice
-                    id="raise-categoryId"
-                    options={categoryOptions}
-                    value={values.categoryId}
-                    onValueChange={(v) => {
-                      set("categoryId", v)
-                      setErrors((e) => ({ ...e, categoryId: undefined }))
-                    }}
-                    onBlur={blur("categoryId")}
-                    invalid={Boolean(errors.categoryId)}
-                    placeholder={GU.categoryPlaceholder}
-                    searchPlaceholder={GU.categorySearch}
-                    emptyMessage={GU.categoryNoMatch}
-                    className="max-w-none sm:max-w-field-max"
-                  />
-                </FormField>
-
-                <FormField
-                  span={12}
-                  label="ફરિયાદની વિગત"
-                  htmlFor="raise-description"
-                  hint={GU.descriptionHint}
-                >
-                  <Textarea
-                    id="raise-description"
-                    rows={4}
-                    value={values.description}
-                    onChange={(e) => set("description", e.target.value)}
-                    onKeyDown={ctrlEnterSaves}
-                    className={PHONE_TEXT}
-                  />
-                </FormField>
-
-                <FormField
-                  span={6}
-                  label="ફરિયાદીનું નામ"
-                  htmlFor="raise-complainantName"
-                  hint={GU.complainantNameHint}
-                >
-                  <Input
-                    id="raise-complainantName"
-                    autoComplete="name"
-                    value={values.complainantName}
-                    onChange={(e) => set("complainantName", e.target.value)}
-                    className={cn(PHONE_TEXT, "max-sm:max-w-none")}
-                  />
-                </FormField>
-                <FormField
-                  span={4}
-                  label="ફરિયાદીનો મોબાઇલ નંબર"
-                  required
-                  htmlFor="raise-complainantPhone"
-                  error={errors.complainantPhone}
-                  hint={GU.complainantPhoneHint}
-                >
-                  <Input
-                    id="raise-complainantPhone"
-                    type="tel"
-                    inputMode="tel"
-                    autoComplete="tel"
-                    placeholder="98765 43210"
-                    value={values.complainantPhone}
-                    aria-invalid={Boolean(errors.complainantPhone) || undefined}
-                    onChange={(e) => set("complainantPhone", e.target.value)}
-                    onBlur={blur("complainantPhone")}
-                    className={cn(PHONE_TEXT, "max-sm:max-w-none")}
-                  />
-                </FormField>
-                {/* Only when another person is named: no name means no one. */}
-                {user && values.complainantName.trim() && values.complainantName.trim() !== user.name ? (
-                  <p className="col-span-12 -mt-4 flex items-center gap-1 text-label text-text-secondary">
-                    <UserIcon className="size-4" aria-hidden="true" />
-                    {GU.onBehalfOf(values.complainantName.trim())}
-                  </p>
-                ) : null}
-
-                <FormField
-                  span={12}
-                  label="ચોક્કસ જગ્યા"
-                  htmlFor="raise-locationNote"
-                  hint={GU.locationNoteHint}
-                >
-                  <Textarea
-                    id="raise-locationNote"
-                    rows={2}
-                    value={values.locationNote}
-                    onChange={(e) => set("locationNote", e.target.value)}
-                    onKeyDown={ctrlEnterSaves}
-                    placeholder={GU.locationNotePlaceholder}
-                    className={PHONE_TEXT}
-                  />
-                </FormField>
-
-                <FormField
-                  span={12}
-                  label="સમસ્યાના ફોટા"
-                  htmlFor="raise-photos"
-                  error={errors.photos}
-                >
-                  <FileUpload
-                    id="raise-photos"
-                    value={photos}
-                    onChange={(next) => {
-                      setPhotos(next)
-                      setErrors((e) => ({ ...e, photos: undefined }))
-                    }}
-                    accept="image/jpeg,image/png,image/webp"
-                    maxFiles={MAX_PHOTOS}
-                    maxBytes={MAX_PHOTO_BYTES}
-                    capture="environment"
-                    noun={{ one: "photo", many: "photos" }}
-                    text={GU_UPLOAD}
-                    disabled={saving}
-                    invalid={Boolean(errors.photos)}
-                  />
-                </FormField>
-              </div>
-            )}
+            {masters.loading ? skeleton : <div className="mt-8 grid grid-cols-12 gap-6">{fields}</div>}
           </div>
         </FormScrollArea>
 
