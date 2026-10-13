@@ -16,10 +16,11 @@ import type { AuthUser } from '../common/current-user';
 import type { ListQueryDto } from '../common/list-query.dto';
 import { runListQuery, type ListResult, type MatchInfo } from '../common/list-query';
 import { PG_POOL } from '../db/db.module';
-import { notify } from '../notifications/notify';
+import { notify, type Recipient } from '../notifications/notify';
+import { complaintPush, PushService, type PushNote } from '../push/push.service';
 import type { RaiseComplaintDto, ReassignDto } from './complaints.dto';
 import {
-  ACT, NOT_FOUND, NOTIFY, PHOTO_GONE, RAISE as RAISE_SAYS, SEARCH_LABEL, alreadyMoved, notAnId, notHeld, refusedFor,
+  ACT, NOT_FOUND, NOTIFY, PHOTO_GONE, PUSH, RAISE as RAISE_SAYS, SEARCH_LABEL, alreadyMoved, notAnId, notHeld, refusedFor,
   unknownStatus, unknownTab,
 } from './messages';
 import {
@@ -336,11 +337,31 @@ function requireNote(value: string | undefined, message: string): string {
   return note;
 }
 
+/** A bell recipient with the lock-screen line their phone shows (PUSH, plan L11). */
+type PushRecipient = Recipient & { push: string };
+
+/**
+ * The phone pushes for one action: exactly the people `notify()` just
+ * notified (its return value, so the actor and duplicates are already
+ * left out), each with the line of the recipient entry that notified
+ * them (the first one, as in notify). Grouped by line.
+ */
+function pushNotes(complaintId: string, recipients: readonly PushRecipient[], notified: readonly string[]): PushNote[] {
+  const byLine = new Map<string, string[]>();
+  for (const userId of notified) {
+    const r = recipients.find((x) => x.userId === userId);
+    if (!r) continue;
+    byLine.set(r.push, [...(byLine.get(r.push) ?? []), userId]);
+  }
+  return [...byLine].map(([line, userIds]) => ({ userIds, payload: complaintPush(complaintId, line) }));
+}
+
 @Injectable()
 export class ComplaintsService {
   constructor(
     @Inject(PG_POOL) private readonly pool: Pool,
     private readonly roleMap: RoleMapService,
+    private readonly push: PushService,
   ) {}
 
   // -------------------------------------------------------------------
@@ -597,6 +618,7 @@ export class ComplaintsService {
 
     let stored: StoredPhoto[] = [];
     let id: string;
+    let pushes: PushNote[] = [];
     try {
       id = await this.inTransaction(async (client) => {
         // The site must be one the caller may raise on (O5): raise checks
@@ -677,16 +699,26 @@ export class ComplaintsService {
         const what = NOTIFY.what(site.name, category.name);
         // The notification quotes the complaint by its title, its heading
         // everywhere (owner, 6 Oct 2026); the description is optional.
-        await notify(client, created.id, user.id, short(body.title), [
-          { userId: routing.supervisor.id, kind: 'assigned', title: NOTIFY.assigned(created.reference, what) },
-          { userId: routing.manager?.id, kind: 'copied', title: NOTIFY.copied(created.reference, what) },
-        ]);
+        const recipients: PushRecipient[] = [
+          {
+            userId: routing.supervisor.id, kind: 'assigned',
+            title: NOTIFY.assigned(created.reference, what), push: PUSH.assigned(created.reference),
+          },
+          {
+            userId: routing.manager?.id, kind: 'copied',
+            title: NOTIFY.copied(created.reference, what), push: PUSH.copied(created.reference),
+          },
+        ];
+        const notified = await notify(client, created.id, user.id, short(body.title), recipients);
+        pushes = pushNotes(created.id, recipients, notified);
         return created.id;
       });
     } catch (error) {
       await removeStored(stored);
       throw error;
     }
+    // Committed: push to the phones, without waiting (plan Phase 6a).
+    this.push.dispatch(pushes);
     return this.detail(user, access, id);
   }
 
@@ -744,9 +776,10 @@ export class ComplaintsService {
           rootCause,
         });
 
-        await notify(client, id, user.id, short(note), [
-          { userId: c.raisedBy.id, kind: 'closed', title: NOTIFY.closed(c.reference, user.name) },
-        ]);
+        const recipients: PushRecipient[] = [
+          { userId: c.raisedBy.id, kind: 'closed', title: NOTIFY.closed(c.reference, user.name), push: PUSH.closed(c.reference) },
+        ];
+        return pushNotes(id, recipients, await notify(client, id, user.id, short(note), recipients));
       },
       // A refused or failed resolve leaves no orphan files behind. Run
       // before the rollback releases the lock: the next resolve reuses
@@ -793,10 +826,17 @@ export class ComplaintsService {
         from: c.supervisor,
         to,
       });
-      await notify(client, id, user.id, short(note), [
-        { userId: to.id, kind: 'assigned', title: NOTIFY.reassignedToYou(c.reference, user.name) },
-        { userId: c.supervisor.id, kind: 'reassigned_away', title: NOTIFY.reassignedAway(c.reference, to.name) },
-      ]);
+      const recipients: PushRecipient[] = [
+        {
+          userId: to.id, kind: 'assigned',
+          title: NOTIFY.reassignedToYou(c.reference, user.name), push: PUSH.reassignedToYou(c.reference),
+        },
+        {
+          userId: c.supervisor.id, kind: 'reassigned_away',
+          title: NOTIFY.reassignedAway(c.reference, to.name), push: PUSH.reassignedAway(c.reference),
+        },
+      ];
+      return pushNotes(id, recipients, await notify(client, id, user.id, short(note), recipients));
     });
   }
 
@@ -812,6 +852,9 @@ export class ComplaintsService {
   // -------------------------------------------------------------------
 
   /**
+   * @param run the change. It may return the phone pushes for the people
+   *   it notified; they are sent once the transaction has committed,
+   *   without waiting (plan Phase 6a), and never on a rollback.
    * @param onFailure undoes work outside the database (stored photos).
    *   Runs while the row is still locked, before the rollback, when
    *   `run` fails; or after the fact if the commit itself fails. Once.
@@ -821,10 +864,11 @@ export class ComplaintsService {
     access: AccessContext,
     id: string,
     action: ActionName,
-    run: (client: PoolClient, c: DetailCore) => Promise<void>,
+    run: (client: PoolClient, c: DetailCore) => Promise<PushNote[] | void>,
     onFailure?: () => Promise<void>,
   ): Promise<ComplaintDetail> {
     let undone = false;
+    let pushes: PushNote[] = [];
     const undo = async (): Promise<void> => {
       if (undone) return;
       undone = true;
@@ -850,7 +894,7 @@ export class ComplaintsService {
         const check = checkAction(action, viewer, c);
         if (!check.allowed) throw await this.refusal(client, id, action, viewer, check);
         try {
-          await run(client, c);
+          pushes = (await run(client, c)) ?? [];
         } catch (error) {
           await undo();
           throw error;
@@ -860,6 +904,8 @@ export class ComplaintsService {
       await undo();
       throw error;
     }
+    // Committed: push to the phones, without waiting.
+    this.push.dispatch(pushes);
     return this.detail(user, access, id);
   }
 

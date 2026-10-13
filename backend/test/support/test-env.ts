@@ -6,7 +6,7 @@ import { join } from 'node:path';
  * The test process's environment, set up BEFORE any application module
  * is loaded.
  *
- * Three things here are safety, not convenience:
+ * Four things here are safety, not convenience:
  *
  * 1. The database comes from TEST_DATABASE_URL only, never from
  *    DATABASE_URL or backend/.env, and its name must say "test". A
@@ -18,6 +18,8 @@ import { join } from 'node:path';
  *    land on a scratch disk, never in the real bucket.
  * 3. R2 is blanked explicitly, so the disk photo store is chosen even if
  *    the shell exported credentials.
+ * 4. The VAPID keys are blanked too, so a test run never sends a real
+ *    phone notification.
  */
 
 export interface TestEnv {
@@ -88,6 +90,11 @@ export function prepareTestEnv(): TestEnv {
   process.env.R2_BUCKET = '';
   process.env.R2_ENDPOINT = '';
   process.env.R2_PREFIX = '';
+  // (4) No phone notifications from a test run: push stays off unless a
+  // test turns it on for its own PushService, with web-push mocked.
+  process.env.VAPID_PUBLIC_KEY = '';
+  process.env.VAPID_PRIVATE_KEY = '';
+  process.env.VAPID_SUBJECT = '';
   // A fixed secret: tokens are minted by the harness, never by a login
   // the harness depends on, and both builds of an equivalence run must
   // accept the same tokens.
