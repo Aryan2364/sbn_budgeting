@@ -2,9 +2,9 @@
 
 import * as React from "react"
 import { useRouter, useSearchParams } from "next/navigation"
-import { TreePineIcon } from "lucide-react"
 
 import { ApiError } from "@/lib/api"
+import { PRODUCT } from "@/lib/product"
 import { SignInPage, type SignInResult } from "@/components/templates/sign-in-page"
 import { usePermissions } from "@/lib/permissions"
 import { errorMessage, useSession } from "@/components/shell/session"
@@ -64,7 +64,7 @@ function LoginForm() {
     <SignInPage
       identifier="email-or-phone"
       autoFocus={layout === "desktop"}
-      product={{ name: "Sadbhavna", mark: <TreePineIcon /> }}
+      product={PRODUCT}
       headline="Every site and complaint, in one place"
       highlight="in one place"
       supportingLine="Plantation budgets and spending, and complaints from the field, tracked from raising to resolution."
