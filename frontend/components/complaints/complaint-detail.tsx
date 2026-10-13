@@ -450,8 +450,10 @@ export function ComplaintDetailPage({ id }: { id: string }) {
                 <CardTitle>{GU.complaintCard}</CardTitle>
               </CardHeader>
               <CardContent className="flex flex-col gap-6">
-                {/* Description, complainant and phone are optional (owner,
-                    6 Oct 2026). One that was not given says so plainly,
+                {/* Description and complainant are optional (owner,
+                    6 Oct 2026); the phone is required again from 13 Oct
+                    2026 (user), but complaints raised between those dates
+                    may have none. One that was not given says so plainly,
                     the way the exact place always has. */}
                 {detail.description ? (
                   <p className="text-body break-words whitespace-pre-wrap text-text-primary">

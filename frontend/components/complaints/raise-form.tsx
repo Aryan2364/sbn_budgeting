@@ -48,11 +48,12 @@ import { GU_COMMON, GU_UNSAVED_RAISE, GU_UPLOAD, guError } from "@/components/co
  * The fields in the owner's order (6 Oct 2026): the complaint's title,
  * site, category, description, complainant's name and phone (prefilled
  * from the signed-in person and editable), then a note on where exactly
- * and up to three photos. Only the title, site and category are
- * required. The optional fields say "જરૂરી નથી" in their helper text,
- * as the place note always has (owner's instruction; it departs from
- * 11.3 rule 3, which leaves optional fields unmarked). An empty optional
- * field is sent as nothing; a phone that IS given must be 10 digits.
+ * and up to three photos. The title, site, category and the
+ * complainant's phone are required (the phone from 13 Oct 2026, user;
+ * it must be 10 digits). The optional fields say "જરૂરી નથી" in their
+ * helper text, as the place note always has (owner's instruction; it
+ * departs from 11.3 rule 3, which leaves optional fields unmarked). An
+ * empty optional field is sent as nothing.
  *
  * A complaint is filed against a budget site (CONTRACT §10). Routing is
  * decided by the server at raise time. The form previews it from the
@@ -93,7 +94,8 @@ const GU = {
   longTitle: (max: number) => `વિષય ${max} અક્ષર સુધીમાં લખો. વધુ વિગત નીચે લખી શકો છો.`,
   needSite: "ફરિયાદ કઈ સાઇટની છે તે પસંદ કરો",
   needCategory: "ફરિયાદનો પ્રકાર પસંદ કરો",
-  shortPhone: "પૂરો 10 આંકડાનો મોબાઇલ નંબર લખો, જેમ કે 98765 43210, અથવા આ ખાનું ખાલી રાખો",
+  needPhone: "ફરિયાદીનો મોબાઇલ નંબર લખો",
+  shortPhone: "પૂરો 10 આંકડાનો મોબાઇલ નંબર લખો, જેમ કે 98765 43210",
   tooManyPhotos: (max: number) => `વધુમાં વધુ ${max} ફોટા ઉમેરો`,
 
   // Submit failure banner
@@ -129,11 +131,12 @@ const GU = {
   categoryNoMatch: "આ નામનો કોઈ ફરિયાદનો પ્રકાર મળ્યો નથી. બીજું નામ લખીને શોધો.",
 
   // Optional fields (owner, 6 Oct 2026): their helper text says so first,
-  // the way the place note always has.
+  // the way the place note always has. The phone is required from 13 Oct
+  // 2026 (user), so its helper text only says why it is asked for.
   descriptionHint:
     "જરૂરી નથી. શું થયું છે તે વિગતે લખો, જેથી સુપરવાઇઝરને ખબર પડે કે શું સુધારવાનું છે.",
   complainantNameHint: "જરૂરી નથી.",
-  complainantPhoneHint: "જરૂરી નથી. લખશો તો સુપરવાઇઝર ફોન કરી શકશે.",
+  complainantPhoneHint: "સુપરવાઇઝર આ નંબર પર ફોન કરી શકશે.",
 
   // Exact place field
   locationNoteHint:
@@ -182,8 +185,8 @@ function validate(key: FieldKey, values: Values, photos: FileUploadItem[]): stri
     case "categoryId":
       return values.categoryId ? null : GU.needCategory
     case "complainantPhone": {
-      // Optional: empty is none. One that is given must be a full number.
-      if (!values.complainantPhone.trim()) return null
+      // Required (user, 13 Oct 2026), and a full 10-digit number.
+      if (!values.complainantPhone.trim()) return GU.needPhone
       return digits(values.complainantPhone).length >= 10 ? null : GU.shortPhone
     }
     case "photos":
@@ -279,9 +282,9 @@ export function RaiseComplaintForm() {
           title: values.title.trim(),
           siteId: values.siteId,
           categoryId: values.categoryId,
+          complainantPhone: values.complainantPhone.trim(),
           // Optional: an empty field is not sent at all (none).
           complainantName: values.complainantName.trim() || undefined,
-          complainantPhone: values.complainantPhone.trim() || undefined,
           locationNote: values.locationNote.trim() || undefined,
           description: values.description.trim() || undefined,
         },
@@ -522,6 +525,7 @@ export function RaiseComplaintForm() {
                 <FormField
                   span={4}
                   label="ફરિયાદીનો મોબાઇલ નંબર"
+                  required
                   htmlFor="raise-complainantPhone"
                   error={errors.complainantPhone}
                   hint={GU.complainantPhoneHint}

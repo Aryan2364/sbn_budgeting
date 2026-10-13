@@ -594,11 +594,6 @@ export class ComplaintsService {
     files: UploadedPhoto[] | undefined,
   ): Promise<ComplaintDetail> {
     const photos = checkPhotos(files, { min: 0, max: MAX_PHOTOS });
-    // Optional (owner, 6 Oct 2026): none is null; one that is given must
-    // still be a full number.
-    if (body.complainantPhone && body.complainantPhone.replace(/\D/g, '').length < 10) {
-      throw new UnprocessableEntityException(RAISE_SAYS.shortPhone(body.complainantPhone));
-    }
 
     let stored: StoredPhoto[] = [];
     let id: string;
@@ -620,6 +615,16 @@ export class ComplaintsService {
         if (!found.allowed) {
           const reason = RAISE_SAYS.siteNotYours(found.name);
           throw new ForbiddenException({ error: 'forbidden', permission: RAISE, reason, message: reason });
+        }
+        // The complainant's phone: required (user, 13 Oct 2026; migration
+        // 0016) and a full 10-digit number. After the site's permission,
+        // so a person who may not raise here is told that, not "add a
+        // phone".
+        if (!body.complainantPhone) {
+          throw new UnprocessableEntityException(RAISE_SAYS.needPhone);
+        }
+        if (body.complainantPhone.replace(/\D/g, '').length < 10) {
+          throw new UnprocessableEntityException(RAISE_SAYS.shortPhone(body.complainantPhone));
         }
         const site = { id: found.id, name: found.name };
         const { rows: catRows } = await client.query<{ id: string; name: string; is_active: boolean }>(

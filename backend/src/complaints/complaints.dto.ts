@@ -47,9 +47,8 @@ export class RaiseComplaintDto {
   @IsUUID('all', { message: RAISE.needCategory })
   categoryId!: string;
 
-  // Optional from 6 Oct 2026 (owner): description, complainant's name and
-  // phone. Blank means none and is stored as null. A phone that IS given
-  // must still be a full 10-digit number (checked in the service).
+  // Optional from 6 Oct 2026 (owner): description and complainant's name.
+  // Blank means none and is stored as null.
 
   @IsOptional()
   @Transform(blankToNull)
@@ -57,6 +56,13 @@ export class RaiseComplaintDto {
   @MaxLength(200, { message: RAISE.longName })
   complainantName?: string | null;
 
+  /**
+   * Required from 13 Oct 2026 (user; migration 0016), and a full
+   * 10-digit number. Optional HERE so that "missing" (left out or blank,
+   * which becomes null) is answered by the service with a 422, after the
+   * site's permission check, like the short phone it already refused.
+   * Too long is a 400 here.
+   */
   @IsOptional()
   @Transform(blankToNull)
   @IsString({ message: RAISE.longPhone })

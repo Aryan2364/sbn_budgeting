@@ -319,11 +319,14 @@ function d5IdFor(d: Difference): string | null {
 // The baseline has no `title` key on either route, so stripping it hides
 // nothing the old build sent.
 //
-// D11: the complainant's name, phone and description are optional. A
-// raise that leaves them out (or sends them blank) is answered as the
-// full raise is, where the old build refused it (400). The baseline has
-// no such case, so they are cases ADDED to the run, matched by name, and
-// only when their status equals the same person's full raise in the run.
+// D11: the complainant's name and description are optional. A raise
+// that leaves them out (or sends them blank) is answered as the full
+// raise is, where the old build refused it (400). The phone was optional
+// too from 6 Oct 2026 and is required again from 13 Oct 2026 (user;
+// migration 0016), as it was in the old build, so D11's cases send one.
+// The baseline has no such case, so they are cases ADDED to the run,
+// matched by name, and only when their status equals the same person's
+// full raise in the run.
 // ---------------------------------------------------------------------
 
 /** D7: the key complaint rows and details gain (migration 0014). */
@@ -402,7 +405,7 @@ function titleOnlyIdFor(d: Difference): string | null {
 /** D11: the full raise case each D11 case is judged against. */
 export const D11_RAISE_CASE = 'POST /api/complaints';
 
-/** D11: the raise cases with no complainant name, phone or description (cases.ts). */
+/** D11: the raise cases with no complainant name or description (cases.ts). */
 export const D11_CASES: readonly string[] = [
   'POST /api/complaints [without-optional-fields]',
   'POST /api/complaints [optional-fields-blank]',

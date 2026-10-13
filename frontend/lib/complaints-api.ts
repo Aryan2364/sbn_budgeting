@@ -207,9 +207,10 @@ export interface RaiseComplaintBody {
   title: string
   siteId: string
   categoryId: string
+  /** Required from 13 Oct 2026 (user): at least 10 digits, as typed (trimmed). */
+  complainantPhone: string
   /** Optional: leave out (undefined) when none was given. */
   complainantName?: string
-  complainantPhone?: string
   locationNote?: string
   description?: string
 }

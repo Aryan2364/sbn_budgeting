@@ -10,11 +10,17 @@ import { SKIP_REASON, dbTestsEnabled, openScratchDatabase, type ScratchDb } from
  *     (first non-blank line, trimmed, at most 120 characters) and makes
  *     description, complainant name and phone optional;
  *   - raising needs a title (1-120 characters, trimmed), a site and a
- *     category; description, complainant name and phone are optional,
- *     blank is stored as null, and a phone that IS given must still be a
- *     full 10-digit number;
+ *     category; description and complainant name are optional, blank is
+ *     stored as null;
+ *   - the complainant's phone is required again (user, 13 Oct 2026;
+ *     migration 0016): missing or blank is a 422, it must be a full
+ *     10-digit number, and the database refuses a new complaint without
+ *     one while older phone-less complaints stay valid;
  *   - list rows and the detail carry `title`, and list search finds it.
  */
+
+/** A full phone, sent by every raise here unless a test says otherwise. */
+const PHONE = '9825012345';
 
 const LONG = 'x'.repeat(130);
 
@@ -49,7 +55,12 @@ describe('complaint title and optional fields (migration 0014)', { skip: dbTests
   }
 
   const raise = (fields: Record<string, unknown>) =>
-    send('raiser', 'POST', '/complaints', { siteId: F.S.a, categoryId: F.CC.pd_approval, ...fields });
+    send('raiser', 'POST', '/complaints', {
+      siteId: F.S.a,
+      categoryId: F.CC.pd_approval,
+      complainantPhone: PHONE,
+      ...fields,
+    });
 
   before(async () => {
     // The fixtures at their own schema, then descriptions that test the
@@ -134,31 +145,57 @@ describe('complaint title and optional fields (migration 0014)', { skip: dbTests
     assert.ok(JSON.stringify(noCategory.body).includes('ફરિયાદનો પ્રકાર યાદીમાંથી પસંદ કરો'));
   });
 
-  it('description, complainant name and phone are optional: left out or blank, they are null', async () => {
+  it('description and complainant name are optional: left out or blank, they are null', async () => {
     const bare = await raise({ title: '  Water line broken  ' });
     assert.equal(bare.status, 201, JSON.stringify(bare.body));
     assert.equal(bare.body.title, 'Water line broken');
     assert.equal(bare.body.description, null);
     assert.equal(bare.body.complainantName, null);
-    assert.equal(bare.body.complainantPhone, null);
+    assert.equal(bare.body.complainantPhone, PHONE);
     assert.equal(bare.body.locationNote, null);
 
-    const blanks = await raise({ title: 'Blanks', description: '  ', complainantName: '', complainantPhone: ' ' });
+    const blanks = await raise({ title: 'Blanks', description: '  ', complainantName: '' });
     assert.equal(blanks.status, 201, JSON.stringify(blanks.body));
-    assert.deepEqual(
-      [blanks.body.description, blanks.body.complainantName, blanks.body.complainantPhone],
-      [null, null, null],
-    );
+    assert.deepEqual([blanks.body.description, blanks.body.complainantName], [null, null]);
 
     // As the raise form sends it: multipart, with only the required fields.
     const form = new FormData();
     form.append('title', 'From the form');
     form.append('siteId', F.S.a);
     form.append('categoryId', F.CC.pd_approval);
+    form.append('complainantPhone', PHONE);
     const multipart = await send('raiser', 'POST', '/complaints', form);
     assert.equal(multipart.status, 201, JSON.stringify(multipart.body));
     assert.equal(multipart.body.title, 'From the form');
     assert.equal(multipart.body.description, null);
+  });
+
+  it('the phone is required (0016): left out, null or blank is a 422 saying so', async () => {
+    for (const complainantPhone of [undefined, null, '', '   ']) {
+      const res = await raise({ title: 'No phone', complainantPhone });
+      assert.equal(res.status, 422, JSON.stringify(res.body));
+      // "Enter the complainant's mobile number" (Gujarati, user, 13 Oct 2026)
+      assert.ok(JSON.stringify(res.body).includes('ફરિયાદીનો મોબાઇલ નંબર લખો'), JSON.stringify(res.body));
+    }
+    // Multipart too, as the form sends it.
+    const form = new FormData();
+    form.append('title', 'No phone, multipart');
+    form.append('siteId', F.S.a);
+    form.append('categoryId', F.CC.pd_approval);
+    const multipart = await send('raiser', 'POST', '/complaints', form);
+    assert.equal(multipart.status, 422, JSON.stringify(multipart.body));
+  });
+
+  it('the database refuses a new complaint without a phone, and keeps older ones without one valid', async () => {
+    // A complaint raised before 0016 with no phone (0014 allowed it) stays
+    // valid and can still be updated.
+    await db.client.query(`update complaints set complainant_phone = null where id = $1`, [F.K.open]);
+    // Raised now (after 0016 ran) with no phone: the backstop refuses it.
+    await assert.rejects(
+      db.client.query(`update complaints set raised_at = now() where id = $1`, [F.K.open]),
+      /complaints_phone_when_raised/,
+    );
+    await db.client.query(`update complaints set complainant_phone = $2 where id = $1`, [F.K.open, PHONE]);
   });
 
   it('a phone that is given must still be a full 10-digit number; given values are kept as typed (trimmed)', async () => {

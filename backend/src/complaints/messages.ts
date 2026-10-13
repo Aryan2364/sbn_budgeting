@@ -75,6 +75,8 @@ export const RAISE = {
   needCategory: 'ફરિયાદનો પ્રકાર યાદીમાંથી પસંદ કરો',
   longName: 'ફરિયાદીનું નામ 200 અક્ષર સુધીમાં લખો',
   longPhone: 'મોબાઇલ નંબર 40 અક્ષર સુધીમાં લખો',
+  /** Required from 13 Oct 2026 (user; migration 0016). */
+  needPhone: 'ફરિયાદીનો મોબાઇલ નંબર લખો. ફરિયાદ નોંધાવવા માટે આ જરૂરી છે.',
   longPlace: 'ચોક્કસ જગ્યા 500 અક્ષર સુધીમાં લખો',
   longDescription: 'ફરિયાદની વિગત 5000 અક્ષર સુધીમાં લખો',
   shortPhone: (phone: string) =>
