@@ -155,6 +155,28 @@ export const NOTIFY = {
 } as const;
 
 // ---------------------------------------------------------------------
+// Phone notifications (push), shown on the LOCK SCREEN (plan L11, 13 Oct
+// 2026). The complaint number and the event only: never the title,
+// description, a person's name, a phone number or the site, because
+// anyone near the phone can read them. That is why these are not the
+// bell's titles above. One per bell event (plan L12). Wording reviewed by
+// the owner in the demo.
+// ---------------------------------------------------------------------
+
+export const PUSH = {
+  /** Raise: you are the supervisor. */
+  assigned: (reference: string) => `નવી ફરિયાદ ${reference} તમને સોંપાઈ`,
+  /** Raise: you are the manager. */
+  copied: (reference: string) => `નવી ફરિયાદ ${reference} નોંધાઈ`,
+  /** Resolve: you raised it. */
+  closed: (reference: string) => `તમારી ફરિયાદ ${reference} ઉકેલાઈ ગઈ`,
+  /** Reassign: it moved to you. */
+  reassignedToYou: (reference: string) => `ફરિયાદ ${reference} તમને સોંપાઈ`,
+  /** Reassign: it moved away from you. */
+  reassignedAway: (reference: string) => `ફરિયાદ ${reference} હવે બીજાને સોંપાઈ`,
+} as const;
+
+// ---------------------------------------------------------------------
 // Permission sentences (the access layer's, in Gujarati)
 // ---------------------------------------------------------------------
 

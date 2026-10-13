@@ -547,6 +547,24 @@ export const ROUTES: Record<string, RouteSpec> = {
   'GET /api/notifications': { variants: [{ name: '' }] },
   'POST /api/notifications/read-all': { variants: [{ name: '' }] },
   'POST /api/notifications/:id/read': { params: { id: 'notification' }, variants: [{ name: '' }] },
+
+  // ---- phone notifications (D14, 13 Oct 2026) -------------------------
+  // A well-formed subscription, as a browser sends it: anyone signed in
+  // gets 204 (rolled back), signed out 401. Nothing is sent: the harness
+  // has no VAPID keys (support/test-env.ts).
+  'POST /api/push/subscriptions': {
+    variants: [{ name: '', json: () => ({ endpoint: HARNESS_PUSH_ENDPOINT, keys: HARNESS_PUSH_KEYS }) }],
+  },
+  'DELETE /api/push/subscriptions': {
+    variants: [{ name: '', json: () => ({ endpoint: HARNESS_PUSH_ENDPOINT }) }],
+  },
+};
+
+/** The D14 cases' subscription: a made-up push service, never contacted. */
+const HARNESS_PUSH_ENDPOINT = 'https://push.example.com/harness/phone-1';
+const HARNESS_PUSH_KEYS = {
+  p256dh: 'BHarnessPublicKeyHarnessPublicKeyHarnessPublicKeyHarnessPublicKeyHarnessPublicKeyAA',
+  auth: 'harnessAuthSecret0000A',
 };
 
 /** Query strings that need an id from the database. Filled at run time. */

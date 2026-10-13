@@ -604,6 +604,42 @@ export function missingRemovals(diffs: readonly Difference[]): string[] {
   );
 }
 
+// ---------------------------------------------------------------------
+// D14 (owner, 13 Oct 2026; plan-phone Phase 6a, migration 0017): phone
+// notifications. Two routes exist only in the new build,
+// POST and DELETE /api/push/subscriptions (signed in; about the caller's
+// own phone only). Addition only: exactly these two routes, and their
+// cases, ADDED to a run match. One missing from a run, any other route
+// under /api/push/, or any field that differs, never does. Complaint
+// answers do not change: a push is sent after the action commits and
+// changes nothing in its response.
+// ---------------------------------------------------------------------
+
+/** D14: the routes added for phone notifications. */
+export const D14_PUSH_ROUTES: readonly string[] = [
+  'POST /api/push/subscriptions',
+  'DELETE /api/push/subscriptions',
+];
+
+/** D14 for one difference: a push route, or one of its cases, added in the run. */
+export function pushRouteIdFor(d: Difference): string | null {
+  if (d.kind !== 'route-only-in-run' && d.kind !== 'case-only-in-run') return null;
+  return D14_PUSH_ROUTES.includes(splitKey(d.key).route) ? 'D14' : null;
+}
+
+/**
+ * Plan 6.3.2, every listed entry appears: neither D14 route is in the
+ * baseline, so each must show as added. One line per miss.
+ */
+export function missingPushRoutes(diffs: readonly Difference[]): string[] {
+  const added = new Set(
+    diffs.filter((d) => d.kind === 'route-only-in-run' && pushRouteIdFor(d)).map((d) => d.key),
+  );
+  return D14_PUSH_ROUTES.filter((r) => !added.has(r)).map(
+    (r) => `D14 lists ${r} as added, but the comparison did not find it new`,
+  );
+}
+
 /** The id of the intended difference this one is, or null when it is unexplained. */
 export function intendedIdFor(d: Difference, world?: IntendedWorld): string | null {
   if ((d.kind === 'route-only-in-run' || d.kind === 'case-only-in-run') && isNewSystemRoute(d.key)) return 'D7';
@@ -615,6 +651,8 @@ export function intendedIdFor(d: Difference, world?: IntendedWorld): string | nu
   if (d5) return d5;
   const d10 = removedRouteIdFor(d);
   if (d10) return d10;
+  const d14 = pushRouteIdFor(d);
+  if (d14) return d14;
   const d11 = optionalFieldsIdFor(d, world);
   if (d11) return d11;
   const d13 = rootCauseIdFor(d, world);
@@ -773,7 +811,8 @@ export function switchOverIdFor(d: Difference, world: IntendedWorld): string | n
  * D8, D9 and D10, which came after that build (migration 0013; the
  * removed report routes), the complaint title's D7 (`title` only)
  * and D11 (migration 0014), and D12 and D13 with the root cause's D7
- * (7 Oct 2026; migration 0015). Anything
+ * (7 Oct 2026; migration 0015), and D14 (13 Oct 2026; the push
+ * routes, migration 0017). Anything
  * else, including a difference that would be D1 or D7 against the old
  * baseline, is unmatched.
  */
@@ -785,6 +824,7 @@ export function matchSwitchOnly(diffs: readonly Difference[], world: IntendedWor
       switchOverIdFor(d, world) ??
       approvalsIdFor(d, world) ??
       removedRouteIdFor(d) ??
+      pushRouteIdFor(d) ??
       titleOnlyIdFor(d) ??
       optionalFieldsIdFor(d, world) ??
       languageIdFor(d, world) ??

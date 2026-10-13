@@ -18,6 +18,7 @@ import { LocationsModule } from './locations/locations.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { PickModule } from './pick/pick.module';
 import { ProjectsModule } from './projects/projects.module';
+import { PushModule } from './push/push.module';
 import { SitesModule } from './sites/sites.module';
 import { ReportsModule } from './reports/reports.module';
 import { UsersModule } from './users/users.module';
@@ -40,6 +41,7 @@ import { UsersModule } from './users/users.module';
     ComplaintCategoriesModule,
     ComplaintsModule,
     NotificationsModule,
+    PushModule,
     PickModule,
   ],
   providers: [

@@ -1,10 +1,12 @@
 import { Module } from '@nestjs/common';
 
+import { PushModule } from '../push/push.module';
 import { ComplaintsController } from './complaints.controller';
 import { ComplaintsService } from './complaints.service';
 import { initPhotoStorage } from './photo-storage';
 
-@Module({ controllers: [ComplaintsController], providers: [ComplaintsService] })
+// PushModule: phone notifications after raise, resolve and reassign.
+@Module({ imports: [PushModule], controllers: [ComplaintsController], providers: [ComplaintsService] })
 export class ComplaintsModule {
   /**
    * Chooses where photos are stored (R2 or disk) while the app is being

@@ -64,6 +64,7 @@ import {
   missingApprovals,
   missingLanguage,
   missingOptionalFields,
+  missingPushRoutes,
   missingRemovals,
   missingRootCause,
   missingSwitchOver,
@@ -411,6 +412,8 @@ if (require.main === module) {
       // resolve without a root cause was refused for someone who may resolve.
       if (!opts.only) missing.push(...missingLanguage(differences, intendedWorld));
       if (!opts.only) missing.push(...missingRootCause(differences, intendedWorld));
+      // D14: both push routes are new in every run.
+      if (!opts.only) missing.push(...missingPushRoutes(differences));
 
       if (approvalsMissing.length) {
         process.stdout.write(`FAIL: ${approvalsMissing.length} D8/D9 change(s) missing.\n`);
