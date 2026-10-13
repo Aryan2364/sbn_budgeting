@@ -2,7 +2,7 @@
 
 import * as React from "react"
 
-import { detectPlatform, isInstalledApp, onInstalledAppChange, type InstallPlatform } from "@/lib/push-device"
+import { detectPlatform, isInstalledApp, onInstalledAppChange, type InstallPlatform } from "@/lib/install"
 import { useLayout } from "@/lib/layout"
 
 /**
@@ -68,7 +68,7 @@ type PushDevice = {
   supported: boolean
   /** An iPhone or iPad with the app not installed: notifications need it on the home screen first (41.12 rule 5). */
   needsInstall: boolean
-  /** Opened from the home screen (lib/push-device.ts's isInstalledApp — a kit-install.ts stand-in, see that file's header). */
+  /** Opened from the home screen (lib/install.ts's isInstalledApp). */
   installed: boolean
   /** Which phone's settings to describe after a no (More's Notifications row). */
   platform: InstallPlatform
