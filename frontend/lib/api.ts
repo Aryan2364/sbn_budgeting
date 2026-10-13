@@ -204,7 +204,8 @@ export const api = {
   post: <T,>(path: string, body: unknown) => request<T>('POST', path, body),
   patch: <T,>(path: string, body: unknown) => request<T>('PATCH', path, body),
   put: <T,>(path: string, body: unknown) => request<T>('PUT', path, body),
-  delete: <T,>(path: string) => request<T>('DELETE', path),
+  // body: Phase 6b's DELETE /push/subscriptions takes { endpoint }.
+  delete: <T,>(path: string, body?: unknown) => request<T>('DELETE', path, body),
   /**
    * Multipart POST (complaint photos): same auth, timeout and error
    * mapping as every other call; the browser sets the content type.

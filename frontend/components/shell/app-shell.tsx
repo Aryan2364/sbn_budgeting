@@ -21,6 +21,7 @@ import { SidebarBody } from "@/components/shell/sidebar"
 import { TabBar, type PhoneTab } from "@/components/shell/tab-bar"
 import { TopBar } from "@/components/shell/top-bar"
 import { useMyWorkCount } from "@/components/complaints/phone/use-my-work-count"
+import { NotificationOffer } from "@/components/shell/notification-offer"
 import {
   DESKTOP_QUERY,
   useIsDesktop,
@@ -240,6 +241,10 @@ function AppShell({ children }: { children: React.ReactNode }) {
             </PhoneRouteGate>
           </main>
           {phone ? <ShellTabBar /> : null}
+          {/* Plan-phone Phase 6b, L13: the first-open notification offer,
+              phone only, mounted once (never on Login: AppShell wraps
+              only app/(app)). */}
+          {phone ? <NotificationOffer /> : null}
         </div>
       </BandScope>
     </div>

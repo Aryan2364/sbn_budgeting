@@ -68,6 +68,7 @@ jobs:
           # talks to the same origin it was loaded from.
           build-args: |
             NEXT_PUBLIC_API_URL=https://sbn.rgbindia.com/api
+            NEXT_PUBLIC_VAPID_PUBLIC_KEY=${{ vars.NEXT_PUBLIC_VAPID_PUBLIC_KEY }}
           # Speed up repeat builds by caching layers in GitHub Actions.
           cache-from: type=gha,scope=${{ matrix.name }}
           cache-to: type=gha,mode=max,scope=${{ matrix.name }}
