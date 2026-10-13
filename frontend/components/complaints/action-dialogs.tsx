@@ -5,6 +5,12 @@ import { CircleAlertIcon, RefreshCwIcon } from "lucide-react"
 
 import { ApiError, pick } from "@/lib/api"
 import { complaintsApi, type ComplaintDetail } from "@/lib/complaints-api"
+import { useLayout } from "@/lib/layout"
+import { useDraft } from "@/lib/drafts"
+import { fieldKeyboard } from "@/lib/field-keyboard"
+import { useSession } from "@/components/shell/session"
+import { refreshMyWorkCount } from "@/components/complaints/phone/use-my-work-count"
+import { DraftBanner } from "@/components/ui/draft-banner"
 import { Banner, BannerAction, BannerDescription, BannerTitle } from "@/components/ui/banner"
 import { Button } from "@/components/ui/button"
 import {
@@ -24,7 +30,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { ctrlEnterSaves } from "@/components/ui/keyboard-shortcuts"
 import { useUnsavedChanges } from "@/components/ui/unsaved-changes"
 import { Choice } from "@/components/complaints/choice"
-import { GU_COMMON, GU_UNSAVED_FORM, GU_UPLOAD, guError } from "@/components/complaints/gu"
+import { GU_COMMON, GU_PHONE, GU_UNSAVED_FORM, GU_UPLOAD, guError } from "@/components/complaints/gu"
 
 /**
  * The state-changing actions that need input: Resolve and Reassign.
@@ -44,9 +50,25 @@ import { GU_COMMON, GU_UNSAVED_FORM, GU_UPLOAD, guError } from "@/components/com
  * arrive in Gujarati too.
  */
 
+/**
+ * Phase 3b (plan-phone risk, section "Risks" of Phase 2): these width
+ * breakpoints were the dialog's OWN full-screen mechanism, for a narrow
+ * DESKTOP window. On an actual phone, dialog.tsx's own phone form (a
+ * full-screen layer, 41.8 rule 10) already does this job, so both must
+ * never apply together. `useLayout()` (never a width query) decides
+ * which one is live: these classes apply only off the phone layout; data-
+ * layout="phone" on <html> is a mount-time constant (41.2 rule 3), so the
+ * hook, not a second className, is what turns them off.
+ */
 const PHONE_SHEET =
   "max-sm:h-dvh max-sm:max-h-dvh max-sm:w-full max-sm:max-w-none max-sm:rounded-none"
 const PHONE_TEXT = "max-sm:text-base"
+
+/** The classes above, or none at all in the phone layout. */
+function useDesktopNarrowClass(cls: string): string | undefined {
+  const { layout } = useLayout()
+  return layout === "phone" ? undefined : cls
+}
 
 /** The API's limit on a root cause (ResolveDto; migration 0015). */
 const MAX_ROOT_CAUSE = 2000
@@ -150,6 +172,8 @@ function ActionFrame({
   onSubmit,
   failure,
   onRefresh,
+  banner,
+  onLeave,
   children,
 }: {
   title: string
@@ -164,8 +188,14 @@ function ActionFrame({
   onSubmit: () => void
   failure: Failure | null
   onRefresh: () => void
+  /** Phase 3b: a DraftBanner, shown above the failure banner. */
+  banner?: React.ReactNode
+  /** 41.7 rule 15: the dialog's own draft.clear(), run on Leave. */
+  onLeave?: () => void
   children: React.ReactNode
 }) {
+  const { layout } = useLayout()
+  const phone = layout === "phone"
   // Nothing is kept until the action is submitted, so the create
   // wording: "Leave this form?" (KIT-PENDING-leave-warning.md).
   const unsaved = useUnsavedChanges({
@@ -173,6 +203,7 @@ function ActionFrame({
     noun: "form",
     mode: "create",
     text: GU_UNSAVED_FORM,
+    onLeave,
   })
   const setOpen = (open: boolean) => {
     if (!open) onClose()
@@ -182,12 +213,13 @@ function ActionFrame({
     <>
       {unsaved.warning}
       <Dialog open onOpenChange={unsaved.guard(setOpen)}>
-        <DialogContent size="md" className={PHONE_SHEET}>
+        <DialogContent size="md" className={useDesktopNarrowClass(PHONE_SHEET)}>
           <DialogHeader>
             <DialogTitle>{title}</DialogTitle>
           </DialogHeader>
           <DialogBody className="flex flex-col gap-6">
             <DialogDescription>{description}</DialogDescription>
+            {banner}
             <FailureBanner failure={failure} onRefresh={onRefresh} />
             <form
               id={formId}
@@ -201,16 +233,22 @@ function ActionFrame({
               {children}
             </form>
           </DialogBody>
-          <DialogFooter className="max-sm:grid max-sm:grid-cols-2">
-            <Button
-              type="button"
-              variant="secondary"
-              size="lg"
-              disabled={saving}
-              onClick={() => unsaved.guard(setOpen)(false)}
-            >
-              {GU_COMMON.cancel}
-            </Button>
+          <DialogFooter className={useDesktopNarrowClass("grid grid-cols-2")}>
+            {/* 41.7 rule 3: on phone Cancel is the back arrow, which
+                already runs through onOpenChange above (sheet.tsx), so a
+                second Cancel here would duplicate it and break the
+                full-screen layer's one-button action bar (plan 5.5). */}
+            {phone ? null : (
+              <Button
+                type="button"
+                variant="secondary"
+                size="lg"
+                disabled={saving}
+                onClick={() => unsaved.guard(setOpen)(false)}
+              >
+                {GU_COMMON.cancel}
+              </Button>
+            )}
             <Button type="submit" form={formId} size="lg" disabled={saving || submitDisabled}>
               {saving ? savingLabel : submitLabel}
             </Button>
@@ -247,6 +285,7 @@ function NoteField({
   rows?: number
 }) {
   const hintId = `${id}-hint`
+  const { layout } = useLayout()
   return (
     <div className="flex flex-col gap-2">
       <Label htmlFor={id} required={required}>
@@ -256,14 +295,17 @@ function NoteField({
         id={id}
         rows={rows}
         value={value}
-        autoFocus={autoFocus}
+        // 41.7 rule 17: no field is focused on open on phone (the resolve
+        // dialog's root cause autofocuses on desktop only).
+        autoFocus={autoFocus && layout !== "phone"}
         maxLength={maxLength}
         aria-invalid={Boolean(error) || undefined}
         aria-describedby={hint && !error ? hintId : undefined}
         onChange={(event) => onChange(event.target.value)}
         onBlur={onBlur}
         onKeyDown={ctrlEnterSaves}
-        className={PHONE_TEXT}
+        className={useDesktopNarrowClass(PHONE_TEXT)}
+        {...fieldKeyboard("longText")}
       />
       {hint && !error ? (
         <p id={hintId} className="text-label text-text-secondary">
@@ -281,6 +323,7 @@ function NoteField({
 // ---------------------------------------------------------------
 
 export function ResolveDialog({ complaint, onClose, onDone, onRefresh }: ActionDialogProps) {
+  const { user } = useSession()
   const [rootCause, setRootCause] = React.useState("")
   const [note, setNote] = React.useState("")
   const [photos, setPhotos] = React.useState<FileUploadItem[]>([])
@@ -289,6 +332,20 @@ export function ResolveDialog({ complaint, onClose, onDone, onRefresh }: ActionD
   const [photoError, setPhotoError] = React.useState<string | null>(null)
   const [saving, setSaving] = React.useState(false)
   const [failure, setFailure] = React.useState<Failure | null>(null)
+
+  // Plan-phone D6: the draft never includes photos (Blobs are excluded
+  // by useDraft itself; `exclude` is for named fields, not needed here).
+  const draftValues = React.useMemo(() => ({ rootCause, note }), [rootCause, note])
+  const draft = useDraft({
+    person: user?.id,
+    form: "complaint-resolve",
+    record: complaint.id,
+    values: draftValues,
+    changed: rootCause.trim() !== "" || note.trim() !== "",
+    recordUpdatedAt: complaint.events[0]
+      ? [...complaint.events].sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime())[0].at
+      : undefined,
+  })
 
   const checkRootCause = (text = rootCause) => {
     const value = text.trim()
@@ -318,6 +375,11 @@ export function ResolveDialog({ complaint, onClose, onDone, onRefresh }: ActionD
         { resolutionNote: note.trim(), rootCause: rootCause.trim() },
         filesToSend(photos),
       )
+      // 41.7 rule 15: a draft is deleted once the action it was kept for
+      // succeeds. Plan-phone D10: My work's count drops once this
+      // complaint is no longer open.
+      draft.clear()
+      void refreshMyWorkCount()
       onDone(next, GU.resolved(next.reference))
     } catch (caught) {
       setFailure(failureFrom(caught))
@@ -339,6 +401,19 @@ export function ResolveDialog({ complaint, onClose, onDone, onRefresh }: ActionD
       onSubmit={submit}
       failure={failure}
       onRefresh={onRefresh}
+      onLeave={draft.clear}
+      banner={
+        draft.offer ? (
+          <DraftBanner
+            draft={draft}
+            onUse={(kept) => {
+              if (typeof kept.rootCause === "string") setRootCause(kept.rootCause)
+              if (typeof kept.note === "string") setNote(kept.note)
+            }}
+            text={{ ...GU_PHONE.draft, note: GU_PHONE.draft.photosNotKept }}
+          />
+        ) : undefined
+      }
     >
       {/* 11.3: why it happened, then what was done about it, then the
           proof. Labels above, required ones starred, hints below. */}

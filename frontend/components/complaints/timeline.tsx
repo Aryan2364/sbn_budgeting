@@ -128,6 +128,24 @@ function noteOf(event: ComplaintEvent): string | null {
   return event.note
 }
 
+/**
+ * Phase 3b: a pure, exported form of one event's line, icon, note and
+ * root cause, shared by the desktop Timeline below and the phone record's
+ * ActivityList (record-summary.tsx), so both describe an event the same
+ * way with no change to desktop's own rendering.
+ */
+function eventLine(event: ComplaintEvent): {
+  icon: React.ReactNode
+  text: string
+  note: string | null
+  rootCause: string | null
+} {
+  const { icon, text } = describe(event)
+  return { icon, text, note: noteOf(event), rootCause: rootCauseOf(event) }
+}
+
+export { eventLine }
+
 export function Timeline({
   events,
   comment,
