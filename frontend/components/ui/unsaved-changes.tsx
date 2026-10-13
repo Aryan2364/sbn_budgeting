@@ -180,6 +180,42 @@ type Options = {
 /** Marks a control that leaves the page without being a link (the phone's back arrow). */
 const LEAVES_PAGE = "[data-leaves-page]"
 
+/*
+ * THE PAGE-WIDE MARK. How many forms on the page have unsaved changes
+ * right now, kept by every useUnsavedChanges while its `changed` is true,
+ * and read through useAnyUnsavedChanges below. The new-version banner
+ * (41.14 rule 11, components/ui/connection-banner.tsx) never shows while
+ * it is above zero: "Reload" would throw the changes away, so the banner
+ * waits until the person leaves the form (it unmounts) or saves it.
+ */
+let unsavedForms = 0
+const unsavedListeners = new Set<() => void>()
+
+function subscribeUnsaved(listener: () => void) {
+  unsavedListeners.add(listener)
+  return () => {
+    unsavedListeners.delete(listener)
+  }
+}
+
+function countUnsaved(delta: 1 | -1) {
+  unsavedForms = Math.max(0, unsavedForms + delta)
+  unsavedListeners.forEach((listener) => listener())
+}
+
+/**
+ * True while any form on the page has unsaved changes: any mounted
+ * useUnsavedChanges whose `changed` is true. False on the server and while
+ * hydrating, as nothing is changed yet then.
+ */
+function useAnyUnsavedChanges(): boolean {
+  return React.useSyncExternalStore(
+    subscribeUnsaved,
+    () => unsavedForms > 0,
+    () => false
+  )
+}
+
 /**
  * Set while Leave re-clicks a data-leaves-page control, so it passes - the
  * listener of every useUnsavedChanges on the page, not only the one that
@@ -216,6 +252,14 @@ function useUnsavedChanges({ changed, noun, mode = "edit", text, onLeave }: Opti
     pending.current = { leave, navigates }
     setOpen(true)
   }, [])
+
+  // The page-wide mark (above): counted while changed, and no longer once
+  // saved, put back, or unmounted.
+  React.useEffect(() => {
+    if (!changed) return
+    countUnsaved(1)
+    return () => countUnsaved(-1)
+  }, [changed])
 
   React.useEffect(() => {
     if (!changed) return
@@ -333,4 +377,10 @@ function useUnsavedChanges({ changed, noun, mode = "edit", text, onLeave }: Opti
   return { warning, guard, changed }
 }
 
-export { useUnsavedChanges, isChanged, type UnsavedChangesMode, type UnsavedChangesText }
+export {
+  useUnsavedChanges,
+  useAnyUnsavedChanges,
+  isChanged,
+  type UnsavedChangesMode,
+  type UnsavedChangesText,
+}

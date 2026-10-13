@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/banner"
 import { Button } from "@/components/ui/button"
 import { EmptyState } from "@/components/ui/empty-state"
+import { useAnyUnsavedChanges } from "@/components/ui/unsaved-changes"
 import type { Product } from "@/components/templates/sign-in-page"
 
 /**
@@ -38,12 +39,10 @@ import type { Product } from "@/components/templates/sign-in-page"
  *
  * THE NEW-VERSION BANNER (41.14 rule 11). When a new release is waiting
  * (lib/service-worker.ts), a neutral banner says "A new version is
- * ready", with "Reload". TODO (reported, see Phase 5 handback): ideally
- * it never shows while a form on the page has unsaved changes
- * (useAnyUnsavedChanges from components/ui/unsaved-changes.tsx), which is
- * a Phase-2-owned file this phase does not edit; until that hook exists
- * here the banner can show over an unsaved form, same as the kit would
- * without it. It reports rather than explains, so it can be closed; the
+ * ready", with "Reload". It never shows while a form on the page has
+ * unsaved changes (useAnyUnsavedChanges, components/ui/unsaved-changes.tsx):
+ * Reload would lose them, so it waits until the person leaves or saves
+ * the form. It reports rather than explains, so it can be closed; the
  * close lasts for this opening of the app only.
  *
  * ONE AT A TIME: offline first, then the new version, never both. Each is
@@ -189,10 +188,11 @@ function ConnectionBanner({ className, text }: { className?: string; text?: Part
   const online = useOnline()
   const { updateReady, reload } = useServiceWorker()
   const closed = useUpdateClosed()
+  const unsaved = useAnyUnsavedChanges()
 
   if (!phone) return null
   if (!online) return <OfflineBanner className={className} text={text} />
-  if (updateReady && !closed) {
+  if (updateReady && !unsaved && !closed) {
     return <UpdateBanner className={className} reload={reload} text={text} />
   }
   return null
