@@ -1,6 +1,13 @@
 import { mergeProps } from "@base-ui/react/merge-props"
 import { useRender } from "@base-ui/react/use-render"
 import { cva, type VariantProps } from "class-variance-authority"
+import {
+  CheckIcon,
+  CircleDashedIcon,
+  OctagonXIcon,
+  TriangleAlertIcon,
+  type LucideIcon,
+} from "lucide-react"
 
 import type * as React from "react"
 
@@ -14,7 +21,7 @@ import { cn } from "@/lib/utils"
  *
  * Section 7.2 rule 1: every status badge carries an icon as well as a
  * colour, because colour alone is invisible to colour-blind users.
- * The caller passes the icon as the first child.
+ * The caller passes the icon as the first child: STATUS_ICON's, below.
  *
  * `neutral` is section 2.4's fourth status row: Draft, Inactive,
  * Deactivated, Cancelled, Archived - a record that is simply not in use
@@ -54,6 +61,21 @@ const badgeVariants = cva(
     },
   }
 )
+
+/**
+ * Section 7.2 rule 1: the icon each status role carries, one per row of
+ * 2.4's table, so every screen draws the same icon for the same meaning
+ * and none chooses its own. Pass it as the badge's first child:
+ *
+ *   const Icon = STATUS_ICON.danger
+ *   <Badge variant="danger"><Icon />Overdue</Badge>
+ */
+const STATUS_ICON: Record<"success" | "warning" | "danger" | "neutral", LucideIcon> = {
+  success: CheckIcon,
+  warning: TriangleAlertIcon,
+  danger: OctagonXIcon,
+  neutral: CircleDashedIcon,
+}
 
 function Badge({
   className,
@@ -117,4 +139,4 @@ function Count({
   )
 }
 
-export { Badge, Count, badgeVariants }
+export { Badge, Count, badgeVariants, STATUS_ICON }

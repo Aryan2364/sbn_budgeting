@@ -9,6 +9,7 @@ import { SignInPage, type SignInResult } from "@/components/templates/sign-in-pa
 import { usePermissions } from "@/lib/permissions"
 import { errorMessage, useSession } from "@/components/shell/session"
 import { useHomeHref } from "@/components/shell/use-module"
+import { useLayout } from "@/lib/layout"
 
 /**
  * Sign in (FRONTEND_RULES.md section 11.7), by email OR phone
@@ -31,6 +32,9 @@ function LoginForm() {
   const home = useHomeHref()
   const router = useRouter()
   const params = useSearchParams()
+  // 41.7 rule 17: on phone no field takes focus on opening, so the
+  // keyboard never covers the screen unasked. Desktop keeps it.
+  const { layout } = useLayout()
 
   // Signed in (just now, or already): go where they meant, or to the
   // first place their permissions open. Not before the permissions have
@@ -59,7 +63,7 @@ function LoginForm() {
   return (
     <SignInPage
       identifier="email-or-phone"
-      autoFocus
+      autoFocus={layout === "desktop"}
       product={{ name: "Sadbhavna", mark: <TreePineIcon /> }}
       headline="Every site and complaint, in one place"
       highlight="in one place"

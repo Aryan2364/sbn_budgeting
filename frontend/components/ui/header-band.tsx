@@ -63,11 +63,23 @@ function useBandLevel() {
  * business and an extra `<div>` in the tree would break the flex and
  * grid arrangements these components rely on.
  */
-function BandScope({ children }: { children: React.ReactNode }) {
+function BandScope({
+  children,
+  active = true,
+}: {
+  children: React.ReactNode
+  /**
+   * False passes the level through unchanged. For a wrapper that bands
+   * only sometimes - the phone shell's scope (41.4 rule 1) - so the
+   * element stays in the tree either way and nothing below it remounts
+   * when it switches (41.2 rule 3).
+   */
+  active?: boolean
+}) {
   const level = useBandLevel()
 
   return (
-    <BandLevelContext.Provider value={level + 1}>
+    <BandLevelContext.Provider value={active ? level + 1 : level}>
       {children}
     </BandLevelContext.Provider>
   )
@@ -134,8 +146,25 @@ function HeaderBand({
         // icon button on a band, and a border-box minimum of 36px
         // leaves it hanging 9px past the band onto the surface below.
         // Measured in the dialog before the token existed.
-        "flex min-h-band shrink-0 items-center justify-between gap-3 px-4 py-2",
+        "phone:relative flex min-h-band shrink-0 items-center justify-between gap-3 px-4 py-2",
         bandClasses(level),
+        // The band's bottom rule takes NO height. As a border it ate 1px
+        // (2px in the accent form) of the band's own minimum, so a band
+        // holding an in-flow icon button (a card's three-dot menu) came
+        // out 53px against 52px for every band without one - 36.3's one
+        // row at two heights, measured on /kitchen-sink. On phone it was
+        // 62px against 60px. On the solid band the rule is the fill's
+        // own colour, so it is simply dropped; the accent form's 2px
+        // primary rule (5.3) is drawn over the bottom padding instead.
+        //
+        // TRACKING: phone layout only (phone: variant). On desktop this
+        // kit fix moved every band's title by a pixel, and plan-phone
+        // section 10 allows no desktop pixel to change in this round, so
+        // desktop keeps its bordered band until the owner takes the fix
+        // there on purpose.
+        "phone:border-b-0",
+        level > 1 &&
+          "phone:after:pointer-events-none phone:after:absolute phone:after:inset-x-0 phone:after:bottom-0 phone:after:h-0.5 phone:after:bg-primary",
         className
       )}
       {...props}

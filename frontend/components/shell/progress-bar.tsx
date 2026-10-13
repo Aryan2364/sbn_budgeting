@@ -47,6 +47,16 @@ function useProgress(): ProgressApi {
   return api
 }
 
+/**
+ * The same, or null where no ProgressProvider is above. For code that
+ * may run outside the shell and drives the bar only where there is one:
+ * the phone's back arrow (lib/back.ts), whose app bar a full-screen
+ * dialog can also draw (41.8 rule 10).
+ */
+function useOptionalProgress(): ProgressApi | null {
+  return React.useContext(ProgressContext)
+}
+
 function ProgressProvider({ children }: { children: React.ReactNode }) {
   const router = useRouter()
   const [isNavigating, startTransition] = React.useTransition()
@@ -211,5 +221,5 @@ const ShellLink = React.forwardRef<HTMLAnchorElement, ShellLinkProps>(
   }
 )
 
-export { ProgressProvider, ProgressBar, ShellLink, useProgress }
+export { ProgressProvider, ProgressBar, ShellLink, useProgress, useOptionalProgress }
 export type { ProgressApi }

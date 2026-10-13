@@ -18,5 +18,14 @@ import { usePageGuard } from "@/lib/permissions"
  */
 export default function ComplaintsLayout({ children }: { children: React.ReactNode }) {
   const denied = usePageGuard(MODULE_KEYS.complaints)
-  return <>{denied ?? children}</>
+  // Plan-phone D9: the Complaints area is Gujarati on both layouts, and
+  // says so in the server's HTML, before DocumentLanguage (in the shell)
+  // sets <html lang>. display: contents, so the box adds nothing to the
+  // layout: each page's frame, and on phone its PageHeader's sticky app
+  // bar, behave exactly as if the wrapper were not there.
+  return (
+    <div lang="gu" className="contents">
+      {denied ?? children}
+    </div>
+  )
 }

@@ -18,6 +18,12 @@
    it last visit. (Tracking.) */
 @custom-variant rail (html[data-sidebar="collapsed"] &);
 
+/* The phone layout - section 41. `phone:` applies a utility only inside
+   html[data-layout="phone"], so a phone-only class can never reach the
+   desktop layout. Used for what a token cannot express, such as a fixed
+   height becoming a minimum where text can wrap (41.9 rule 7). */
+@custom-variant phone (&:where([data-layout="phone"], [data-layout="phone"] *));
+
 /* ============================================================
    TOKENS - AGENTS.md section 2.1
    This is the only file in the project that contains a colour.
@@ -161,10 +167,38 @@
   --radius-tick: 4px;
 
   /* Control heights - 6.2. Height is fixed; width grows with the
-     label, height never does. */
+     label, height never does. The phone layout raises all three to
+     44px (41.9 rule 2) in the PHONE LAYOUT block below. */
   --h-control: 36px;
   --h-control-sm: 32px;
   --h-control-lg: 40px;
+
+  /* The icon button INSIDE a field - 6.2's exception, 6.3.1. Its own
+     token, not --h-control-sm: that is the SMALL BUTTON's height, which
+     the phone raises to 44px (41.9 rule 2), and a 44px button cannot sit
+     inside a 44px field. The phone sets this to 36px (41.9 rule 2).
+     Used as size-icon-in-field by button.tsx's icon-sm, and by the
+     buttons input-group.tsx and input.tsx put inside a field. */
+  --h-icon-in-field: 32px;
+
+  /* Section 17 rule 2: a single-line field never exceeds this. Read
+     through var() by max-w-field-max, so the phone layout can lift it. */
+  --field-max: 480px;
+
+  /* The type scale - section 3. The sizes live here, not in @theme
+     inline below: @theme inline writes a literal value straight into
+     each utility, so a phone override (41.9) could never reach it. The
+     utilities read these through var() instead. Named --type-*, never
+     --text-*, so no type token shares a name with a colour token (4.1).
+     Line heights stay in @theme inline: they are unitless and scale
+     with the size. */
+  --type-display: 40px;
+  --type-page-title: 30px;
+  --type-section: 20px;
+  --type-card-heading: 16px;
+  --type-body: 14px;
+  --type-label: 13px;
+  --type-meta: 12px;
 
   /* Tap area on a touch screen - 9 rule 4. The visible size stays at
      6.2; only the invisible extension of the tap-area utility grows. */
@@ -203,6 +237,144 @@
   /* Board - 35.6.1. A press that moves this far is a drag; less is a
      click. Read by board.tsx at runtime. */
   --drag-threshold: 5px;
+
+  /* Safe areas - 41.13 rules 1 to 3. The space each phone reserves for
+     its status bar, notch, camera hole and navigation bar, as the phone
+     REPORTS it (viewport-fit=cover is set in app/layout.tsx). These are
+     measurements the device hands us, not spacing the kit chooses, so
+     section 1 rule 9's scale does not apply to them. 0px wherever
+     nothing is reported - a computer, or a phone with no gesture or
+     button bar - and the layout never assumes a size (41.13 rule 3).
+     Used as pt-safe-top, pb-safe-bottom and so on. */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+
+  /* The on-screen keyboard - 41.13 rule 6. 0px while it is closed. On
+     iPhone, which ignores interactive-widget=resizes-content, the shared
+     hook in lib/keyboard.ts measures the visible area (VisualViewport)
+     and writes the live height inline on <html> while the keyboard is
+     open, and sets html[data-keyboard="open"]. On Android the visible
+     area itself shrinks, so this stays 0px there. A measurement, like
+     the safe areas: not on the 5.1 scale. */
+  --keyboard-inset: 0px;
+
+  /* ------------------------------------------------------------
+     BOTTOM BARS - THE CONTRACT. Fixed here once, so the tab bar, the
+     action bar, toasts and sheets never edit this file for it.
+
+     --h-tab-bar     41.4 rule 12: 56px, its 1px top line included,
+                     the bottom safe area NOT included.
+     --h-action-bar  41.6 rule 7: one control, 12px (space-3) padding
+                     above and below, a 1px top line. The bottom safe
+                     area NOT included. The 12px is written as the
+                     expression the py-3 utility compiles to, so the
+                     bar's padding and this height cannot drift apart.
+                     Follows --h-control, so it is 69px on phone.
+     --bottom-bar    The height of the fixed bar CURRENTLY at the bottom
+                     of the screen. 0px when there is none.
+
+     Who sets what: NOBODY. --bottom-bar is worked out below from what
+     is actually in the page, by CSS alone, so it is right in the
+     server's HTML and can never go stale when a bar unmounts (an
+     effect-set attribute did both). A fixed bottom bar only marks
+     itself: data-fixed-bottom="tab-bar" on the tab bar,
+     data-fixed-bottom="action-bar" on the action bar (stage 4) and on a
+     full-screen dialog's footer (stage 3).
+     - Below the top level the tab bar is hidden (41.4 rule 11), so it
+       takes no height; an action bar there takes its own.
+     - While the keyboard is open the tab bar is not rendered at all
+       (41.4 rule 19), so it takes no height. The action bar stays,
+       sitting ON the keyboard (41.7 rule 4), so it keeps its height.
+     - Anything that floats above the bottom bar - toasts (41.8 rule
+       12), sheets (41.8 rule 4) - sits at
+         var(--bottom-bar) + var(--safe-bottom) + var(--keyboard-inset)
+       from the bottom of the screen, and reads nothing else.
+     Each bar adds the bottom safe area as its own padding; neither
+     height above includes it.
+     - While the keyboard is open, --safe-bottom is 0px (below): the
+       keyboard covers the home indicator, and a bar padded by it would
+       float 34px above the keyboard on iPhone instead of sitting
+       directly on it (41.7 rule 4). */
+  --h-tab-bar: 56px;
+  --h-action-bar: calc(var(--h-control) + 2 * calc(var(--spacing) * 3) + 1px);
+  --bottom-bar: 0px;
+}
+
+html[data-layout="phone"]:has([data-fixed-bottom="tab-bar"]) {
+  --bottom-bar: var(--h-tab-bar);
+}
+/* Below the top level the tab bar is in the page but hidden (41.4 rule
+   11, the PHONE SHELL block further down), unless an action bar is
+   there to take its place. */
+html[data-layout="phone"]:has([data-slot="app-bar"][data-below-top]):not(:has([data-fixed-bottom="action-bar"])) {
+  --bottom-bar: 0px;
+}
+html[data-layout="phone"]:has([data-fixed-bottom="action-bar"]) {
+  --bottom-bar: var(--h-action-bar);
+}
+/* iPhone keeps reporting the home indicator's inset while the keyboard
+   covers it. Everything padded by --safe-bottom - bars, sheets, toasts -
+   sits on the keyboard instead (41.7 rule 4, 41.8 rule 4). */
+html[data-keyboard="open"] {
+  --safe-bottom: 0px;
+}
+
+/* ------------------------------------------------------------
+   PHONE LAYOUT - section 41.9 rules 2, 3 and 5 to 7.
+   data-layout on <html> is "phone" or "desktop", set by the server for
+   the first paint and confirmed by useLayout() (41.2 rule 3). Every
+   phone value is a TOKEN override here, never a per-component class
+   (41.9 rule 3, 3 rule 8). Nothing in this block reaches the desktop
+   layout: a desktop page computes exactly what it did before it.
+
+   Rem, not px, so every size grows with the phone's text-size setting
+   (41.9 rule 7). At 16px to the rem these are the 41.9 table's values;
+   on iPhone, with the system body font below, 1rem is 17px and they
+   come out about 6% larger. That is accepted by 41.9 rule 7. Turning
+   fixed heights into minimum heights, so a control grows taller at the
+   largest text setting instead of clipping, is stage 3's component
+   work, not this block's.
+   ------------------------------------------------------------ */
+:root[data-layout="phone"] {
+  /* 41.9 rule 2: every button size, inputs, select triggers and tabs at
+     least 44px, visibly. Icon buttons follow through size-control. The
+     band (--spacing-band), the menu cap (--menu-max-height) and the
+     action bar (--h-action-bar) are derived from --h-control and follow
+     by themselves. */
+  --h-control: 2.75rem;
+  --h-control-sm: 2.75rem;
+  --h-control-lg: 2.75rem;
+
+  /* 41.7 rule 1: every field runs the full width of the content area;
+     section 17's 480px cap does not apply on phone. */
+  --field-max: none;
+
+  /* 41.9 rule 2: an icon button inside a field is 36 by 36 - inside a
+     44px field, 4px clear above and below. */
+  --h-icon-in-field: 2.25rem;
+
+  /* The 41.9 type table. Weights and colours are unchanged (41.9 rule
+     6). Display is not used on phone (41.9 rule 6), so it keeps its
+     desktop value. Body is 16px, and every field's text is set in body,
+     so no field's text is under 16px and iPhone never zooms in when
+     one is tapped (41.9 rule 5). */
+  --type-page-title: 1.25rem;
+  --type-section: 1.125rem;
+  --type-card-heading: 1rem;
+  --type-body: 1rem;
+  --type-label: 0.875rem;
+  --type-meta: 0.75rem;
+
+  /* Section 5.1: the spacing scale is px. Tailwind writes every p-*,
+     gap-* and size-* through --spacing, which it sets in rem, and on
+     iPhone the system body font below makes the rem follow the text-size
+     setting - at the largest setting p-4 would be over 50px and eat a
+     third of a 320px screen. 41.9 rule 7 grows type and controls with
+     the setting, not the space between things, so spacing is pinned to
+     px here. At the default 16px rem this is exactly what it was. */
+  --spacing: 4px;
 }
 
 /* Shadows - 5.4, and the two easings of 5.6.
@@ -230,6 +402,11 @@
    must become a LIGHTER teal (around #4a9a94) carrying dark text;
    the light-theme primary nearly disappears on a dark ground.
    Do not build this until explicitly asked.
+
+   41.13 rule 12: the phone layout is light whatever the phone's own
+   setting. Nothing here follows prefers-color-scheme, and app/layout.tsx
+   declares colorScheme light, so the browser's own parts (scrollbars it
+   still draws, form controls, the autofill paint) stay light too.
    ------------------------------------------------------------ */
 
 /* ------------------------------------------------------------
@@ -266,43 +443,65 @@
 }
 
 @theme inline {
-  /* Type - section 3. Geist. A serif fallback means it has failed. */
-  --font-sans: var(--font-geist-sans);
+  /* Type - section 3. Geist. A serif fallback means it has failed.
+     Gujarati (37.6 rule 4, plan-phone D8): Geist has no Gujarati letters,
+     so Noto Sans Gujarati (app/layout.tsx) follows it in the list. Latin
+     text keeps Geist; only Gujarati letters fall through to Noto. */
+  --font-sans: var(--font-geist-sans), var(--font-gujarati);
   --font-mono: var(--font-geist-mono);
-  --font-heading: var(--font-geist-sans);
+  --font-heading: var(--font-geist-sans), var(--font-gujarati);
 
   /* The type scale, by slot. Display is the sign-in brand panel's
-     headline only (section 3 rule 6), never a page title. */
-  --text-display: 40px;
+     headline only (section 3 rule 6), never a page title. The sizes
+     are read from the --type-* tokens in :root, so the phone layout's
+     overrides (41.9) reach every utility; see the comment there. */
+  --text-display: var(--type-display);
   --text-display--line-height: 1.15;
-  --text-page-title: 30px;
+  --text-page-title: var(--type-page-title);
   --text-page-title--line-height: 1.25;
-  --text-section: 20px;
+  --text-section: var(--type-section);
   --text-section--line-height: 1.3;
-  --text-card-heading: 16px;
+  --text-card-heading: var(--type-card-heading);
   --text-card-heading--line-height: 1.4;
-  --text-body: 14px;
+  --text-body: var(--type-body);
   --text-body--line-height: 1.6;
-  --text-label: 13px;
+  --text-label: var(--type-label);
   --text-label--line-height: 1.5;
-  --text-meta: 12px;
+  --text-meta: var(--type-meta);
   --text-meta--line-height: 1.5;
 
+  /* The phone app bar's title and the tab bar's labels - 41.4 rules 1
+     and 12. The two bars are fixed at 56px and do NOT grow with the
+     phone's text-size setting, so their text is in px, never rem, and
+     truncates on one line instead. The one exception to 41.9 rule 7.
+     The values are the 41.9 table's page title and the tab label. */
+  --text-bar-title: 20px;
+  --text-bar-title--line-height: 1.3;
+  --text-bar-label: 12px;
+  --text-bar-label--line-height: 1.5;
+  /* A text button in the app bar (Select, 41.6 rule 14): the body size
+     of the 41.9 table, fixed like the bar it sits in. */
+  --text-bar-button: 14px;
+  --text-bar-button--line-height: 1.6;
+
   /* Tailwind size names are pinned onto the same scale so nothing
-     in components/ui can land off it. */
-  --text-xs: 12px;
+     in components/ui can land off it. Each reads its SLOT's token, not
+     a copy of the number, so it follows its slot on phone too: xs is
+     meta, sm is body, base is card heading, lg and xl are section
+     heading, 2xl and 3xl are page title. */
+  --text-xs: var(--type-meta);
   --text-xs--line-height: 1.5;
-  --text-sm: 14px;
+  --text-sm: var(--type-body);
   --text-sm--line-height: 1.6;
-  --text-base: 16px;
+  --text-base: var(--type-card-heading);
   --text-base--line-height: 1.4;
-  --text-lg: 20px;
+  --text-lg: var(--type-section);
   --text-lg--line-height: 1.3;
-  --text-xl: 20px;
+  --text-xl: var(--type-section);
   --text-xl--line-height: 1.3;
-  --text-2xl: 30px;
+  --text-2xl: var(--type-page-title);
   --text-2xl--line-height: 1.25;
-  --text-3xl: 30px;
+  --text-3xl: var(--type-page-title);
   --text-3xl--line-height: 1.25;
   --text-4xl: initial;
   --text-5xl: initial;
@@ -338,13 +537,30 @@
   --spacing-control: var(--h-control);
   --spacing-control-sm: var(--h-control-sm);
   --spacing-control-lg: var(--h-control-lg);
+  /* The icon button inside a field - 6.2's exception, 6.3.1, 41.9 rule
+     2. Used as size-icon-in-field. */
+  --spacing-icon-in-field: var(--h-icon-in-field);
+
+  /* Phone measurements - 41.13. Values the phone reports, registered so
+     pt-safe-top, pb-safe-bottom, bottom-keyboard-inset and so on work.
+     Not spacing the kit chooses (1 rule 9): see :root. */
+  --spacing-safe-top: var(--safe-top);
+  --spacing-safe-right: var(--safe-right);
+  --spacing-safe-bottom: var(--safe-bottom);
+  --spacing-safe-left: var(--safe-left);
+  --spacing-keyboard-inset: var(--keyboard-inset);
+
+  /* The bottom bars - the contract is in :root. */
+  --spacing-tab-bar: var(--h-tab-bar);
+  --spacing-action-bar: var(--h-action-bar);
+  --spacing-bottom-bar: var(--bottom-bar);
 
   /* Search field - 11.1: fixed 260 to 320px, never full width. */
   --spacing-search: 280px;
 
   /* Field widths - 17. A field is as wide as the data it holds. */
   --spacing-field-min: 160px;
-  --spacing-field-max: 480px;
+  --spacing-field-max: var(--field-max);
 
   /* Dialog widths - 24. Three exist. */
   --spacing-dialog-sm: 400px;
@@ -356,6 +572,18 @@
   --spacing-sidebar-rail: 64px;
   --spacing-topbar: 56px;
   --spacing-content-max: 1600px;
+  /* 41.13 rule 10: a phone held sideways keeps the phone layout, with
+     the content in a centred column no wider than this. The app bar, tab
+     bar and action bar stay full width. */
+  --spacing-phone-column: 600px;
+  /* 41.4 rule 1: the app bar is fixed at 56px and does not grow with
+     the text-size setting, so its icon buttons are a fixed 44px (the
+     phone tap minimum, 41.9 rule 2) in px, not --h-control's rem. */
+  --spacing-bar-button: 44px;
+  /* 41.5 rule 7: the round add button on a phone list (56px) and the
+     space the list ends with so its last row stays clear of it (88px). */
+  --spacing-fab: 56px;
+  --spacing-list-end: 88px;
 
   /* Settings page menu - 11.5. */
   --spacing-settings-menu: 200px;
@@ -389,7 +617,7 @@
      is a border-box minimum, which left a 39px band with a 36px button
      hanging 9px past its bottom edge onto the surface below. Derived
      from --h-control so it follows if the control height ever moves. */
-  --spacing-band: calc(var(--h-control) + 1rem);
+  --spacing-band: calc(var(--h-control) + var(--spacing) * 4);
 
   /* Table column widths - 17.1. MEASURED, not chosen, the same way
      31.1's grid cell was: the longest realistic value rendered in Geist
@@ -564,9 +792,41 @@
     @apply font-sans;
   }
 
+  /* Large text on iPhone - 41.9 rule 7. iPhone's text-size setting
+     reaches rem only through the system body font: an html element that
+     takes `font: -apple-system-body` gets a root size that follows the
+     setting (17px at the default), so every rem in the phone layout
+     grows with it. The shorthand also sets the family to the system
+     font, so Geist is put back straight after it, IN THE SAME RULE.
+
+     A browser that does not know -apple-system-body (Android, every
+     computer) drops that one declaration as invalid and keeps the
+     font-family after it, so there the root stays the browser's own
+     size and the family is Geist, exactly as on desktop. Scoped to the
+     phone layout, so the desktop root size never moves. */
+  html[data-layout="phone"] {
+    font: -apple-system-body;
+    @apply font-sans;
+  }
+
+  /* Section 1 rule 5: no browser defaults. A touch browser flashes its
+     own grey box over anything tapped, on top of the kit's pressed
+     state (41.9 rule 1: on phone the pressed state IS the feedback).
+     Tailwind's preflight already sets this on html and it is inherited;
+     it is restated on every element here so the kit owns the rule and
+     a preflight change, or a component's own styles, cannot bring the
+     flash back.
+     `transparent` is the one named colour here: it is not a colour
+     anyone sees, and this file is where colour values live. A pointer
+     never triggers it, so the desktop layout is unaffected. */
+  * {
+    -webkit-tap-highlight-color: transparent;
+  }
+
   body {
     @apply bg-surface-sunken text-body text-text-primary antialiased;
   }
+
 
   /* Scrollbars - section 10. Styled everywhere; the browser default
      is never used. 10px, fully rounded. */
@@ -590,8 +850,14 @@
     border-radius: 9999px;
   }
 
-  ::-webkit-scrollbar-thumb:hover {
-    background: var(--scroll-thumb-hover);
+  /* 41.9 rule 1: every hover sits inside @media (hover: hover), so it
+     never sticks after a tap. Tailwind's hover: utilities already do;
+     this is a hand-written one. A computer with a mouse matches, so the
+     desktop thumb behaves exactly as before. */
+  @media (hover: hover) {
+    ::-webkit-scrollbar-thumb:hover {
+      background: var(--scroll-thumb-hover);
+    }
   }
 
   /* Section 18: numbers, amounts and dates line up in tables. */
@@ -604,7 +870,14 @@
      and ignores background-color, so the surface is painted back over
      it with an inset shadow and the text colour is set through the
      WebKit fill property. This is a paint fix, not a 5.4 shadow: it
-     does not float anything. */
+     does not float anything.
+
+     The :hover line is NOT a hover style and stays outside
+     @media (hover: hover) on purpose (41.9 rule 1 does not reach it).
+     It changes nothing on hover; it stops Chrome repainting its own
+     blue when the pointer, or a tap, lands on an autofilled field.
+     Wrapping it would let that blue back in on exactly the touch
+     screens where a tap leaves :hover behind. */
   input:-webkit-autofill,
   input:-webkit-autofill:hover,
   input:-webkit-autofill:focus,
@@ -1141,4 +1414,90 @@
     break-inside: avoid;
     page-break-inside: avoid;
   }
+}
+
+/* ------------------------------------------------------------
+   PHONE SHELL - 41.4. Right from the first paint, with no effect:
+   a page's PageHeader renders its own app bar on the server
+   (data-slot="app-bar" data-source="page"), carrying data-below-top
+   when the page has a parent. So:
+   - the shell's fallback app bar (data-source="shell", for a page with
+     no PageHeader) gives way to the page's own;
+   - below the top level the tab bar is not shown (41.4 rule 11); the
+     bottom-bar contract near the top of this file takes its height away.
+   Unlayered, like the other attribute-driven rules here.
+   ------------------------------------------------------------ */
+html:has([data-slot="app-bar"][data-source="page"]) [data-slot="app-bar"][data-source="shell"] {
+  display: none;
+}
+html:has([data-slot="app-bar"][data-below-top]) [data-slot="tab-bar"] {
+  display: none;
+}
+
+/* 41.5 rule 16: the browser's own pull-to-refresh reloads the whole
+   page, so it is turned off on phone; the phone list has its own. */
+html[data-layout="phone"] {
+  overscroll-behavior-y: none;
+}
+/* 41.13 rule 2 for pages OUTSIDE the shell (sign-in, the signed-out
+   error pages, the kitchen sink): with viewport-fit=cover nothing else
+   would hold them clear of the notch and the phone's bars. Inside the
+   shell the app bar, the content area and the tab bar pad themselves. */
+html[data-layout="phone"] body:not(:has([data-slot="app-shell"])) {
+  padding: var(--safe-top) var(--safe-right) var(--safe-bottom) var(--safe-left);
+}
+
+/* ------------------------------------------------------------
+   TOASTS ON PHONE - 41.8 rules 12-14, 41.9 rules 1 and 2, 5.6.
+   Sonner appends its own stylesheet after this one, so each rule is
+   more specific than the sonner rule it answers.
+   ------------------------------------------------------------ */
+/* 41.8 rule 12: the toaster on phone runs the screen width less 16px
+   and the side safe area on each side, and held sideways stays inside
+   the centred 600px column (41.13 rule 10). Sonner positions it in its
+   own unlayered stylesheet, at most two attributes deep; this is more
+   specific. Each toast is 100% of it (--width, set inline in sonner.tsx). */
+html[data-layout="phone"] [data-sonner-toaster][data-x-position] {
+  left: calc(var(--spacing) * 4 + var(--safe-left));
+  right: calc(var(--spacing) * 4 + var(--safe-right));
+  width: auto;
+  max-width: var(--spacing-phone-column);
+  margin-inline: auto;
+  transform: none;
+}
+/* 41.9 rule 1: sonner's close-button :hover sits outside
+   (hover: hover) and would stick after a tap. Restated at rest. */
+html[data-layout="phone"] [data-sonner-toaster] [data-sonner-toast][data-styled="true"] [data-close-button]:hover {
+  background: var(--normal-bg);
+  border-color: var(--normal-border);
+}
+/* 41.20 check 9: sonner's close (20px) and Undo (24px) buttons get the
+   44px tap area of 9 rule 4, invisibly. */
+html[data-layout="phone"] [data-sonner-toast][data-styled="true"] [data-button] {
+  position: relative;
+}
+html[data-layout="phone"] [data-sonner-toast][data-styled="true"] [data-close-button]::after,
+html[data-layout="phone"] [data-sonner-toast][data-styled="true"] [data-button]::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: max(100%, var(--tap-target));
+  height: max(100%, var(--tap-target));
+  transform: translate(-50%, -50%);
+}
+/* 5.6: toasts enter at medium and exit at fast. The finger-following
+   swipe is left alone; sonner's own reduced-motion rules still win. */
+html[data-layout="phone"] [data-sonner-toast]:not([data-swiping="true"]) {
+  transition:
+    transform var(--duration-medium) var(--ease-enter),
+    opacity var(--duration-medium) var(--ease-enter);
+}
+html[data-layout="phone"] [data-sonner-toast][data-removed="true"]:not([data-swiping="true"]) {
+  transition-duration: var(--duration-fast);
+  transition-timing-function: var(--ease-exit);
+}
+html[data-layout="phone"] [data-sonner-toast][data-swipe-out="true"] {
+  animation-duration: var(--duration-fast);
+  animation-timing-function: var(--ease-exit);
 }

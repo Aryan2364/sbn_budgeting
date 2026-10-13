@@ -4,6 +4,7 @@ import * as React from "react"
 import { OctagonXIcon } from "lucide-react"
 
 import { cn } from "@/lib/utils"
+import { useLayout } from "@/lib/layout"
 import { Banner, BannerDescription } from "@/components/ui/banner"
 import { Button } from "@/components/ui/button"
 import { InlineFieldError } from "@/components/ui/inline-field-error"
@@ -170,16 +171,40 @@ function Headline({ text, highlight }: { text: string; highlight?: string }) {
   )
 }
 
+/*
+ * On phone the strip is the height of the app bar (56px, --spacing-topbar)
+ * with the name at the app bar title's size, 20px, fixed in px like the
+ * app bar's, so the strip never grows with the text-size setting (41.4
+ * rule 1, 41.17 rule 1). The mark keeps its 22px (41.9 rule 8). Ported
+ * from kit 3bb95d1.
+ */
 function ProductName({ product }: { product: Product }) {
   return (
-    <div className="flex items-center gap-2 text-on-brand">
+    <div className="flex items-center gap-2 text-on-brand phone:h-topbar phone:px-4">
       <span aria-hidden="true" className="flex [&_svg]:size-icon-empty">
         {product.mark}
       </span>
-      <span className="text-section font-medium">{product.name}</span>
+      <span className="text-section font-medium phone:min-w-0 phone:truncate phone:text-bar-title">{product.name}</span>
     </div>
   )
 }
+
+/*
+ * Phone only (41.17, from kit 3bb95d1). The page sits outside the app
+ * shell, where globals.css pads <body> by the four safe areas. The page
+ * takes that space back, so the strip reaches up behind the status bar
+ * and the surface runs to every edge, and pads its own parts by the safe
+ * areas instead (41.13 rules 2 and 4). Every phone difference is a
+ * `phone:` class or a decision taken when the person acts, so the desktop
+ * layout is the one it always was.
+ */
+const PHONE_PAGE = "phone:flex phone:-mt-safe-top phone:-mr-safe-right phone:-mb-safe-bottom phone:-ml-safe-left"
+const PHONE_STRIP = "phone:pt-safe-top phone:pr-safe-right phone:pb-0 phone:pl-safe-left"
+const PHONE_FORM_AREA = [
+  "phone:items-start phone:pt-4",
+  "phone:pr-[calc(var(--spacing)_*_4_+_var(--safe-right))] phone:pl-[calc(var(--spacing)_*_4_+_var(--safe-left))]",
+  "phone:pb-[calc(var(--spacing)_*_8_+_var(--safe-bottom))]",
+].join(" ")
 
 function SignInPage(props: SignInPageProps) {
   const { product, headline, highlight, supportingLine, forgotPasswordHref, forgotPasswordNote, autoFocus } = props
@@ -191,6 +216,7 @@ function SignInPage(props: SignInPageProps) {
   const [pending, setPending] = React.useState(false)
   const emailRef = React.useRef<HTMLInputElement>(null)
   const passwordRef = React.useRef<HTMLInputElement>(null)
+  const { layout } = useLayout()
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -216,32 +242,36 @@ function SignInPage(props: SignInPageProps) {
   const year = new Date().getFullYear()
 
   return (
-    <div data-slot="sign-in-page" className="flex min-h-full flex-1 flex-col lg:grid lg:grid-cols-2">
+    // lang="en": the form's words are this template's own, fixed in English
+    // (Tracking plan D9/L10). On phone the server sets <html lang="gu">,
+    // so the sign-in page says it is English itself.
+    <div data-slot="sign-in-page" lang="en" className={`flex min-h-full flex-1 flex-col lg:grid lg:grid-cols-2 ${PHONE_PAGE}`}>
       {/* The brand panel. Below 1024px it is a strip holding only the
-          mark and the name; the headline and footer need the full half. */}
+          mark and the name; the headline and footer need the full half.
+          On phone it is always the strip (41.17 rule 1). */}
       <section
         aria-label={product.name}
-        className="relative isolate flex flex-col overflow-hidden bg-linear-to-br from-primary to-primary-pressed px-6 py-4 lg:justify-between lg:p-12"
+        className={`relative isolate flex flex-col overflow-hidden bg-linear-to-br from-primary to-primary-pressed px-6 py-4 lg:justify-between lg:p-12 ${PHONE_STRIP}`}
       >
         <div
           aria-hidden="true"
           className="pointer-events-none absolute inset-0 -z-10 bg-[linear-gradient(var(--on-brand)_1px,transparent_1px),linear-gradient(90deg,var(--on-brand)_1px,transparent_1px)] bg-size-[32px_32px] opacity-(--brand-pattern-opacity)"
         />
         <ProductName product={product} />
-        <div className="hidden max-w-md flex-col gap-4 lg:flex">
+        <div className="hidden max-w-md flex-col gap-4 lg:flex phone:hidden">
           {/* Section 3: Display, 40px at 500, on-brand. The only place it is used. */}
           <p className="text-display font-medium text-on-brand">
             <Headline text={headline} highlight={highlight} />
           </p>
           <p className="text-card-heading font-normal text-on-brand-muted">{supportingLine}</p>
         </div>
-        <p className="hidden text-meta text-on-brand-muted lg:block">
+        <p className="hidden text-meta text-on-brand-muted lg:block phone:hidden">
           © {year} {product.name}
         </p>
       </section>
 
-      <main className="flex flex-1 items-center justify-center bg-surface px-4 py-12">
-        <form noValidate onSubmit={submit} className="w-full max-w-auth-form" aria-describedby="sign-in-helper">
+      <main className={`flex flex-1 items-center justify-center bg-surface px-4 py-12 ${PHONE_FORM_AREA}`}>
+        <form noValidate onSubmit={submit} className="w-full max-w-auth-form phone:max-w-phone-column" aria-describedby="sign-in-helper">
           <h1 className="text-page-title font-medium text-text-primary">Sign in to your workspace</h1>
           <p id="sign-in-helper" className="mt-2 text-body text-text-secondary">
             {field.helper}
@@ -256,12 +286,21 @@ function SignInPage(props: SignInPageProps) {
               id={field.id}
               name={field.name}
               {...field.input}
+              enterKeyHint="next"
               autoFocus={autoFocus}
               className="mt-2 max-w-none"
               value={email}
               aria-invalid={errors.email ? true : undefined}
               aria-describedby={errors.email ? `${field.id}-error` : undefined}
               onChange={(e) => setEmail(e.target.value)}
+              onKeyDown={(e) => {
+                // 41.7 rule 6: on phone, Enter here moves to the password
+                // field (the key reads Next) rather than signing in. On a
+                // computer Enter signs in, as before (39.2).
+                if (layout !== "phone" || e.key !== "Enter" || e.nativeEvent.isComposing) return
+                e.preventDefault()
+                if (!e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) passwordRef.current?.focus()
+              }}
               onBlur={() => setErrors((c) => ({ ...c, email: field.check(email) }))}
             />
             <InlineFieldError id={`${field.id}-error`}>{errors.email}</InlineFieldError>
@@ -276,6 +315,7 @@ function SignInPage(props: SignInPageProps) {
               id="sign-in-password"
               name="password"
               autoComplete="current-password"
+              enterKeyHint="go"
               className="mt-2 max-w-none"
               value={password}
               aria-invalid={errors.password ? true : undefined}

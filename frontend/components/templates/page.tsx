@@ -1,6 +1,11 @@
+"use client"
+
 import * as React from "react"
 
 import { cn } from "@/lib/utils"
+import { useLayout } from "@/lib/layout"
+import { BackButton, PhoneAppBar, useAppBarState, withSearch } from "@/components/shell/app-bar"
+import { ProgressBar } from "@/components/shell/progress-bar"
 
 /**
  * Section 12.3 and 11. The content area is 24px padded on all sides
@@ -70,12 +75,43 @@ function PageScroller({ className, children, ...props }: React.ComponentProps<"d
  * `badges` - status sits BESIDE the record name, never below it
  * (11.2) - and a list page passes `meta`. Nothing else differs, so
  * nothing else is duplicated.
+ *
+ * ON PHONE, inside the phone shell (kit 41.4 rules 1 to 7, ported from
+ * kit 3bb95d1's components/shell/page-header.tsx; plan-phone 7.2: ONE
+ * PageHeader, extended, never a second): this draws the screen's app bar
+ * ITSELF, so the title, the back arrow and the app bar's actions are in
+ * the first paint (41.2 rule 3) with no effect to fill them in. The bar
+ * holds the screen's one h1 (3 rule 3) and the page-loading bar (41.4
+ * rule 22); it carries data-source="page", so globals.css hides the
+ * shell's fallback bar, and data-below-top when the page has a `parent`,
+ * so globals.css hides the tab bar (41.4 rule 11).
+ *
+ *   - The bar sticks to the top while the page scrolls on the window. It
+ *     bleeds out of the content area's padding by exactly that padding,
+ *     so it runs edge to edge. So THIS MUST BE A DIRECT CHILD OF THE
+ *     PAGE'S TOP LEVEL (a fragment), never inside a wrapper, a
+ *     PageColumn, a PageScroller or a Suspense fallback wrapper: sticky
+ *     holds only within its parent.
+ *   - `tabs` sit directly under the bar, above the meta line (41.4 rule
+ *     21). The meta line stays in the content, below the bar and tabs.
+ *   - `actions` (the desktop's primary button) and `badges` are not
+ *     shown: a phone screen is designed from its task (41.1 rules 4 to
+ *     7). The phone list's add button and the record's summary are the
+ *     screen's own.
+ *   - `appBarActions`: at most two icon buttons (41.4 rule 4).
+ *
+ * DESKTOP (or anywhere without the AppShell around it): exactly the
+ * markup it always drew. `parent` and `appBarActions` are unused there;
+ * `tabs`, when given, follow the header as a sibling (33.2).
  */
 function PageHeader({
   title,
   meta,
   badges,
   actions,
+  parent,
+  appBarActions,
+  tabs,
   className,
   ...props
 }: Omit<React.ComponentProps<"div">, "title"> & {
@@ -84,8 +120,55 @@ function PageHeader({
   meta?: React.ReactNode
   badges?: React.ReactNode
   actions?: React.ReactNode
+  /**
+   * Phone: the page this one sits under in the product's structure, the
+   * level a breadcrumb would show above it (41.4 rule 7). A page with a
+   * parent is below the top level: it has the back arrow, which returns
+   * here when there is no earlier screen, and no tab bar (41.4 rule 11).
+   */
+  parent?: string
+  /** Phone only: at most two icon buttons for the app bar (41.4 rule 4). */
+  appBarActions?: React.ReactNode
+  /** The page's section tabs (33), if it has them. */
+  tabs?: React.ReactNode
 }) {
-  return (
+  const { layout } = useLayout()
+  const appBar = useAppBarState()
+
+  if (layout === "phone" && appBar.inShell) {
+    return (
+      <>
+        <PhoneAppBar
+          source="page"
+          belowTop={parent !== undefined}
+          leading={
+            appBar.leading !== undefined
+              ? appBar.leading
+              : parent !== undefined
+                ? <BackButton parent={parent} />
+                : null
+          }
+          title={appBar.title ?? title}
+          actions={withSearch(appBar.actions !== undefined ? appBar.actions : appBarActions, {
+            searchHref: appBar.searchHref,
+            belowTop: parent !== undefined,
+            overriding: appBar.overriding,
+          })}
+          className={
+            // Out by exactly the content area's padding, to the screen's
+            // edges and top; 16px below, above the first block.
+            "-mt-4 mr-[calc(var(--content-pad-right)_*_-1)] mb-4 ml-[calc(var(--content-pad-left)_*_-1)]"
+          }
+        >
+          <ProgressBar />
+        </PhoneAppBar>
+        {tabs}
+        {meta != null ? <p className="mb-6 text-meta text-text-muted">{meta}</p> : null}
+      </>
+    )
+  }
+
+  const header = (
     <div
       data-slot="page-header"
       className={cn(
@@ -109,6 +192,14 @@ function PageHeader({
         <div className="flex shrink-0 items-center gap-2">{actions}</div>
       ) : null}
     </div>
+  )
+
+  if (tabs === undefined) return header
+  return (
+    <>
+      {header}
+      {tabs}
+    </>
   )
 }
 

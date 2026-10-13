@@ -24,12 +24,17 @@ import { cn } from "@/lib/utils"
  * field does not clip it.
  *
  * `on-brand` is section 6.3.2: the same quiet button ON a section 36
- * header band, its colours reversed for the brand ground.
+ * header band, its colours reversed for the brand ground. With a text
+ * label (a text size) it also draws a 1px on-brand-muted border, so a
+ * word on the band still has a visible edge (6.1 rule 5) - see
+ * compoundVariants.
  *
  * Height is fixed at 36 / 32 / 40. Width grows with the label,
  * height never does, so two buttons on different screens are always
  * the same height. On a touch screen `tap-area` grows the TAP area to
- * 44px without changing what the user sees (9 rule 4).
+ * 44px without changing what the user sees (9 rule 4). In the phone
+ * layout all three sizes are 44px visibly (41.9 rule 2); that is a token
+ * value in globals.css, not a class here (41.9 rule 3).
  */
 const buttonVariants = cva(
   [
@@ -149,10 +154,40 @@ const buttonVariants = cva(
         sm: "h-control-sm px-3 text-label",
         lg: "h-control-lg px-4 text-body",
         icon: "size-control p-0",
-        "icon-sm": "size-control-sm p-0",
+        /*
+         * The icon button INSIDE a field (6.2's exception, 6.3.1): 32px
+         * on desktop, 36px on phone (41.9 rule 2). Its own token, not
+         * size-control-sm - that is the small BUTTON's height, which the
+         * phone raises to 44px, and a 44px button does not fit inside a
+         * 44px field. For an icon button anywhere else, use `icon`.
+         */
+        "icon-sm": "size-icon-in-field p-0",
         "icon-lg": "size-control-lg p-0",
       },
     },
+    compoundVariants: [
+      /*
+       * A TEXT button on a brand band: the phone app bar's Select (41.4
+       * rule 4, 41.6 rule 14; stage 4 decision 1). 6.3.2 defines only icon
+       * buttons there, and a word with neither fill nor border reads as
+       * plain text (6.1 rule 5), so a text-sized on-brand button draws a
+       * 1px on-brand-muted border - in every state, disabled included,
+       * so it never loses its edge. Its fills (on-brand-hover and
+       * on-brand-pressed) and its on-brand focus ring are the variant's,
+       * unchanged.
+       *
+       * Text sizes only: the icon sizes keep the quiet, borderless 6.3.2
+       * button exactly as before. `size={null}` (a caller sizing the
+       * button itself) matches neither, and stays borderless too. No
+       * desktop screen puts a text button on a band, so desktop renders
+       * as it did.
+       */
+      {
+        variant: "on-brand",
+        size: ["default", "sm", "lg"],
+        className: "border-on-brand-muted disabled:border-on-brand-muted",
+      },
+    ],
     defaultVariants: {
       variant: "primary",
       size: "default",

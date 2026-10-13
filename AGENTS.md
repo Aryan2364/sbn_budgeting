@@ -24,6 +24,24 @@ something, stop and ask rather than working around it.
 If something is not covered here, ask before inventing an answer.
 Do not fill gaps with your own judgement.
 
+**The phone layout.** Phone screens follow `FRONTEND_RULES_PHONE.md`
+(section 41, copied from the kit (branch phone-foundation, 2d72917) into this
+repository's root). Read it completely before building or changing
+anything that shows on a phone. On phone screens its rules win over this
+file wherever they differ. The phone plan, its screen list and its
+exceptions are in `complain/plan-phone-2026-10-13-1035.md`; which
+addresses have a phone screen is `frontend/components/shell/phone-routes.ts`
+(every other address shows the 41.11 computer-only page on phone).
+
+**Recorded exception to 41.12 rule 4 (owner, 13 Oct 2026, plan-phone
+L13).** Phone notifications are asked for at the first open after login,
+through the app's own bottom sheet (one line saying why; "ચાલુ કરો" /
+"હમણાં નહીં"), not at the first useful moment. "Turn on" triggers the
+phone's own prompt from that tap; "Not now" offers the sheet again after 3
+days; More holds a Notifications switch. On iPhone in the browser (not
+installed) the first sheet offers Install app instead. Reason: a work
+tool whose supervisors must not miss assignments.
+
 ---
 
 ## 1. Hard prohibitions
@@ -606,12 +624,13 @@ Rules:
    the whole layout wider than the screen. This is the single most common
    cause of broken layouts.
 4. Touch targets are at least 44 by 44px on tablet.
-5. Below 768px the layout must remain usable and must never break,
-   overlap, or push content off screen. It is not optimised for phones,
-   but it must not fall apart.
-6. Dedicated mobile screens will be added later for a small set of
-   specific tasks. They will be designed fresh, not by shrinking desktop
-   screens.
+5. Below 768px a narrow desktop window must remain usable and must never
+   break, overlap, or push content off screen. A narrow window on a
+   computer keeps the desktop layout (FRONTEND_RULES_PHONE.md 41.2 rule 1).
+6. Phones get their own layout, chosen by `useLayout()` (lib/layout.ts),
+   never by the window's width: see `FRONTEND_RULES_PHONE.md` section 41.
+   Phone screens are designed from the task, in their own components
+   (`components/complaints/phone/`), never by shrinking desktop screens.
 7. Below 1024px the sidebar is hidden by default. The toggle then opens it
    as an overlay sliding over the content, rather than pushing the content
    sideways. Same button, different behaviour by screen width. Both

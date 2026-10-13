@@ -1,5 +1,7 @@
 import {
   ChartColumnIcon,
+  EllipsisIcon,
+  InboxIcon,
   FolderIcon,
   LayoutDashboardIcon,
   MapPinIcon,
@@ -13,6 +15,7 @@ import {
 } from "lucide-react"
 
 import { MODULE_KEYS, type PermissionKey } from "@/lib/permission-keys"
+import { GU_PHONE } from "@/components/complaints/gu"
 
 /**
  * Section 12.1. The navigation, defined once - one group list PER MODULE
@@ -323,6 +326,11 @@ const PAGE_PERMISSIONS: ReadonlyArray<readonly [RegExp, Needs]> = [
   [/^\/sites\/[^/]+\/budget\/?$/, "budget.budgets.view"],
   [/^\/expenses\/new\/?$/, "budget.expenses.create"],
   [/^\/complaints\/new\/?$/, "complaints.complaints.raise"],
+  // The phone's own addresses (plan-phone D1). My work is the Assigned
+  // list and the comments screen is part of the record, so both need
+  // View, as the list and the record do. /more needs nothing.
+  [/^\/my-work\/?$/, "complaints.complaints.view"],
+  [/^\/complaints\/[^/]+\/comments\/?$/, "complaints.complaints.view"],
 ]
 
 /**
@@ -342,4 +350,52 @@ export function areaPermission(pathname: string): Needs | null {
 
 export function isNavItemActive(href: string, pathname: string): boolean {
   return pathname === href || pathname.startsWith(`${href}/`)
+}
+
+/**
+ * Plan-phone 5.8: the title of the screen that owns an address, for the
+ * computer-only page on phone (41.11) - the label of the sidebar item
+ * that owns it, so the person can tell which screen this is. "Sadbhavna"
+ * where no item owns it.
+ */
+export function screenTitle(pathname: string): string {
+  return owningItem(MODULES.flatMap((mod) => mod.groups), pathname)?.label ?? PRODUCT_NAME
+}
+
+/**
+ * The phone's tab bar (kit 41.4 rules 13 to 17, plan-phone section 6):
+ * My work first, More last, the product's own between. Labels are the
+ * phone's Gujarati (plan-phone D7). Each tab carries the permission that
+ * opens it, filtered in phone-nav.ts phoneDestinations() (plan D4); More
+ * needs none. Icons from 23.2: My work inbox, Complaints the module's
+ * message-square-warning, More ellipsis (the kit's own demo).
+ */
+export type PhoneTabDef = {
+  label: string
+  href: string
+  icon: LucideIcon
+  permission?: Needs
+}
+
+export const PHONE_HOME = "/my-work"
+
+export const PHONE_TABS: readonly PhoneTabDef[] = [
+  { label: GU_PHONE.tabs.myWork, href: PHONE_HOME, icon: InboxIcon, permission: "complaints.complaints.view" },
+  {
+    label: GU_PHONE.tabs.complaints,
+    href: "/complaints",
+    icon: MessageSquareWarningIcon,
+    permission: "complaints.complaints.view",
+  },
+  { label: GU_PHONE.tabs.more, href: "/more", icon: EllipsisIcon },
+]
+
+/**
+ * Plan-phone D3 and Q4: the phone's home, My work, for anyone who can
+ * open it; null for someone with no phone screen at all (Budget only, or
+ * Complaints without View), who then gets the computer-only page on
+ * every address with Sign out in place of "Go to home".
+ */
+export function phoneHomeHref(can: Can): string | null {
+  return canAny(can, "complaints.complaints.view") === true ? PHONE_HOME : null
 }

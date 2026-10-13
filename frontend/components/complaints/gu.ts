@@ -230,3 +230,263 @@ export function guTimeAgo(at: Date, now: Date, formatDate: (d: Date) => string):
   if (diff < 7 * DAY) return `${formatNumber(Math.floor(diff / DAY))} દિવસ પહેલાં`
   return formatDate(at)
 }
+
+// ---------------------------------------------------------------------
+// The phone layout (plan-phone D7, kit 37.6 rule 2)
+// ---------------------------------------------------------------------
+
+/**
+ * Every word the phone layout shows, in Gujarati. On phone every screen
+ * but Login is Gujarati (plan-phone D9, L10), so this block overrides
+ * each English word the kit's phone parts carry: through a component's
+ * `text` prop (phone-list, record-summary, empty-state, more-screen,
+ * computer-only-page, draft-banner, install-sheet, connection-banner),
+ * and, for the screen-reader labels inside shared primitives ("Back",
+ * "Close", "Actions"), through lib/phone-words.ts, which re-exports this.
+ *
+ * ONLY Phase 1 of the phone plan edits this block; later phases read it.
+ * A phase that needs a word not here asks the lead to add it.
+ *
+ * Allowed Latin on a phone screen: complaint references (C-000123),
+ * numbers, names as entered, and the computer-only page's screen titles,
+ * which come from nav.ts.
+ */
+export const GU_PHONE = {
+  /** Screen-reader labels and fixed words inside shared primitives. */
+  a11y: {
+    back: "પાછા જાઓ",
+    close: "બંધ કરો",
+    /** A three-dot menu's sheet title and label. */
+    actions: "વિકલ્પો",
+    /** A select's sheet title when the field gives none. */
+    chooseOption: "વિકલ્પ પસંદ કરો",
+    /** A popover's sheet title when it gives none. */
+    details: "વિગત",
+    search: "શોધો",
+    selectPlaceholder: "પસંદ કરો",
+    nothingMatches: "આ શોધ મુજબ કંઈ મળ્યું નથી.",
+    showMore: "વધુ બતાવો",
+    showLess: "ઓછું બતાવો",
+    undo: "પાછું કરો",
+    mainNav: "મુખ્ય મેનુ",
+    loading: "લોડ થઈ રહ્યું છે",
+    skipToContent: "મુખ્ય ભાગ પર જાઓ",
+  },
+
+  /** The tab bar (plan-phone section 6). */
+  tabs: {
+    myWork: "મારું કામ",
+    complaints: "ફરિયાદો",
+    more: "વધુ",
+  },
+
+  /** App bar titles. */
+  titles: {
+    myWork: "મારું કામ",
+    complaints: "ફરિયાદો",
+    more: "વધુ",
+    comments: "ટિપ્પણીઓ",
+    resolve: "ફરિયાદ ઉકેલો",
+    raise: "ફરિયાદ નોંધાવો",
+    /** The shell's fallback app bar and a screen with no nav.ts owner. */
+    product: "Sadbhavna",
+  },
+
+  /** The round add button on both lists (41.5 rule 7). */
+  add: "ફરિયાદ નોંધાવો",
+
+  /** More (5.7). */
+  more: {
+    signOut: "સાઇન આઉટ",
+    install: "એપ ઇન્સ્ટોલ કરો",
+    notifications: "સૂચનાઓ",
+  },
+
+  /**
+   * empty-state.tsx's phone words (its EmptyStateText): the computer-only
+   * page (41.11, plan 5.8) and My work's nothing-waiting (41.15 rule 9).
+   */
+  emptyState: {
+    goHome: "હોમ પર જાઓ",
+    shareLink: "લિંક શેર કરો",
+    copyLink: "લિંક કૉપી કરો",
+    linkCopied: "લિંક કૉપી થઈ ગઈ",
+    copyFailed: "લિંક કૉપી થઈ શકી નથી. ઉપર સરનામાની પટ્ટીમાંથી કૉપી કરો.",
+    signOut: "સાઇન આઉટ",
+    desktopOnlyHeading: "આ સ્ક્રીન કમ્પ્યુટર પર ચાલે છે",
+    desktopOnlyLine: "કમ્પ્યુટર પર ખોલો. આ લિંક ત્યાં આ જ સ્ક્રીન ખોલશે.",
+    nothingWaitingHeading: "તમારે માટે કંઈ બાકી નથી",
+    nothingWaitingLine: "તમને સોંપાયેલી નવી ફરિયાદો અહીં દેખાશે.",
+  },
+
+  /**
+   * The phone list (41.5), shared by My work and Complaints. Shaped like
+   * phone-list.tsx's PhoneListText; the noun is ignored, because the list
+   * is always of complaints.
+   */
+  list: {
+    search: () => "ફરિયાદ શોધો",
+    clearSearch: "શોધ સાફ કરો",
+    count: (n: number) => `${formatNumber(n)} ${n === 1 ? "ફરિયાદ" : "ફરિયાદો"}`,
+    filter: "ફિલ્ટર",
+    filters: "ફિલ્ટર",
+    sort: "ક્રમ",
+    clearAll: "બધું સાફ કરો",
+    showResults: (n: number | undefined) =>
+      n === undefined ? "પરિણામ બતાવો" : `${formatNumber(n)} પરિણામ બતાવો`,
+    removeFilter: (label: string) => `ફિલ્ટર દૂર કરો: ${label}`,
+    activeFilters: "લાગુ કરેલા ફિલ્ટર",
+    all: "બધી",
+    capped: (total: number) =>
+      `${formatNumber(total)} માંથી ${formatNumber(200)} ફરિયાદો બતાવી છે. બાકીની શોધવા માટે શોધો કે ફિલ્ટર કરો.`,
+    moreFailed: () => "આગળની ફરિયાદો લોડ થઈ શકી નથી. ઇન્ટરનેટ તપાસીને ફરી પ્રયાસ કરો.",
+    tryAgain: "ફરી પ્રયાસ કરો",
+    failedHeading: () => "ફરિયાદો લોડ થઈ શકી નથી",
+    failedLine: "ઇન્ટરનેટ તપાસીને ફરી પ્રયાસ કરો.",
+    noMatchSearch: (_noun: unknown, query: string) => `'${query}' સાથે મેળ ખાતી કોઈ ફરિયાદ નથી`,
+    noMatchFilters: () => "આ ફિલ્ટર મુજબ કોઈ ફરિયાદ નથી",
+    noMatchLine: {
+      search: "જોડણી તપાસો, અથવા શોધ સાફ કરો.",
+      filters: "ફિલ્ટર બદલો, અથવા સાફ કરો.",
+      both: "શોધ કે ફિલ્ટર બદલો, અથવા સાફ કરો.",
+    },
+    clearFound: {
+      search: "શોધ સાફ કરો",
+      filters: "ફિલ્ટર સાફ કરો",
+      both: "શોધ અને ફિલ્ટર સાફ કરો",
+    },
+    emptyStatus: (_noun: unknown, status: string) => `${status} સ્થિતિમાં કોઈ ફરિયાદ નથી.`,
+    loading: "લોડ થઈ રહ્યું છે",
+    /** Row line 3 (5.2): "C-000123 · 12 Aug 2026 ના રોજ નોંધાઈ · 3 દિવસ". */
+    rowMeta: (ref: string, date: string, age: string) => `${ref} · ${date} ના રોજ નોંધાઈ · ${age}`,
+  },
+
+  /** The filter sheet (5.2). */
+  filter: {
+    title: "ફિલ્ટર",
+    status: "સ્થિતિ",
+    site: "સાઇટ",
+    category: "ફરિયાદનો પ્રકાર",
+    any: "બધી",
+    searchSites: "સાઇટ શોધો",
+  },
+
+  /** The sort sheet (5.2): one tick. */
+  sort: {
+    title: "ક્રમ",
+    newest: "નવી પહેલાં",
+    oldest: "જૂની પહેલાં",
+    number: "નંબર",
+    site: "સાઇટ",
+  },
+
+  /** The record (5.3) and record-summary.tsx's text. */
+  record: {
+    notSet: "ભરેલું નથી",
+    addComment: "ટિપ્પણી ઉમેરો",
+    showMore: "વધુ બતાવો",
+    history: "ઇતિહાસ",
+    historyCapped: "જૂનો ઇતિહાસ કમ્પ્યુટર પર જુઓ.",
+    historyFailed: "ઇતિહાસ લોડ થઈ શક્યો નથી. ફરી પ્રયાસ કરો.",
+    /** "C-000123 · રમેશ દ્વારા 12 Aug 2026, 3:45 PM ના રોજ નોંધાવી · 3 દિવસ". */
+    meta: (ref: string, by: string, when: string, age: string) =>
+      `${ref} · ${by} દ્વારા ${when} ના રોજ નોંધાવી · ${age}`,
+    keyFacts: {
+      site: "સાઇટ",
+      category: "ફરિયાદનો પ્રકાર",
+      phone: "ફરિયાદીનો મોબાઇલ નંબર",
+      supervisor: "સુપરવાઇઝર",
+    },
+    details: {
+      description: "ફરિયાદની વિગત",
+      complainant: "ફરિયાદીનું નામ",
+      exactPlace: "ચોક્કસ જગ્યા",
+      manager: "મેનેજર",
+    },
+    problemPhotos: "સમસ્યાના ફોટા",
+    resolution: "ઉકેલ",
+    rootCause: "સમસ્યાનું મૂળ કારણ",
+    whatWasDone: "શું કામ કર્યું",
+    fixPhotos: "કામ પૂરું થયાના ફોટા",
+    resolvedBy: (by: string, when: string) => `${by} દ્વારા ${when} ના રોજ ઉકેલાઈ`,
+    startWork: "કામ શરૂ કરો",
+    resolve: "ફરિયાદ ઉકેલો",
+  },
+
+  /** The comments screen (5.4). */
+  comments: {
+    title: "ટિપ્પણીઓ",
+    empty: "હજી કોઈ ટિપ્પણી નથી",
+    emptyLine: "પહેલી ટિપ્પણી નીચે લખો.",
+    placeholder: "ટિપ્પણી લખો",
+    label: "ટિપ્પણી",
+    send: "મોકલો",
+    sending: "મોકલાઈ રહી છે",
+  },
+
+  /** draft-banner.tsx's text (41.7 rules 13 and 14). */
+  draft: {
+    offer: (when: string) => `તમારો ${when} નો ન સાચવેલો ડ્રાફ્ટ છે.`,
+    notUsed: (when: string, changedBy: string | null | undefined, changedAt: string) =>
+      changedBy
+        ? `તમારો ${when} નો ડ્રાફ્ટ વાપર્યો નથી, કારણ કે ${changedBy} એ ${changedAt} વાગ્યે આ ફરિયાદ બદલી છે.`
+        : `તમારો ${when} નો ડ્રાફ્ટ વાપર્યો નથી, કારણ કે આ ફરિયાદ ${changedAt} વાગ્યે બદલાઈ છે.`,
+    use: "ડ્રાફ્ટ વાપરો",
+    discard: "ડ્રાફ્ટ કાઢી નાખો",
+    close: "બંધ કરો",
+    /** Plan D6: photos are never part of a draft, and the banner says so. */
+    photosNotKept: "ફોટા ડ્રાફ્ટમાં સચવાતા નથી, તેને ફરીથી ઉમેરો.",
+  },
+
+  /** Phase 5: install-sheet.tsx's text (41.12 rule 8). */
+  install: {
+    title: "એપ ઇન્સ્ટોલ કરો",
+    iPhoneIntro: "એપને હોમ સ્ક્રીન પર ઉમેરો, જેથી તે બીજી એપની જેમ ખૂલે.",
+    iPhoneSteps: [
+      "બ્રાઉઝરની પટ્ટીમાં Share (શેર) બટન દબાવો.",
+      "\"Add to Home Screen\" દબાવો. ન દેખાય તો યાદી નીચે સરકાવો.",
+      "Add દબાવો.",
+    ],
+    otherSteps: "બ્રાઉઝરનું મેનુ ખોલો અને \"Install app\" અથવા \"Add to Home screen\" પસંદ કરો.",
+  },
+
+  /** Phase 5: connection-banner.tsx's text (41.14 rules 6, 10 and 11). */
+  connection: {
+    banner: "તમે ઓફલાઇન છો. ઇન્ટરનેટ પાછું આવે ત્યાં સુધી ફેરફાર સાચવી શકાશે નહીં.",
+    heading: "ઓફલાઇન ઉપલબ્ધ નથી",
+    line: "ઇન્ટરનેટ પાછું આવે પછી આ સ્ક્રીન ખૂલશે.",
+    retry: "ફરી પ્રયાસ કરો",
+    newVersion: "નવું વર્ઝન તૈયાર છે",
+    reload: "ફરી લોડ કરો",
+  },
+
+  /** Phase 6: the notification sheet and More's switch (L13). */
+  notifications: {
+    title: "આ ફોન પર સૂચનાઓ",
+    why: "તમને નવી ફરિયાદ સોંપાય ત્યારે તરત સૂચના મળશે.",
+    turnOn: "ચાલુ કરો",
+    notNow: "હમણાં નહીં",
+    turningOn: "ચાલુ થઈ રહી છે",
+    turnedOn: "સૂચનાઓ ચાલુ થઈ ગઈ",
+    turnedOff: "સૂચનાઓ બંધ થઈ ગઈ",
+    failed: "સૂચનાઓ ચાલુ થઈ શકી નથી. ઇન્ટરનેટ તપાસીને ફરી પ્રયાસ કરો.",
+    notSetUp: "આ એપ માટે ફોન સૂચનાઓ હજી ગોઠવાઈ નથી.",
+    switchLabel: "સૂચનાઓ",
+    on: "આ ફોન પર સૂચનાઓ ચાલુ છે.",
+    off: "આ ફોન પર સૂચનાઓ બંધ છે.",
+    needsInstall:
+      "iPhone પર સૂચનાઓ ફક્ત એપ હોમ સ્ક્રીન પર ઉમેર્યા પછી જ મળે છે. પહેલાં એપ ઇન્સ્ટોલ કરો.",
+    installLink: "એપ ઇન્સ્ટોલ કરો",
+    unsupported: "આ બ્રાઉઝર ફોન સૂચનાઓ બતાવી શકતું નથી.",
+    denied: (platform: "ios" | "android" | "other", installed: boolean, appName: string) => {
+      const start = "આ ફોન પર સૂચનાઓ બંધ કરેલી છે, અને એપ ફરી પૂછી શકતી નથી. ચાલુ કરવા માટે "
+      if (platform === "ios") {
+        return `${start}iPhone ના Settings ખોલો, પછી Notifications, પછી ${appName}, અને Allow Notifications ચાલુ કરો.`
+      }
+      if (platform === "android" && installed) {
+        return `${start}ફોનના Settings ખોલો, પછી Apps, પછી ${appName}, પછી Notifications, અને ચાલુ કરો.`
+      }
+      return `${start}બ્રાઉઝરની સરનામાની પટ્ટીની ડાબી બાજુના ચિહ્નને દબાવો, આ સાઇટના સેટિંગ્સ ખોલો અને Notifications ચાલુ કરો.`
+    },
+  },
+}

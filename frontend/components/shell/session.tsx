@@ -19,6 +19,7 @@ import {
   usePermissions,
 } from "@/lib/permissions"
 import { EmptyState } from "@/components/ui/empty-state"
+import { forgetMyWorkCount } from "@/components/complaints/phone/use-my-work-count"
 
 /**
  * Who is signed in, for the whole app.
@@ -151,6 +152,8 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const signOut = React.useCallback(() => {
     setToken(null)
     forgetPermissions()
+    // The phone's My work count belongs to this person (plan-phone D10).
+    forgetMyWorkCount()
     setState({ status: "out", user: null })
     router.replace("/login")
   }, [router])

@@ -10,9 +10,11 @@ import {
   moduleHome,
   MODULES,
   pathPinsModule,
+  phoneHomeHref,
   type ModuleDef,
   type ModuleKey,
 } from "@/components/shell/nav"
+import { useLayout } from "@/lib/layout"
 import { usePermissions } from "@/lib/permissions"
 
 /**
@@ -84,5 +86,11 @@ export function useModules(): {
  */
 export function useHomeHref(): string {
   const { can } = usePermissions()
+  const { layout } = useLayout()
+  // Plan-phone D3 (kit 41.15, 11.8 rule 6): on phone, home is My work for
+  // anyone who can open it. Desktop home is unchanged. Someone with no
+  // phone home goes to their desktop home, which the phone shell shows
+  // as the computer-only page (plan Q4).
+  if (layout === "phone") return phoneHomeHref(can) ?? homeHref(can)
   return homeHref(can)
 }
