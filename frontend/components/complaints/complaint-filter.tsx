@@ -104,7 +104,7 @@ export function ComplaintFilterButton({
           </Button>
         }
       />
-      <DialogContent size="md" className="max-sm:h-dvh max-sm:max-h-dvh max-sm:w-full max-sm:max-w-none max-sm:rounded-none">
+      <DialogContent size="md" className="not-phone:max-sm:h-dvh not-phone:max-sm:max-h-dvh not-phone:max-sm:w-full not-phone:max-sm:max-w-none not-phone:max-sm:rounded-none">
         <DialogHeader>
           <DialogTitle>{GU.title}</DialogTitle>
         </DialogHeader>
