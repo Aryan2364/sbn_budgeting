@@ -22,6 +22,14 @@ COPY . .
 ARG NEXT_PUBLIC_API_URL=http://localhost:4100/api
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 
+# Plan-phone Phase 6b: the push subscription's public VAPID key. Also
+# baked into the client bundle — there is no API route for it (the
+# backend contract). Empty by default: lib/push.ts then treats phone
+# notifications as "not configured" and hides the offer and the More
+# switch entirely, so a local build stays harmless with nothing set.
+ARG NEXT_PUBLIC_VAPID_PUBLIC_KEY=""
+ENV NEXT_PUBLIC_VAPID_PUBLIC_KEY=$NEXT_PUBLIC_VAPID_PUBLIC_KEY
+
 # A modest heap so the build fits a small instance. Raise it only if you
 # move to a bigger builder — an oversized value has OOM-frozen a 4GB box.
 RUN NODE_OPTIONS=--max-old-space-size=3072 npm run build

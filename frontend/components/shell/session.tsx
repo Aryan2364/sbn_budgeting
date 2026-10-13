@@ -21,6 +21,7 @@ import {
 import { EmptyState } from "@/components/ui/empty-state"
 import { forgetMyWorkCount } from "@/components/complaints/phone/use-my-work-count"
 import { clearDrafts } from "@/lib/drafts"
+import { subscribePush, unsubscribePush } from "@/lib/push"
 
 /**
  * Who is signed in, for the whole app.
@@ -148,18 +149,49 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     const me = await api.get<Me>("/auth/me").catch(() => null)
     receiveMe(me ?? {})
     setState({ status: "in", user: me ?? result.user })
+    /**
+     * Plan-phone Phase 6b: re-POST the subscription on every sign-in
+     * where permission is already granted — subscribe() itself compares
+     * the stored subscription's key against the current public one and
+     * re-subscribes if they differ. Fire-and-forget: a slow or failed
+     * push service must never hold up signing in, and there is nothing
+     * useful to show the person if this fails quietly in the background.
+     */
+    if (typeof Notification !== "undefined" && Notification.permission === "granted") {
+      void subscribePush()
+        .then((subscription) => subscription && api.post("/push/subscriptions", subscription))
+        .catch(() => undefined)
+    }
   }, [])
 
   const signOut = React.useCallback(() => {
+    const user = state.user
     // Kit 41.7 rule 15 (plan-phone D6): a person's drafts go when they
     // sign out, so the next person on this phone never sees them.
-    if (state.user) clearDrafts(state.user.id)
-    setToken(null)
-    forgetPermissions()
-    // The phone's My work count belongs to this person (plan-phone D10).
-    forgetMyWorkCount()
-    setState({ status: "out", user: null })
-    router.replace("/login")
+    if (user) clearDrafts(user.id)
+    void (async () => {
+      /**
+       * Plan-phone Phase 6b: unsubscribe this phone and DELETE the
+       * subscription from the backend BEFORE the token is cleared — the
+       * endpoint `/api/push/subscriptions` DELETE is signed-in only.
+       * unsubscribePush() never throws and gives up after 10 seconds, so
+       * this never leaves sign-out stuck.
+       */
+      try {
+        const endpoint = await unsubscribePush()
+        if (endpoint) await api.delete("/push/subscriptions", { endpoint })
+      } catch {
+        // Best-effort: a subscription left behind sends one unwanted
+        // push at most, which the backend clears on its next 404/410.
+      } finally {
+        setToken(null)
+        forgetPermissions()
+        // The phone's My work count belongs to this person (plan-phone D10).
+        forgetMyWorkCount()
+        setState({ status: "out", user: null })
+        router.replace("/login")
+      }
+    })()
   }, [router, state.user])
 
   const value = React.useMemo<SessionValue>(
