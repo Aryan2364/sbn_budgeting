@@ -60,6 +60,14 @@ export type NavItem = {
   icon: LucideIcon
   /** Kit 12.1: the permission that opens this item's area. */
   permission: Needs
+  /**
+   * 41.11, plan-phone D9: the title screenTitle() uses for this item's
+   * computer-only page on phone, where this item's screen is otherwise
+   * Gujarati (a Complaints item). Budget, Settings and Access stay
+   * English (their own module is English in both layouts), so they
+   * leave this unset and screenTitle falls back to `label`.
+   */
+  phoneTitle?: string
 }
 
 export type NavGroup = {
@@ -206,6 +214,7 @@ export const MODULES: readonly ModuleDef[] = [
             href: "/complaints/dashboard",
             icon: LayoutDashboardIcon,
             permission: "complaints.complaints.view",
+            phoneTitle: GU_PHONE.titles.dashboard,
           },
         ],
       },
@@ -359,7 +368,8 @@ export function isNavItemActive(href: string, pathname: string): boolean {
  * where no item owns it.
  */
 export function screenTitle(pathname: string): string {
-  return owningItem(MODULES.flatMap((mod) => mod.groups), pathname)?.label ?? PRODUCT_NAME
+  const item = owningItem(MODULES.flatMap((mod) => mod.groups), pathname)
+  return item?.phoneTitle ?? item?.label ?? PRODUCT_NAME
 }
 
 /**

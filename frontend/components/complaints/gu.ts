@@ -288,6 +288,9 @@ export const GU_PHONE = {
     comments: "ટિપ્પણીઓ",
     resolve: "ફરિયાદ ઉકેલો",
     raise: "ફરિયાદ નોંધાવો",
+    /** The dashboard's computer-only title (41.11): it is a Complaints
+     *  screen, so its gate on phone is Gujarati like every other one. */
+    dashboard: "ડેશબોર્ડ",
     /** The shell's fallback app bar and a screen with no nav.ts owner. */
     product: "Sadbhavna",
   },
