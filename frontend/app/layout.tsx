@@ -10,6 +10,9 @@ import { SessionProvider } from "@/components/shell/session";
 import { SIDEBAR_STORAGE_KEY } from "@/components/shell/sidebar-storage";
 import { LayoutProvider } from "@/lib/layout";
 import { getInitialLayout } from "@/lib/layout.server";
+import { InstallPromptCapture } from "@/lib/install";
+import { APPLE_ICON } from "@/lib/install-icon";
+import { APP_SHORT_NAME, INSTALL_COLOURS, IPHONE_STATUS_BAR } from "@/lib/install-settings";
 
 /**
  * Kit 37.6 rule 4 (plan-phone D8): the Complaints area is Gujarati, and
@@ -24,10 +27,51 @@ const notoSansGujarati = Noto_Sans_Gujarati({
   display: "swap",
 });
 
-export const metadata: Metadata = {
+/** Everything every page's head carries, in both layouts. */
+const METADATA: Metadata = {
   title: "Sadbhavna",
   description: "Tree plantation project and site tracking",
 };
+
+/*
+ * THE INSTALL HEAD TAGS ARE THE PHONE'S (plan-phone Phase 5, kit stage 6
+ * decision 5). The manifest link, theme-color, iPhone's web-app tags and
+ * the apple-touch-icon are sent only when the server guesses phone
+ * (getInitialLayout, 41.2 rule 3). On a computer they would tint desktop
+ * Safari's tab bar, make desktop Chrome offer "Install", and lock an
+ * Android tablet that installed it upright - so on desktop the head is
+ * exactly what it was before the app was installable (Q2: phone only).
+ *
+ *   - manifest: app/install-manifest/route.ts.
+ *   - appleWebApp: capable (opens without the browser bar, with the
+ *     manifest's display "standalone"). statusBarStyle: Sadbhavna's dark
+ *     brand uses black-translucent (lib/install-settings.ts). title: the
+ *     short name under the icon.
+ *   - icons.apple: iPhone's home screen icon, app/install-icon/[name].
+ *     The favicon stays first among the icons.
+ */
+const PHONE_METADATA: Metadata = {
+  manifest: "/install-manifest",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: IPHONE_STATUS_BAR,
+    title: APP_SHORT_NAME,
+  },
+  icons: {
+    apple: [
+      {
+        url: `/install-icon/${APPLE_ICON.name}`,
+        sizes: `${APPLE_ICON.size}x${APPLE_ICON.size}`,
+        type: "image/png",
+      },
+    ],
+  },
+};
+
+export async function generateMetadata(): Promise<Metadata> {
+  const layout = await getInitialLayout();
+  return layout === "phone" ? { ...METADATA, ...PHONE_METADATA } : METADATA;
+}
 
 /*
  * Section 41.13. viewport-fit=cover lets the page reach under the notch
@@ -37,15 +81,26 @@ export const metadata: Metadata = {
  * "only light", because plain "light" still lets Chrome and Samsung
  * Internet on Android repaint the page dark when the phone is set dark.
  * Zooming is never blocked: no maximum-scale, no user-scalable (41.9 rule
- * 7). theme-color is the install settings' (41.12 rule 9), not here.
+ * 7).
  */
-export const viewport: Viewport = {
+const VIEWPORT: Viewport = {
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
   interactiveWidget: "resizes-content",
   colorScheme: "only light",
 };
+
+/*
+ * Phone only (decision above): themeColor is the install settings' theme
+ * colour, --primary (lib/install-settings.ts): the phone's status bar
+ * sits on primary (41.13 rule 4). A colour value, not a token, because
+ * the browser cannot read a token here (section 1 rule 1's exception).
+ */
+export async function generateViewport(): Promise<Viewport> {
+  const layout = await getInitialLayout();
+  return layout === "phone" ? { ...VIEWPORT, themeColor: INSTALL_COLOURS.theme } : VIEWPORT;
+}
 
 /**
  * Section 12.1: the sidebar's open or collapsed choice is saved and
@@ -98,6 +153,12 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
             <TooltipProvider>{children}</TooltipProvider>
           </SessionProvider>
           <Toaster />
+          {/* 41.12 rule 8: Chrome offers the install prompt once per page
+              load, often before More is open; this keeps it for More's
+              Install app button and stops Chrome's own pop-up. It
+              listens in the phone layout only and renders nothing, so on
+              desktop the event is never taken (lib/install.ts). */}
+          <InstallPromptCapture />
         </LayoutProvider>
       </body>
     </html>

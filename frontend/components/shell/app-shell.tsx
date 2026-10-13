@@ -9,6 +9,7 @@ import { usePageGuard, usePermissions } from "@/lib/permissions"
 import { PHONE_WORDS } from "@/lib/phone-words"
 import { Banner, BannerAction, BannerDescription } from "@/components/ui/banner"
 import { Button } from "@/components/ui/button"
+import { ConnectionBanner } from "@/components/ui/connection-banner"
 import { BandScope } from "@/components/ui/header-band"
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet"
 import { AppBar, AppBarProvider, useAppBarState } from "@/components/shell/app-bar"
@@ -226,6 +227,12 @@ function AppShell({ children }: { children: React.ReactNode }) {
             </TopBar>
           )}
           <PermissionsFailedBanner phone={phone} />
+          {/* Plan-phone Phase 5 (41.14 rules 6 and 11): the offline and
+              new-version banners, right after the app bar, phone only.
+              ConnectionBanner itself renders nothing on desktop. */}
+          {phone ? (
+            <ConnectionBanner className="shrink-0 px-4 pt-4" text={PHONE_WORDS.connection} />
+          ) : null}
           {/* The skip link's target: focusable by script, not a tab stop,
               and no ring because it is not a control. On phone it is the
               phone content area (content-area.tsx PHONE_CONTENT), and the

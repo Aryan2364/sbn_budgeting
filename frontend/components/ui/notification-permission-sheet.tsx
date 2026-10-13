@@ -8,7 +8,7 @@ import { Sheet, SheetClose, SheetContent, SheetDescription, SheetFooter, SheetHe
 import { toast } from "@/components/ui/sonner"
 import { Switch } from "@/components/ui/switch"
 import { TextLink } from "@/components/ui/text-link"
-import type { InstallPlatform } from "@/lib/push-device"
+import type { InstallPlatform } from "@/lib/install"
 import { useLayout } from "@/lib/layout"
 import { unsubscribePush, usePushPermission } from "@/lib/push"
 
