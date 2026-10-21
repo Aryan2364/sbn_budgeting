@@ -10,12 +10,15 @@ import {
   ApiError,
   query,
   type DashboardSummary,
+  type PeriodSummary,
   type VarianceRow,
 } from "@/lib/api"
 import {
+  EMPTY_VALUE,
   formatAmount,
   formatDate,
   formatNumber,
+  formatPercent,
   formatShortCurrency,
   formatShortNumber,
 } from "@/lib/format"
@@ -41,6 +44,12 @@ import {
   MetricTile,
   MetricTileRow,
 } from "@/components/templates/dashboard-page"
+import {
+  PeriodSelect,
+  reportPeriodLabel,
+  reportPeriodParam,
+  type ReportPeriod,
+} from "@/components/forms/report-scope"
 
 /**
  * Section 11.4. Four tiles, the budget-versus-actual summary, two
@@ -94,22 +103,57 @@ function Dashboard() {
    * it is showing fewer sites than exist, rather than silently
    * truncating.
    */
-  const [chart, setChart] = React.useState<VarianceRow[] | null>(null)
+  const [chart, setChart] = React.useState<{
+    rows: VarianceRow[]
+    period: ReportPeriod
+  } | null>(null)
+
+  /**
+   * CLIENT INSTRUCTION, 21 Oct 2026: zone 2 is read at a chosen period
+   * (All years, Plantation, Year 1 to Year 4) - the same `PeriodSelect`
+   * the variance report uses - and shows % consumed. The card's figures
+   * come from the periods summary, which carries every period, so a
+   * change redraws them; the bars are refetched for the period.
+   */
+  const [period, setPeriod] = React.useState<ReportPeriod>("all")
+  const [periods, setPeriods] = React.useState<PeriodSummary | null>(null)
 
   React.useEffect(() => {
     let cancelled = false
     api
       .get<{ data: VarianceRow[] }>(
-        `/reports/variance${query({ pageSize: CHART_SITES, sort: "budget", direction: "desc" })}`,
+        `/reports/variance${query({
+          pageSize: CHART_SITES,
+          sort: "budget",
+          direction: "desc",
+          period: reportPeriodParam(period),
+        })}`,
       )
       .then((response) => {
-        if (!cancelled) setChart(response.data)
+        if (!cancelled) setChart({ rows: response.data, period })
       })
       // The chart is one card on a read-only page. If it alone fails,
       // the tiles and the panels are still worth showing, so this does
       // not take the whole screen to the failed state.
       .catch(() => {
-        if (!cancelled) setChart([])
+        if (!cancelled) setChart({ rows: [], period })
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [attempt, period])
+
+  React.useEffect(() => {
+    let cancelled = false
+    api
+      .get<PeriodSummary>("/reports/variance/periods-summary")
+      .then((result) => {
+        if (!cancelled) setPeriods(result)
+      })
+      // As the bars: the card keeps its skeleton rather than taking the
+      // whole screen to the failed state.
+      .catch(() => {
+        if (!cancelled) setPeriods(null)
       })
     return () => {
       cancelled = true
@@ -200,6 +244,14 @@ function Dashboard() {
   }
 
   const data = load.state === "ready" ? load.data : null
+  // Derived in render: bars still showing the previous period read as
+  // loading, never as the new period's answer.
+  const bars = chart && chart.period === period ? chart.rows : null
+  const figures = periods
+    ? period === "all"
+      ? periods.total
+      : periods.rows[period]
+    : null
 
   /**
    * Month over month, computed from two figures the API summed in SQL.
@@ -311,18 +363,22 @@ function Dashboard() {
         <CardHeader>
           <div className="min-w-0">
             <CardTitle>Budget against actual</CardTitle>
-            {data && chart && chart.length < data.siteCount ? (
+            {data && bars && bars.length < data.siteCount ? (
               <p className="mt-1 text-meta text-text-muted">
-                The {formatNumber(chart.length)} largest budgets of{" "}
+                The {formatNumber(bars.length)} largest budgets of{" "}
                 {formatNumber(data.siteCount)} sites. The full list is on
                 the variance report.
               </p>
             ) : null}
           </div>
-          <span className="shrink-0 text-meta text-text-muted">All time</span>
         </CardHeader>
         <CardContent>
-          {!data || !chart ? (
+          {/* The period selector sits with the figures it changes, and
+              states the period every figure below covers (11.4). */}
+          <div className="mb-6">
+            <PeriodSelect id="dashboard-period" value={period} onChange={setPeriod} />
+          </div>
+          {!data || !figures || !bars ? (
             <div className="flex flex-col gap-3">
               <Skeleton className="h-4 w-1/2" />
               <Skeleton className="h-4 w-1/3" />
@@ -340,39 +396,53 @@ function Dashboard() {
                 Set a site budget
               </Button>
             </div>
+          ) : figures.budgetPaise === null ? (
+            <p className="text-body text-text-secondary">
+              Budget not set for {reportPeriodLabel(period)}. No site has a
+              budget entered for this period, so there is nothing to compare
+              its spend of {formatShortCurrency(figures.actualPaise)} against.
+            </p>
           ) : (
             /*
-              These three are the card's tiles: one large figure each, read
+              These four are the card's tiles: one large figure each, read
               at a glance, so they take the short form of section 18.1
               (₹12.46 Cr). The full figures are one click away on the
               variance report. The figure may still wrap (break-words,
               min-w-0) but never runs into its neighbour: a number is
               never truncated, because "₹20,00,00…" is a different number.
             */
-            <dl className="grid grid-cols-1 gap-6 sm:grid-cols-3">
+            <dl className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
               <div className="min-w-0">
                 <dt className="text-label text-text-secondary">Budget</dt>
                 <dd className="mt-1 text-section font-medium tabular-nums break-words text-text-primary">
-                  {formatShortCurrency(data.budgetPaise)}
+                  {formatShortCurrency(figures.budgetPaise)}
                 </dd>
               </div>
               <div className="min-w-0">
                 <dt className="text-label text-text-secondary">Actual</dt>
                 <dd className="mt-1 text-section font-medium tabular-nums break-words text-text-primary">
-                  {formatShortCurrency(data.actualPaise)}
+                  {formatShortCurrency(figures.actualPaise)}
+                </dd>
+              </div>
+              <div className="min-w-0">
+                <dt className="text-label text-text-secondary">% consumed</dt>
+                <dd className="mt-1 text-section font-medium tabular-nums break-words text-text-primary">
+                  {figures.consumedPct === null
+                    ? EMPTY_VALUE
+                    : formatPercent(Number(figures.consumedPct))}
                 </dd>
               </div>
               <div className="min-w-0">
                 <dt className="text-label text-text-secondary">Variance</dt>
                 <dd className="mt-1 flex flex-wrap items-center gap-x-2 text-section font-medium tabular-nums text-text-primary">
                   <span className="min-w-0 break-words">
-                    {formatShortCurrency(data.variancePaise)}
+                    {formatShortCurrency(figures.variancePaise)}
                   </span>
                   {/* Section 7.2 rule 1 and the plan's locked ruling:
                       the direction is a WORD, never colour alone. */}
-                  {data.variancePaise != null ? (
+                  {figures.variancePaise != null ? (
                     <span className="text-label font-normal">
-                      {BigInt(data.variancePaise) < 0n ? (
+                      {BigInt(figures.variancePaise) < 0n ? (
                         <Badge variant="danger">over</Badge>
                       ) : (
                         <Badge variant="neutral">under</Badge>
@@ -395,10 +465,10 @@ function Dashboard() {
             a number. Every figure a person reads beside a bar is
             formatted from the paise string it came as.
           */}
-          {data && data.budgetPaise != null && chart && chart.length > 0 ? (
+          {data && data.budgetPaise != null && figures?.budgetPaise != null && bars && bars.length > 0 ? (
             <CategoryBarChart
               className="mt-6"
-              data={chart}
+              data={bars}
               category={(row) => row.siteName}
               series={[
                 {
@@ -416,7 +486,12 @@ function Dashboard() {
                   label: "Actual",
                   value: (row) =>
                     row.actualPaise === undefined ? 0 : Number(BigInt(row.actualPaise) / 100n),
-                  format: (row) => formatShortCurrency(row.actualPaise),
+                  // % consumed beside the amount it describes, so each
+                  // site's share reads without a second chart.
+                  format: (row) =>
+                    row.consumedPct == null
+                      ? formatShortCurrency(row.actualPaise)
+                      : `${formatShortCurrency(row.actualPaise)} · ${formatPercent(Number(row.consumedPct))}`,
                 },
               ]}
             />
