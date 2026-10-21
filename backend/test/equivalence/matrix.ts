@@ -6,7 +6,13 @@ import type { DiscoveredRoute, HarnessApp } from '../support/app';
 import { testTxIdle } from '../support/test-tx';
 import { ROUTES, World, resolveQueries, type BodyContext, type Person, type Variant } from './cases';
 import { USER_LABEL } from './fixtures';
-import { actionsDifferInWordsOnly, withoutAdditiveKeys, withoutComplaintAdditions, withoutRecordCan } from './intended';
+import {
+  actionsDifferInWordsOnly,
+  withoutAdditiveKeys,
+  withoutComplaintAdditions,
+  withoutConsumedPct,
+  withoutRecordCan,
+} from './intended';
 import { LegacyUndo, UNDONE_ROUTES, type LegacyWorld, type Why } from './legacy-approvals';
 import { legacyActions, type LegacyViewer } from './legacy-complaint-actions';
 import { legacySitesBody } from './legacy-complaint-messages';
@@ -225,7 +231,9 @@ async function runCase(
     const out: CaseResult = {
       status: res.status,
       keys: keysOf(res.body),
-      digest: digest(withoutComplaintAdditions(path, withoutRecordCan(withoutAdditiveKeys(path, res.body)))),
+      digest: digest(
+        withoutConsumedPct(path, withoutComplaintAdditions(path, withoutRecordCan(withoutAdditiveKeys(path, res.body)))),
+      ),
     };
     const rows = rowsOf(res.body);
     if (rows) {
@@ -286,7 +294,7 @@ async function runCase(
     itemKeys: unionItemKeys(all),
     // D7 (intended.ts): each row's `can` (and a complaint row's `title`)
     // is left out, so the rest must match.
-    digest: digest(withoutComplaintAdditions(path, withoutRecordCan(sortedRows))),
+    digest: digest(withoutConsumedPct(path, withoutComplaintAdditions(path, withoutRecordCan(sortedRows)))),
   };
   if (first && typeof first.total === 'number') out.total = first.total;
   if (first && first.aggregates && typeof first.aggregates === 'object') {

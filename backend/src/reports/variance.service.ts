@@ -9,7 +9,8 @@ import { type Param, scopeWhere } from '../access/scope';
  * The only code in this service that reads a budget, an actual or a
  * variance. Every figure comes from the single `variance` view in
  * migrations/0002_variance.sql — the Reports landing list is that view
- * at grain 'site', and the site detail Variance tab is the same view at
+ * at grain 'site' (or, narrowed to one period, the same sites with their
+ * 'site_period' row), and the site detail Variance tab is the same view at
  * grain 'site_head_period' (the head-wise, year-wise report).
  *
  * Not separate queries. Two definitions let the site totals and the
@@ -52,7 +53,13 @@ const SEE_AMOUNTS = 'budget.amounts.see';
 export const VARIANCE_AMOUNT_KEYS: readonly string[] = ['sitesOverBudget', 'attention'];
 
 /** The report list's sort keys that are amounts. */
-const AMOUNT_SORTS: ReadonlySet<string> = new Set(['variance', 'budget', 'actual', 'variancePct']);
+const AMOUNT_SORTS: ReadonlySet<string> = new Set([
+  'variance',
+  'budget',
+  'actual',
+  'variancePct',
+  'consumedPct',
+]);
 
 const SORT_NEEDS_AMOUNTS = 'Sorting by amount needs see amounts.';
 
@@ -73,6 +80,8 @@ export interface VariancePeriodRow {
   actualPaise: string;
   variancePaise: string | null;
   variancePct: string | null;
+  /** Actual / budget x 100, one decimal. null where the budget is null or 0. */
+  consumedPct: string | null;
 }
 
 /** Phase 7b, Report 2. One cost head across the five periods. */
@@ -125,6 +134,8 @@ export interface VarianceRow {
   actualPaise: string;
   variancePaise: string | null;
   variancePct: string | null;
+  /** Actual / budget x 100, one decimal. null where the budget is null or 0. */
+  consumedPct: string | null;
 }
 
 @Injectable()
@@ -132,13 +143,23 @@ export class VarianceService {
   constructor(@Inject(PG_POOL) private readonly pool: Pool) {}
 
   /**
-   * Screen 1. Every site with its all-time totals.
+   * Screen 1. Every site with its totals: all years, or one period.
    *
-   * All-time, with no filter of any kind (question 8) — no date range
-   * and no period selector on this screen. Default sort is variance
-   * ascending, so the most overspent sites are on screen without
-   * anyone filtering, with NULLS LAST in both directions so that
-   * unbudgeted sites do not float to the top of a descending sort.
+   * All years by default (question 8). CLIENT INSTRUCTION, 21 Oct 2026:
+   * the report can be narrowed to one period (0 = Plantation, 1..4 =
+   * Year 1..4) — `period` is the only filter on it, and there is still
+   * no date range. Default sort is variance ascending, so the most
+   * overspent sites are on screen without anyone filtering, with NULLS
+   * LAST in both directions so that unbudgeted sites do not float to
+   * the top of a descending sort.
+   *
+   * **The sites are the spine, not the 'site_period' rows.** The view
+   * only has a 'site_period' row where a site has a budget or an expense
+   * in that period, so driving the list from it would drop a site with
+   * nothing in the chosen period. The list is driven from the 'site'
+   * grain (one row per site, always) and the chosen period's row is
+   * LEFT JOINed on: no row reads as "Budget not set" and an actual of 0,
+   * exactly as an empty site does all-time. Same view, same arithmetic.
    */
   async sites(
     access: AccessContext,
@@ -146,6 +167,8 @@ export class VarianceService {
       search?: string;
       projectId?: string;
       managerId?: string;
+      /** '0'..'4'. Omitted or empty = all years. Anything else is a 400. */
+      period?: string;
       sort?: string;
       direction?: 'asc' | 'desc';
       page?: number;
@@ -158,6 +181,22 @@ export class VarianceService {
       return `$${values.length}`;
     };
 
+    const periodRaw = params.period?.trim();
+    if (periodRaw !== undefined && periodRaw !== '' && !/^[0-4]$/.test(periodRaw)) {
+      throw new BadRequestException(
+        `"${periodRaw}" is not a period. Use 0 for Plantation, 1 to 4 for Year 1 to 4, or leave it out for all years.`,
+      );
+    }
+    const period = periodRaw === undefined || periodRaw === '' ? null : Number(periodRaw);
+    // The alias the figures are read from: the site's all-years row, or
+    // its row for the chosen period (LEFT JOINed, so it may be absent).
+    const f = period === null ? 'v' : 'vp';
+    const periodJoin =
+      period === null
+        ? ''
+        : `left join variance vp
+             on vp.site_id = v.site_id and vp.grain = 'site_period' and vp.period = ${param(period)}`;
+
     const where: string[] = [`v.grain = 'site'`, scopeWhere(access, REPORTS, 'variance', 'v', param)];
 
     if (params.search?.trim()) {
@@ -169,13 +208,14 @@ export class VarianceService {
     if (params.managerId) where.push(`s.manager_id = ${param(params.managerId)}`);
 
     const sortable: Record<string, string> = {
-      variance: 'v.variance_paise',
+      variance: `${f}.variance_paise`,
       site: 'v.site_name',
       project: 'v.project_name',
       trees: 'v.planned_trees',
-      budget: 'v.budget_paise',
-      actual: 'v.actual_paise',
-      variancePct: 'v.variance_pct',
+      budget: `${f}.budget_paise`,
+      actual: `coalesce(${f}.actual_paise, 0)`,
+      variancePct: `${f}.variance_pct`,
+      consumedPct: `${f}.spent_pct`,
     };
     const seesAmounts = can(access, SEE_AMOUNTS);
     const sortKey = params.sort ?? (seesAmounts ? 'variance' : 'site');
@@ -212,13 +252,15 @@ export class VarianceService {
         null::uuid       as "costHeadId",
         null::text       as "costHeadName",
         null::smallint   as "period",
-        v.budget_paise   as "budgetPaise",
-        v.actual_paise   as "actualPaise",
-        v.variance_paise as "variancePaise",
-        v.variance_pct   as "variancePct",
-        count(*) over () as "totalCount"
+        ${f}.budget_paise                   as "budgetPaise",
+        coalesce(${f}.actual_paise, 0)      as "actualPaise",
+        ${f}.variance_paise                 as "variancePaise",
+        ${f}.variance_pct                   as "variancePct",
+        ${f}.spent_pct::text                as "consumedPct",
+        count(*) over ()                    as "totalCount"
       from variance v
       join sites s on s.id = v.site_id
+      ${periodJoin}
       where ${where.join(' and ')}
       order by ${sortSql} ${direction} nulls last, v.site_name asc
       limit ${limit} offset ${offset}
@@ -424,7 +466,12 @@ export class VarianceService {
           ((sum(scoped.budget_paise) - coalesce(sum(scoped.actual_paise), 0)) * 100.0)
             / nullif(sum(scoped.budget_paise), 0),
           1
-        )::text                                     as "variancePct"
+        )::text                                     as "variancePct",
+        round(
+          (coalesce(sum(scoped.actual_paise), 0) * 100.0)
+            / nullif(sum(scoped.budget_paise), 0),
+          1
+        )::text                                     as "consumedPct"
       from spine
       left join scoped on scoped.period = spine.period
       group by spine.period
@@ -447,7 +494,12 @@ export class VarianceService {
           ((sum(v.budget_paise) - coalesce(sum(v.actual_paise), 0)) * 100.0)
             / nullif(sum(v.budget_paise), 0),
           1
-        )::text                              as "variancePct"
+        )::text                              as "variancePct",
+        round(
+          (coalesce(sum(v.actual_paise), 0) * 100.0)
+            / nullif(sum(v.budget_paise), 0),
+          1
+        )::text                              as "consumedPct"
       from variance v
       where ${where.join(' and ')}
       `,
@@ -463,13 +515,14 @@ export class VarianceService {
   /**
    * Phase 7b, Report 2. Cost head down the side, period across the top.
    *
-   * CLIENT INSTRUCTION, 7 Sep 2026, with the cell content settled on
-   * 12 Sep: **one measure at a time**, chosen on the screen. Five
-   * period columns, not a budget / actual / variance triple per period
-   * — that is fifteen columns and question 8 ruled it out by name. All
-   * four measures are returned for every cell and the screen picks; the
-   * alternative is a round trip every time somebody changes the
-   * dropdown, for data already in hand.
+   * CLIENT INSTRUCTION, 7 Sep 2026, reversed 21 Oct 2026: the screen
+   * shows **one period at a time**, chosen on the screen, with Budget,
+   * Actual, % consumed, Variance and Variance % as the columns. (It was
+   * one measure at a time across five period columns; a triple per
+   * period was fifteen columns and question 8 ruled it out by name.)
+   * All five measures are returned for every cell of every period and
+   * the screen picks the period's cell; the alternative is a round trip
+   * every time somebody changes the dropdown, for data already in hand.
    *
    * **NO COLUMN GROUP PER SITE.** The per-site cross-tab was scoped out
    * deliberately. A project scope sums its sites into one set of five
@@ -546,7 +599,12 @@ export class VarianceService {
           ((sum(budget_paise) - coalesce(sum(actual_paise), 0)) * 100.0)
             / nullif(sum(budget_paise), 0),
           1
-        )::text                               as "variancePct"
+        )::text                               as "variancePct",
+        round(
+          (coalesce(sum(actual_paise), 0) * 100.0)
+            / nullif(sum(budget_paise), 0),
+          1
+        )::text                               as "consumedPct"
       from cells
       group by grouping sets (
         (cost_head_id, name, sort_order, period),
@@ -646,6 +704,7 @@ function asPeriodRow(row: Record<string, unknown>): VariancePeriodRow {
     actualPaise: (row.actualPaise as string | null) ?? '0',
     variancePaise: (row.variancePaise as string | null) ?? null,
     variancePct: (row.variancePct as string | null) ?? null,
+    consumedPct: (row.consumedPct as string | null) ?? null,
   };
 }
 

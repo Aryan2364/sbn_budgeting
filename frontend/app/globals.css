@@ -647,7 +647,7 @@ html[data-keyboard="open"] {
 
   /* Tracking-only RecordList widths (components/templates/record-list.tsx),
      kept for backward compatibility. New screens use the 17.1 tokens.
-     - `tight` (110px): Date ("26/08/26") and Period ("Initial") plus a
+     - `tight` (110px): Date ("26/08/26") and Period ("Plantation") plus a
        sort icon.
      - `narrow` (140px): a bill/voucher reference ("INV-2026-0087"). */
   --spacing-col-tight: 110px;

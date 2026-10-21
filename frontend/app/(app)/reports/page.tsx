@@ -1,22 +1,20 @@
 ﻿"use client"
 
 import * as React from "react"
-import { useSearchParams } from "next/navigation"
+import { usePathname, useRouter, useSearchParams } from "next/navigation"
 
 import { api, query } from "@/lib/api"
 import { usePageGuard } from "@/lib/permissions"
 import type {
   HeadPeriodReport,
-  HeadPeriodRow,
   ListResponse,
   Matchable,
   PeriodSummary,
   VariancePeriodRow,
   VarianceRow,
 } from "@/lib/api"
-import { EMPTY_VALUE, formatAmount, formatNumber, formatPercent } from "@/lib/format"
-import { paiseToRupeeInput } from "@/lib/money"
-import { PERIODS, periodLabel } from "@/lib/periods"
+import { formatAmount, formatNumber } from "@/lib/format"
+import { periodLabel } from "@/lib/periods"
 import { EmptyState } from "@/components/ui/empty-state"
 import { ExportButton } from "@/components/ui/export-button"
 import type { ExportColumn, PdfTotalRow } from "@/lib/pdf-export"
@@ -24,93 +22,54 @@ import { PrintHeader } from "@/components/ui/print-header"
 import { Truncate } from "@/components/ui/truncate"
 import { PageFrame, PageHeader } from "@/components/templates/page"
 import { ListDataArea, ListToolbar } from "@/components/templates/list-page"
-import { RecordList, type RecordColumn } from "@/components/templates/record-list"
+import {
+  RecordList,
+  type ListState,
+  type RecordColumn,
+} from "@/components/templates/record-list"
 import { SectionTabs, type SectionTab } from "@/components/templates/section-tabs"
 import {
   BudgetFigure,
+  ConsumedPercentFigure,
   VarianceFigure,
   VariancePercentFigure,
-  varianceDirection,
+  excelAmountValue,
+  excelPercentValue,
+  pdfBudgetCell,
+  pdfConsumedPctCell,
+  pdfVarianceCell,
+  pdfVariancePctCell,
 } from "@/components/forms/variance-figures"
-import { HeadPeriodGrid, measureLabel, type Measure } from "@/components/forms/head-period-grid"
+import {
+  HeadPeriodGrid,
+  headPeriodExportColumns,
+  headPeriodExportTotalRow,
+} from "@/components/forms/head-period-grid"
 import { PeriodSummaryTable } from "@/components/forms/period-summary-table"
 import {
+  PeriodSelect,
   ReportScopeControls,
+  parseReportPeriod,
+  reportPeriodLabel,
+  reportPeriodParam,
   useReportScope,
+  type ReportPeriod,
 } from "@/components/forms/report-scope"
-
-/**
- * Shared PDF cell formatters, mirroring exactly what the on-screen
- * `variance-figures` components render (BudgetFigure, VarianceFigure,
- * VariancePercentFigure) but as plain strings for the PDF table.
- */
-function pdfBudgetCell(paise: string | null): string {
-  return paise === null ? "Budget not set" : formatAmount(paise)
-}
-
-function pdfVarianceCell(paise: string | null): string {
-  if (paise === null) return EMPTY_VALUE
-  return `${varianceDirection(paise)} ${formatAmount(paise)}`
-}
-
-function pdfVariancePctCell(pct: string | null): string {
-  return pct === null ? EMPTY_VALUE : formatPercent(Number(pct))
-}
-
-function pdfPeriodCell(cell: VariancePeriodRow): string {
-  return pdfBudgetCell(cell.budgetPaise)
-}
-
-/**
- * Excel-only counterpart to the `pdf*Cell` string formatters above: a
- * real numeric cell in rupees, or `null` when the underlying value is
- * genuinely absent (never `0`, which would state a decision nobody
- * made — same distinction section 31.2 draws on screen).
- *
- * `paiseToRupeeInput` (lib/money.ts) does the paise->rupees conversion
- * by string manipulation and already returns `""` for `null`; `Number()`
- * on that exact decimal string is the only conversion to a JS number —
- * never `Number(paise) / 100`, which is float division on money and
- * exactly what this product's paise-as-string convention exists to
- * avoid.
- */
-function excelAmountValue(paise: string | null): number | null {
-  const text = paiseToRupeeInput(paise)
-  return text === "" ? null : Number(text)
-}
-
-function excelPercentValue(pct: string | null): number | null {
-  return pct === null ? null : Number(pct)
-}
-
-/**
- * The head-period grid's export must carry whichever measure the user
- * is actually looking at (bug fix, Sep 2026) — never a hardcoded
- * "Budget" — so this mirrors `HeadPeriodGrid`'s own `Figure` switch,
- * one measure at a time, same as the screen.
- */
-function pdfHeadCell(cell: VariancePeriodRow, measure: Measure): string {
-  switch (measure) {
-    case "budget":
-      return pdfBudgetCell(cell.budgetPaise)
-    case "actual":
-      return formatAmount(cell.actualPaise)
-    case "variance":
-      return pdfVarianceCell(cell.variancePaise)
-    case "variancePct":
-      return pdfVariancePctCell(cell.variancePct)
-  }
-}
 
 /**
  * The Reports section. Three reports over the same variance
  * definition, reached by the section 33 tab bar.
  *
- *   By site              — Phase 7, screen 1. Every site, all-time.
- *   By year              — Phase 7b, Report 1. Five periods.
- *   By cost head and year — Phase 7b, Report 2. Nineteen heads × five
- *                           periods, the same grid the site detail
- *                           Variance tab uses.
+ *   By site      — Phase 7, screen 1. Every site, at one period.
+ *   By year      — Phase 7b, Report 1. Five periods.
+ *   By cost head — Phase 7b, Report 2. Nineteen heads at one period,
+ *                  the same grid the site detail Variance tab uses.
+ *
+ * Client instruction, 21 Oct 2026: By site and By cost head each take a
+ * "Period" dropdown (All years, Plantation, Year 1 to Year 4; the shared
+ * `PeriodSelect`), and all three carry a "% consumed" column after
+ * Actual. The exports follow the screen column for column and name the
+ * chosen period in their title.
  *
  * Every figure on all three comes from the one `variance` view written
  * in Phase 3 and the grains migration 0004 added. Nothing here adds two
@@ -120,7 +79,7 @@ function pdfHeadCell(cell: VariancePeriodRow, measure: Measure): string {
 const TABS: SectionTab[] = [
   { value: "sites", label: "By site" },
   { value: "years", label: "By year" },
-  { value: "heads", label: "By cost head and year" },
+  { value: "heads", label: "By cost head" },
 ]
 
 /**
@@ -141,18 +100,37 @@ export default function ReportsPage() {
 }
 
 function Reports() {
+  const router = useRouter()
+  const pathname = usePathname()
   const searchParams = useSearchParams()
   const requested = searchParams.get("view") ?? "sites"
   const view = TABS.some((t) => t.value === requested) ? requested : "sites"
 
-  const tabs = <SectionTabs tabs={TABS} value={view} />
+  /**
+   * Section 33.4: the toolbar's state belongs to its tab, so switching
+   * tabs writes the new `view` and drops `period`, which only the by-site
+   * tab keeps in the URL. Without this the by-site period would linger in
+   * the address of the other two tabs and come back unasked.
+   */
+  const tabs = (
+    <SectionTabs
+      tabs={TABS}
+      value={view}
+      onValueChange={(next) => {
+        const params = new URLSearchParams(searchParams.toString())
+        params.set("view", next)
+        params.delete("period")
+        router.replace(`${pathname}?${params.toString()}`, { scroll: false })
+      }}
+    />
+  )
 
   if (view === "sites") return <SitesReport tabs={tabs} />
   return <YearReport view={view} tabs={tabs} />
 }
 
 // ---------------------------------------------------------------
-// Tab 1 — by site. Phase 7's screen 1, unchanged apart from the tabs.
+// Tab 1 — by site. Phase 7's screen 1, now read at a chosen period.
 // ---------------------------------------------------------------
 
 type VarianceSiteRow = VarianceRow & { id: string }
@@ -194,6 +172,14 @@ const COLUMNS: RecordColumn<VarianceSiteRow>[] = [
     render: (row) => formatAmount(row.actualPaise),
   },
   {
+    key: "consumedPct",
+    label: "% consumed",
+    numeric: true,
+    sortKey: "consumedPct",
+    priority: "secondary",
+    render: (row) => <ConsumedPercentFigure pct={row.consumedPct} />,
+  },
+  {
     key: "variance",
     label: "Variance",
     numeric: true,
@@ -232,6 +218,12 @@ const SITES_EXPORT_COLUMNS: ExportColumn<VarianceSiteRow>[] = [
     excelValue: (row) => excelAmountValue(row.actualPaise),
   },
   {
+    header: "% consumed",
+    cell: (row) => pdfConsumedPctCell(row.consumedPct),
+    numeric: true,
+    excelValue: (row) => excelPercentValue(row.consumedPct),
+  },
+  {
     header: "Variance",
     cell: (row) => pdfVarianceCell(row.variancePaise),
     numeric: true,
@@ -246,6 +238,42 @@ const SITES_EXPORT_COLUMNS: ExportColumn<VarianceSiteRow>[] = [
 ]
 
 function SitesReport({ tabs }: { tabs: React.ReactNode }) {
+  const router = useRouter()
+  const pathname = usePathname()
+  const searchParams = useSearchParams()
+
+  /**
+   * The period lives in the URL (`?view=sites&period=2`, omitted for
+   * All years), written with replace rather than push like the tab
+   * (section 33.4), so opening a site and coming back keeps it.
+   */
+  const period = parseReportPeriod(searchParams.get("period"))
+
+  /**
+   * RecordList's own search / sort / page state, lifted here only so a
+   * period change can send the list back to page 1. The period itself is
+   * deliberately NOT in `filters`: that bag would raise RecordList's
+   * "Clear all" zone for a control that is not a filter. It reaches the
+   * list through `load` and, so the table shows its loading state on a
+   * change, through `refreshKey`.
+   */
+  const [listState, setListState] = React.useState<ListState>({
+    search: "",
+    sort: "variance",
+    direction: "asc",
+    page: 1,
+    filters: {},
+  })
+
+  const changePeriod = (next: ReportPeriod) => {
+    const params = new URLSearchParams(searchParams.toString())
+    const value = reportPeriodParam(next)
+    if (value === undefined) params.delete("period")
+    else params.set("period", value)
+    router.replace(`${pathname}?${params.toString()}`, { scroll: false })
+    setListState((state) => ({ ...state, page: 1 }))
+  }
+
   /**
    * The variance endpoint predates the shared list convention's
    * response shape. `totalPages` and `matchedField` are derived here
@@ -274,7 +302,9 @@ function SitesReport({ tabs }: { tabs: React.ReactNode }) {
         total: number
         page: number
         pageSize: number
-      }>(`/reports/variance${query({ page, search, sort, direction })}`)
+      }>(
+        `/reports/variance${query({ page, search, sort, direction, period: reportPeriodParam(period) })}`,
+      )
 
       return {
         ...response,
@@ -291,21 +321,27 @@ function SitesReport({ tabs }: { tabs: React.ReactNode }) {
         })),
       }
     },
-    [],
+    [period],
   )
+
+  const periodName = reportPeriodLabel(period)
 
   return (
     <RecordList
       title="Variance report"
       countLabel={(total) =>
-        `${formatNumber(total)} ${total === 1 ? "site" : "sites"} · all time`
+        `${formatNumber(total)} ${total === 1 ? "site" : "sites"} · ${periodName}`
       }
       searchLabel="Search sites"
       searchPlaceholder="Search sites"
       sectionTabs={tabs}
-      printTitle="Variance report — By site"
+      printTitle={`Variance report — By site — ${periodName}`}
+      toolbarExtra={<PeriodSelect value={period} onChange={changePeriod} />}
+      listState={listState}
+      onListStateChange={setListState}
+      refreshKey={period === "all" ? 0 : period + 1}
       exportPdf={{
-        title: "Variance report — By site",
+        title: `Variance report — By site — ${periodName}`,
         columns: SITES_EXPORT_COLUMNS,
       }}
       columns={COLUMNS}
@@ -337,7 +373,7 @@ const YEAR_EXPORT_COLUMNS: ExportColumn<VariancePeriodRow>[] = [
   { header: "Period", cell: (row) => periodLabel(row.period) },
   {
     header: "Budget",
-    cell: pdfPeriodCell,
+    cell: (row) => pdfBudgetCell(row.budgetPaise),
     numeric: true,
     excelValue: (row) => excelAmountValue(row.budgetPaise),
   },
@@ -346,6 +382,12 @@ const YEAR_EXPORT_COLUMNS: ExportColumn<VariancePeriodRow>[] = [
     cell: (row) => formatAmount(row.actualPaise),
     numeric: true,
     excelValue: (row) => excelAmountValue(row.actualPaise),
+  },
+  {
+    header: "% consumed",
+    cell: (row) => pdfConsumedPctCell(row.consumedPct),
+    numeric: true,
+    excelValue: (row) => excelPercentValue(row.consumedPct),
   },
   {
     header: "Variance",
@@ -360,44 +402,6 @@ const YEAR_EXPORT_COLUMNS: ExportColumn<VariancePeriodRow>[] = [
     excelValue: (row) => excelPercentValue(row.variancePct),
   },
 ]
-
-/**
- * Excel value for a head-period cell. Mirrors `pdfHeadCell`'s measure
- * switch, but returns the raw number (or `null` when not set) instead
- * of the formatted, sign-prefixed or percent-suffixed string.
- */
-function excelHeadCell(cell: VariancePeriodRow, measure: Measure): number | null {
-  switch (measure) {
-    case "budget":
-      return excelAmountValue(cell.budgetPaise)
-    case "actual":
-      return excelAmountValue(cell.actualPaise)
-    case "variance":
-      return excelAmountValue(cell.variancePaise)
-    case "variancePct":
-      return excelPercentValue(cell.variancePct)
-  }
-}
-
-function headExportColumns(measure: Measure): ExportColumn<HeadPeriodRow>[] {
-  return [
-    { header: "Cost head", cell: (row) => row.costHeadName },
-    ...PERIODS.map(
-      (label, index): ExportColumn<HeadPeriodRow> => ({
-        header: label,
-        cell: (row) => pdfHeadCell(row.cells[index], measure),
-        numeric: true,
-        excelValue: (row) => excelHeadCell(row.cells[index], measure),
-      }),
-    ),
-    {
-      header: "Total",
-      cell: (row) => pdfHeadCell(row.total, measure),
-      numeric: true,
-      excelValue: (row) => excelHeadCell(row.total, measure),
-    },
-  ]
-}
 
 function YearReport({ view, tabs }: { view: string; tabs: React.ReactNode }) {
   const scope = useReportScope()
@@ -424,19 +428,17 @@ function YearReport({ view, tabs }: { view: string; tabs: React.ReactNode }) {
   } | null>(null)
 
   /**
-   * BUG FIX: the measure selector used to live only inside
-   * `HeadPeriodGrid`'s own state, invisible to this page — so the
-   * export always shipped "Budget" no matter what the grid was
-   * showing. `HeadPeriodGrid` now accepts `measure`/`onMeasureChange`
-   * as a controlled-with-internal-default pair; this page controls it
-   * so the grid on screen and the export below read the exact same
-   * value.
+   * The period selector lives inside `HeadPeriodGrid`, but this page
+   * controls its value (`period` / `onPeriodChange`) so the grid on
+   * screen and the export below read the exact same value. Local state,
+   * not the URL: only the by-site tab keeps its period in the address.
    */
-  const [headMeasure, setHeadMeasure] = React.useState<Measure>("budget")
-  const headExportColumnsForMeasure = React.useMemo(
-    () => headExportColumns(headMeasure),
-    [headMeasure],
+  const [headPeriod, setHeadPeriod] = React.useState<ReportPeriod>("all")
+  const headExportColumnsForPeriod = React.useMemo(
+    () => headPeriodExportColumns(headPeriod),
+    [headPeriod],
   )
+  const headTitle = `Variance report — By cost head — ${reportPeriodLabel(headPeriod)}`
 
   const periodFetchPage = React.useCallback(async () => {
     const result = await api.get<PeriodSummary>(
@@ -452,8 +454,9 @@ function YearReport({ view, tabs }: { view: string; tabs: React.ReactNode }) {
     return {
       cells: [
         "Total",
-        pdfPeriodCell(t),
+        pdfBudgetCell(t.budgetPaise),
         formatAmount(t.actualPaise),
+        pdfConsumedPctCell(t.consumedPct),
         pdfVarianceCell(t.variancePaise),
         pdfVariancePctCell(t.variancePct),
       ],
@@ -470,15 +473,8 @@ function YearReport({ view, tabs }: { view: string; tabs: React.ReactNode }) {
 
   const headTotalRow = React.useCallback((): PdfTotalRow | undefined => {
     const t = headTotalsRef.current
-    if (!t) return undefined
-    return {
-      cells: [
-        "Total",
-        ...t.periodTotals.map((cell) => pdfHeadCell(cell, headMeasure)),
-        pdfHeadCell(t.total, headMeasure),
-      ],
-    }
-  }, [headMeasure])
+    return t ? headPeriodExportTotalRow(t, headPeriod) : undefined
+  }, [headPeriod])
 
   return (
     <PageFrame>
@@ -487,16 +483,12 @@ function YearReport({ view, tabs }: { view: string; tabs: React.ReactNode }) {
         meta={
           view === "years"
             ? "Budget against actual for each budget period"
-            : "Budget against actual for each cost head, period by period"
+            : "Budget against actual for each cost head, for one period or all years"
         }
       />
 
       <PrintHeader
-        title={
-          view === "years"
-            ? "Variance report — By year"
-            : "Variance report — By cost head and year"
-        }
+        title={view === "years" ? "Variance report — By year" : headTitle}
       />
 
       {tabs}
@@ -504,11 +496,16 @@ function YearReport({ view, tabs }: { view: string; tabs: React.ReactNode }) {
       {/*
         Section 33.2: the toolbar belongs to the ACTIVE TAB, which is
         why the scope controls sit here and not above the tab bar. The
-        by-site report has no scope — it is every site, all-time — so
-        its toolbar carries a search box instead.
+        by-site report has no scope — it is every site — so its toolbar
+        carries a search box and the period instead.
       */}
       <ListToolbar>
         <ReportScopeControls {...scope} />
+        {/* The by-cost-head period sits here, beside Project and Site,
+            in the same toolbar position as the by-site tab's. */}
+        {view === "heads" ? (
+          <PeriodSelect value={headPeriod} onChange={setHeadPeriod} />
+        ) : null}
         {view === "years" ? (
           <ExportButton
             className="ml-auto"
@@ -521,9 +518,9 @@ function YearReport({ view, tabs }: { view: string; tabs: React.ReactNode }) {
         ) : (
           <ExportButton
             className="ml-auto"
-            title={`Variance report — By cost head and year — ${measureLabel(headMeasure)}`}
+            title={headTitle}
             contextDescription={scopeDescription}
-            columns={headExportColumnsForMeasure}
+            columns={headExportColumnsForPeriod}
             fetchPage={headFetchPage}
             buildTotalRow={headTotalRow}
           />
@@ -552,8 +549,9 @@ function YearReport({ view, tabs }: { view: string; tabs: React.ReactNode }) {
           <HeadPeriodGrid
             projectId={projectId || undefined}
             siteId={siteId || undefined}
-            measure={headMeasure}
-            onMeasureChange={setHeadMeasure}
+            period={headPeriod}
+            onPeriodChange={setHeadPeriod}
+            showPeriodSelect={false}
           />
         )}
       </ListDataArea>

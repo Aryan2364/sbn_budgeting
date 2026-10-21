@@ -17,17 +17,16 @@ import {
   type BudgetGrid,
   type Expense,
   type HeadPeriodReport,
-  type HeadPeriodRow,
   type ListResponse,
   type Matchable,
   type Project,
   type Site,
   type VariancePeriodRow,
 } from "@/lib/api"
-import { EMPTY_VALUE, formatAmount, formatCurrency, formatDate, formatNumber, formatPercent } from "@/lib/format"
+import { formatAmount, formatCurrency, formatDate, formatNumber } from "@/lib/format"
 import { paiseToRupeeInput, multiplyPaise, sumPaise } from "@/lib/money"
-import { anchorLabel, PERIODS, periodAnchor, periodLabel } from "@/lib/periods"
-import type { ExportColumn, PdfColumn, PdfTotalRow } from "@/lib/pdf-export"
+import { anchorLabel, periodAnchor, periodLabel } from "@/lib/periods"
+import type { ExportColumn, PdfTotalRow } from "@/lib/pdf-export"
 import { RecordList, type RecordColumn } from "@/components/templates/record-list"
 import {
   ExpenseFilterButton,
@@ -63,60 +62,15 @@ import {
   DetailFieldList,
 } from "@/components/templates/detail-page"
 import { RecordBreadcrumb } from "@/components/forms/record-breadcrumb"
-import { HeadPeriodGrid, measureLabel, type Measure } from "@/components/forms/head-period-grid"
+import {
+  HeadPeriodGrid,
+  headPeriodExportColumns,
+  headPeriodExportTotalRow,
+} from "@/components/forms/head-period-grid"
+import { reportPeriodLabel, type ReportPeriod } from "@/components/forms/report-scope"
 import { DeleteRecordDialog } from "@/components/forms/delete-record-dialog"
 import { PermissionTooltip } from "@/components/ui/permission-tooltip"
-import { varianceDirection } from "@/components/forms/variance-figures"
 
-
-/**
- * PDF cell formatters for the Variance tab's export, mirroring exactly
- * what `HeadPeriodGrid`'s `Figure` renders — for WHICHEVER measure the
- * grid is currently showing (bug fix, Sep 2026). The export used to be
- * hardcoded to "Budget" regardless of the on-screen selector; now the
- * measure is lifted to this page (see `varianceMeasure` below) and
- * these formatters switch on it exactly as `Figure` does.
- */
-function pdfBudgetCell(cell: VariancePeriodRow): string {
-  return cell.budgetPaise === null ? "Budget not set" : formatAmount(cell.budgetPaise)
-}
-
-function pdfVarianceCellText(paise: string | null): string {
-  const direction = varianceDirection(paise)
-  if (direction === null || paise === null) return EMPTY_VALUE
-  return `${direction} ${formatAmount(paise)}`
-}
-
-function pdfVariancePctCellText(pct: string | null): string {
-  return pct === null ? EMPTY_VALUE : formatPercent(Number(pct))
-}
-
-function pdfMeasureCell(cell: VariancePeriodRow, measure: Measure): string {
-  switch (measure) {
-    case "budget":
-      return pdfBudgetCell(cell)
-    case "actual":
-      return formatAmount(cell.actualPaise)
-    case "variance":
-      return pdfVarianceCellText(cell.variancePaise)
-    case "variancePct":
-      return pdfVariancePctCellText(cell.variancePct)
-  }
-}
-
-function varianceExportColumns(measure: Measure): PdfColumn<HeadPeriodRow>[] {
-  return [
-    { header: "Cost head", cell: (row) => row.costHeadName },
-    ...PERIODS.map(
-      (label, index): PdfColumn<HeadPeriodRow> => ({
-        header: label,
-        cell: (row) => pdfMeasureCell(row.cells[index], measure),
-        numeric: true,
-      }),
-    ),
-    { header: "Total", cell: (row) => pdfMeasureCell(row.total, measure), numeric: true },
-  ]
-}
 
 /**
  * The site page's Expenses tab, in `RecordList` columns — mirrors
@@ -290,7 +244,7 @@ function SiteDetail({ params }: { params: Promise<{ id: string }> }) {
   const [expenseAmountPaise, setExpenseAmountPaise] = React.useState<string | null>(null)
 
   /**
-   * The Variance tab's PDF export. `HeadPeriodGrid` (section 34) already
+   * The Variance tab's export. `HeadPeriodGrid` (section 34) already
    * fetches every cost head in one call — not paginated, per 34.2 — so
    * `fetchPage` just returns everything on page 1. The grand total
    * (section 34.1) is computed in SQL by the same endpoint, so it is
@@ -303,14 +257,12 @@ function SiteDetail({ params }: { params: Promise<{ id: string }> }) {
   } | null>(null)
 
   /**
-   * BUG FIX: the measure selector used to live only inside
-   * `HeadPeriodGrid`'s own state, invisible to this page, so the
-   * export always shipped "Budget" no matter what was on screen.
-   * `HeadPeriodGrid` now accepts `measure`/`onMeasureChange` as a
-   * controlled-with-internal-default pair; this page controls it so
-   * the grid and the export below always read the same value.
+   * The Variance tab's period. The selector lives inside `HeadPeriodGrid`
+   * (the one shared `PeriodSelect`), but this page controls its value
+   * (`period` / `onPeriodChange`) so the grid and the export below
+   * always read the same one. "All years" by default.
    */
-  const [varianceMeasure, setVarianceMeasure] = React.useState<Measure>("budget")
+  const [variancePeriod, setVariancePeriod] = React.useState<ReportPeriod>("all")
 
   /**
    * The Expenses tab's `RecordList.load`. Closes over `id`, so `siteId`
@@ -380,17 +332,15 @@ function SiteDetail({ params }: { params: Promise<{ id: string }> }) {
     return { data: result.rows, total: result.rows.length }
   }, [id])
 
+  const varianceExportColumns = React.useMemo(
+    () => headPeriodExportColumns(variancePeriod),
+    [variancePeriod],
+  )
+
   const varianceTotalRow = React.useCallback((): PdfTotalRow | undefined => {
     const t = varianceTotalsRef.current
-    if (!t) return undefined
-    return {
-      cells: [
-        "Total",
-        ...t.periodTotals.map((cell) => pdfMeasureCell(cell, varianceMeasure)),
-        pdfMeasureCell(t.total, varianceMeasure),
-      ],
-    }
-  }, [varianceMeasure])
+    return t ? headPeriodExportTotalRow(t, variancePeriod) : undefined
+  }, [variancePeriod])
   const [varianceRows, setVarianceRows] = React.useState(0)
   const [error, setError] = React.useState<string | null>(null)
   const [deleting, setDeleting] = React.useState(false)
@@ -827,17 +777,18 @@ function SiteDetail({ params }: { params: Promise<{ id: string }> }) {
           <Card>
             <CardHeader>
               <div className="min-w-0">
-                <CardTitle>Variance by cost head and year</CardTitle>
+                <CardTitle>Variance by cost head</CardTitle>
                 {site ? (
                   <PrintHeader
-                    title={`${site.name} — Variance by cost head and year`}
+                    title={`${site.name} — Variance by cost head — ${reportPeriodLabel(variancePeriod)}`}
                   />
                 ) : null}
                 {/*
                   Section 3: every budget figure states its basis, and
                   with five periods the basis names the period too —
-                  which here is the column the figure sits in. Stated
-                  once for the table rather than nineteen times.
+                  which here is the Period chosen above the table (All
+                  years by default). Stated once for the table rather
+                  than nineteen times.
                 */}
                 {site ? (
                   <p className="mt-1 text-meta text-text-muted">
@@ -850,11 +801,11 @@ function SiteDetail({ params }: { params: Promise<{ id: string }> }) {
               <ExportButton
                 title={
                   site
-                    ? `${site.name} — Variance by cost head and year — ${measureLabel(varianceMeasure)}`
-                    : `Variance by cost head and year — ${measureLabel(varianceMeasure)}`
+                    ? `${site.name} — Variance by cost head — ${reportPeriodLabel(variancePeriod)}`
+                    : `Variance by cost head — ${reportPeriodLabel(variancePeriod)}`
                 }
                 contextDescription={site ? `Site: ${site.name}` : undefined}
-                columns={varianceExportColumns(varianceMeasure)}
+                columns={varianceExportColumns}
                 fetchPage={varianceFetchPage}
                 buildTotalRow={varianceTotalRow}
               />
@@ -864,11 +815,13 @@ function SiteDetail({ params }: { params: Promise<{ id: string }> }) {
               grid is wider than it.
 
               On /reports the grid sits in the list page's data area,
-              which scrolls both axes, so the seven columns are
-              reachable at 1024 and 768. Here it sits in a Card, and
-              Card is `overflow-hidden` — so at 768 the table stayed
-              960px wide inside a 709px box and the Total column was
-              simply cut off at 985px with no way to reach it. Section
+              which scrolls both axes, so every column is reachable
+              at 1024 and 768. Here it sits in a Card, and Card is
+              `overflow-hidden` — so with the old seven-column layout
+              the table stayed 960px wide inside a 709px box at 768
+              and its last column was simply cut off with no way to
+              reach it. The grid now has six columns; its width must
+              be re-measured, and this container stays as the guard. Section
               34.3's frozen first column was present and useless:
               nothing to freeze against.
 
@@ -889,8 +842,8 @@ function SiteDetail({ params }: { params: Promise<{ id: string }> }) {
               <HeadPeriodGrid
                 siteId={id}
                 onRowCount={setVarianceRows}
-                measure={varianceMeasure}
-                onMeasureChange={setVarianceMeasure}
+                period={variancePeriod}
+                onPeriodChange={setVariancePeriod}
               />
             </CardContent>
           </Card>

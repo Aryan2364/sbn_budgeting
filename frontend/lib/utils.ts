@@ -56,9 +56,16 @@ const twMerge = extendTailwindMerge({
      * `h-control`/`w-control`/`size-control` (and their `-sm`/`-lg`
      * variants) in the same group as `h-full`, `h-auto`, etc., so the
      * last one passed to `cn()` wins, same as every other utility here.
+     *
+     * The section 17 field widths need the same, measured 21 Oct 2026:
+     * `<SelectTrigger className="w-field-min">` kept the trigger's own
+     * `w-full` beside it, `w-full` won on CSS order, and inside a toolbar
+     * that resolved to the text's own width - a 104px Period dropdown
+     * whose menu cut "Plantation" to "Plantati". Registered, the width
+     * the caller passes replaces the component's default.
      */
     theme: {
-      spacing: ["control", "control-sm", "control-lg"],
+      spacing: ["control", "control-sm", "control-lg", "field-min", "field-max", "search"],
       shadow: ["card", "menu", "dialog"],
       ease: ["enter", "exit"],
     },
