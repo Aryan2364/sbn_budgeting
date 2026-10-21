@@ -98,7 +98,7 @@ function sanitizeSheetName(title: string): string {
  * custom width at all (`isCustomWidth`/`isDefault` compare `=== 9`), so
  * `Column.toModel` drops it from the workbook's `<cols>` entirely —
  * which is exactly the "Period column has no width" defect: its content
- * ("Period" + "Initial") happened to compute to precisely 9. Any column
+ * ("Period" + the period label that was then called "Initial", now "Plantation") happened to compute to precisely 9. Any column
  * can land on 9 depending on its data, so this is nudged away from
  * every time, not special-cased for one column.
  */

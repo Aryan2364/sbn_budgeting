@@ -5,6 +5,14 @@ import * as React from "react"
 import { pick } from "@/lib/api"
 import { Label } from "@/components/ui/label"
 import { SearchableSelect, type SearchOption } from "@/components/ui/searchable-select"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import { PERIOD_VALUES, periodLabel, type Period } from "@/lib/periods"
 
 /**
  * The scope both year-wise reports are read at: every site by
@@ -191,5 +199,72 @@ export function ReportScopeControls({
         />
       </div>
     </>
+  )
+}
+
+/**
+ * THE PERIOD A VARIANCE REPORT IS READ AT, written once (client
+ * instruction, 21 Oct 2026). "All years" is the default and is today's
+ * all-time figure; a number is one budget period (0 Plantation, 1 to 4
+ * the years). Used by the by-site tab, the by-cost-head tab and the
+ * site Variance tab, so the three can never offer different options or
+ * word them differently (section 4 rules 2 and 4).
+ *
+ * Six options, so a plain `select` — section 16.3's search box starts
+ * past six. The options run All years, Plantation, Year 1 to Year 4.
+ */
+export type ReportPeriod = Period | "all"
+
+export function reportPeriodLabel(period: ReportPeriod): string {
+  return period === "all" ? "All years" : periodLabel(period)
+}
+
+const REPORT_PERIOD_OPTIONS: ReportPeriod[] = ["all", ...PERIOD_VALUES]
+
+/** Reads a URL value back; anything unrecognised is "All years". */
+export function parseReportPeriod(raw: string | null | undefined): ReportPeriod {
+  const found = PERIOD_VALUES.find((p) => String(p) === raw)
+  return found ?? "all"
+}
+
+/** What `?period=` and the API's `period` carry: omitted for All years. */
+export function reportPeriodParam(period: ReportPeriod): string | undefined {
+  return period === "all" ? undefined : String(period)
+}
+
+export function PeriodSelect({
+  value,
+  onChange,
+  id = "report-period",
+}: {
+  value: ReportPeriod
+  onChange: (period: ReportPeriod) => void
+  id?: string
+}) {
+  return (
+    <div className="flex items-center gap-2">
+      <Label htmlFor={id}>Period</Label>
+      <Select
+        value={String(value)}
+        onValueChange={(next: string | null) => {
+          if (next !== null) onChange(parseReportPeriod(next))
+        }}
+      >
+        <SelectTrigger id={id} className="w-field-min">
+          <SelectValue>
+            {(next: string | null) =>
+              reportPeriodLabel(parseReportPeriod(next))
+            }
+          </SelectValue>
+        </SelectTrigger>
+        <SelectContent>
+          {REPORT_PERIOD_OPTIONS.map((option) => (
+            <SelectItem key={option} value={String(option)}>
+              {reportPeriodLabel(option)}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
   )
 }

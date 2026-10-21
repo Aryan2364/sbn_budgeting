@@ -301,9 +301,10 @@ behind is worse than no table, because it is believed.
 | A save that failed | `form-error` |
 | A record breadcrumb | `record-breadcrumb` |
 | A budget / actual / variance figure | `variance-figures` | The zero-budget ruling, written once |
-| Cost head × period, at any scope | `head-period-grid` | Report 2 **and** the site Variance tab. One component |
+| Cost head × the five figures, at one period (or all years), at any scope | `head-period-grid` | The By cost head report **and** the site Variance tab. One component; its Period dropdown is `PeriodSelect` |
 | Period-wise budget vs variance | `period-summary-table` | Report 1 |
 | A report's project / site scope | `report-scope` | `useReportScope` + the toolbar controls |
+| A report's Period dropdown (All years, Plantation, Year 1 to 4) | `report-scope` | `PeriodSelect`, `ReportPeriod`. By site, By cost head and the site Variance tab all import it |
 | A form whose options failed to load | `form-error` | `FormLoadFailed`, beside `FormError` |
 
 #### The shell — `components/shell`

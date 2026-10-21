@@ -672,6 +672,12 @@ export interface VarianceRow {
   actualPaise: string
   variancePaise: string | null
   variancePct: string | null
+  /**
+   * Actual as a percentage of budget (client instruction, 21 Oct 2026).
+   * NULL where `variancePct` is: no budget, or a budget of zero. Stripped
+   * for a user without see-amounts, like `variancePct`.
+   */
+  consumedPct: string | null
 }
 
 /** Phase 7b, Report 1. One period, at whatever scope was asked for. */
@@ -683,6 +689,8 @@ export interface VariancePeriodRow {
   actualPaise: string
   variancePaise: string | null
   variancePct: string | null
+  /** Actual as a percentage of budget; null exactly where `variancePct` is. */
+  consumedPct: string | null
 }
 
 /** `GET /reports/variance/periods-summary`. Five rows and a total. */

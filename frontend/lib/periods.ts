@@ -4,8 +4,11 @@
  * The plan (section 3) stores a period as a smallint 0 to 4 rather than
  * an enum, on the grounds that "the labels live in one place in the
  * client". This is that place.
+ *
+ * Period 0 is labelled "Plantation" (client instruction, 21 Oct 2026;
+ * it was "Initial"). Only the label changed: the stored value is still 0.
  */
-export const PERIODS = ['Initial', 'Year 1', 'Year 2', 'Year 3', 'Year 4'] as const
+export const PERIODS = ['Plantation', 'Year 1', 'Year 2', 'Year 3', 'Year 4'] as const
 
 export type Period = 0 | 1 | 2 | 3 | 4
 
@@ -27,7 +30,7 @@ export function periodLabel(period: number | null | undefined): string {
  * These are two different dates and the difference is not pedantic.
  * Planting takes time, so Year 1 begins at a different point depending
  * on which one anchors it — an expense a fortnight after planting
- * finishes is Initial under one anchor and Year 1 under the other.
+ * finishes is Plantation under one anchor and Year 1 under the other.
  *
  * `plantationCompleteDate` is nullable because a site still being
  * planted has not got one, which is exactly the case the fallback
@@ -58,7 +61,7 @@ export function anchorLabel(source: PeriodAnchor['source']): string {
 /**
  * What the expense form pre-fills the period with (question 6).
  *
- * Initial is everything up to the anchor date; Year 1 is the twelve
+ * Plantation is everything up to the anchor date; Year 1 is the twelve
  * months after it, and so on. Past Year 4 it stops at Year 4
  * rather than inventing a sixth period — the budget has five, and an
  * expense outside them still has to land somewhere a person can see and

@@ -116,7 +116,7 @@ describe('P4 see amounts: the rules', () => {
     const rule = BUDGET_RULES[0]!;
     assert.equal(rule.key, 'budget.amounts.see');
     assert.deepEqual([...rule.suffixes], ['Paise']);
-    for (const k of ['spentPct', 'variancePct', 'overBudget', 'sitesOverBudget', 'attention']) {
+    for (const k of ['spentPct', 'variancePct', 'consumedPct', 'overBudget', 'sitesOverBudget', 'attention']) {
       assert.ok(rule.keys.has(k), k);
     }
     assert.deepEqual(AMOUNT_RULES.map((r) => r.module), ['budget'], 'only Budget has amounts');
@@ -184,7 +184,7 @@ describe('P4 see amounts: the rules', () => {
       spendThisMonthPaise: '0', spendLastMonthPaise: '0',
       attention: [{ siteId: 's', budgetPaise: '1', actualPaise: '2', variancePaise: '-1' }],
       recent: [{ id: 'e', siteName: 'S', amountPaise: '5' }],
-      variancePct: '1.0', spentPct: '2', overBudget: true,
+      variancePct: '1.0', consumedPct: '99.0', spentPct: '2', overBudget: true,
     };
     const before = JSON.stringify({ list, dashboard });
     const strippedList = stripAmounts(list, BUDGET_RULES) as typeof list;
@@ -427,7 +427,7 @@ describe('P4 see amounts through the real routes', { skip: dbTestsEnabled ? fals
     assert.equal('sitesOverBudget' in dash, false);
     assert.equal(results.sites.data.length, 1, 'the default sort no longer needs amounts');
 
-    for (const sort of ['variance', 'budget', 'actual', 'variancePct']) {
+    for (const sort of ['variance', 'budget', 'actual', 'variancePct', 'consumedPct']) {
       await assert.rejects(
         runInRequestTx(() => variance.sites(blind, { sort })),
         (e: unknown) => e instanceof ForbiddenException && JSON.stringify(e.getResponse()).includes('Sorting by amount'),
@@ -437,5 +437,42 @@ describe('P4 see amounts through the real routes', { skip: dbTestsEnabled ? fals
     const seer = ctxOf(SEER_KEYS, P.seer);
     const sorted = await runInRequestTx(() => variance.sites(seer, { sort: 'budget' }));
     assert.equal(sorted.data.length, 1);
+    const byConsumed = await runInRequestTx(() => variance.sites(seer, { sort: 'consumedPct', period: '0' }));
+    assert.equal(byConsumed.data.length, 1);
+  });
+
+  it('% consumed: carried by every report row for a seer, absent for a blind caller, refused as a sort', async () => {
+    // 5000 spent of a budget of 100 paise x 10 trees = 1000: 500.0 %.
+    const sites = await call('/reports/variance?pageSize=100', 'seer');
+    assert.equal(sites.body.data[0].consumedPct, '500.0');
+    const inPeriod = await call('/reports/variance?period=0', 'seer');
+    assert.equal(inPeriod.body.data[0].consumedPct, '500.0');
+    const empty = await call('/reports/variance?period=3', 'seer');
+    assert.equal(empty.body.data[0].consumedPct, null, 'no budget in that period: no percentage');
+    const periods = await call(`/reports/variance/periods-summary?projectId=${PROJECT}`, 'seer');
+    const heads = await call(`/reports/variance/head-periods?projectId=${PROJECT}`, 'seer');
+    const rows: any[] = [
+      ...periods.body.rows, periods.body.total,
+      ...heads.body.rows.flatMap((r: any) => [...r.cells, r.total]),
+      ...heads.body.periodTotals, heads.body.total,
+    ];
+    for (const r of rows) assert.ok('consumedPct' in r, JSON.stringify(r));
+    assert.equal(periods.body.total.consumedPct, '500.0');
+    // Blind: unreachable, and the key is in the stripped set whatever the route does.
+    assert.equal((await call('/reports/variance?sort=consumedPct', 'blind')).status, 403);
+    assert.equal((await call('/reports/variance?period=0', 'blind')).status, 403);
+    const stripped = stripAmounts({ data: [{ consumedPct: '1.0', siteName: 'S' }] }, BUDGET_RULES);
+    assert.deepEqual(stripped, { data: [{ siteName: 'S' }] });
+  });
+
+  it('a period other than 0 to 4 is a 400 with a plain message', async () => {
+    for (const bad of ['5', '-1', 'x', '1.5', '01', '1,2']) {
+      const res = await call(`/reports/variance?period=${encodeURIComponent(bad)}`, 'seer');
+      assert.equal(res.status, 400, `${bad}: ${JSON.stringify(res.body)}`);
+      assert.match(res.body.message, /is not a period/);
+    }
+    for (const ok of ['0', '1', '2', '3', '4', '']) {
+      assert.equal((await call(`/reports/variance?period=${ok}`, 'seer')).status, 200, ok);
+    }
   });
 });

@@ -30,7 +30,7 @@ export const budgetCatalogue = {
   seeAmounts: {
     covers: 'cost, budgets',
     stripSuffixes: ['Paise'],
-    stripKeys: ['spentPct', 'variancePct', 'overBudget'],
+    stripKeys: ['spentPct', 'variancePct', 'consumedPct', 'overBudget'],
   },
   sections: [
     {

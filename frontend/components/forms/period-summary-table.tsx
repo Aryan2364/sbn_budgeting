@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/table"
 import {
   BudgetFigure,
+  ConsumedPercentFigure,
   VarianceFigure,
   VariancePercentFigure,
 } from "@/components/forms/variance-figures"
@@ -26,7 +27,9 @@ import {
 /**
  * Report 1: year-wise budget against variance.
  *
- * Five rows, one per period, and a total. Scoped to a project by
+ * Five rows, one per period, and a total. Columns: Period, Budget,
+ * Actual, % consumed, Variance, Variance % (% consumed added after
+ * Actual, client instruction, 21 Oct 2026). Scoped to a project by
  * default and narrowed by a site — the client's "total year wise"
  * reads as a rollup, so the project is the default view.
  *
@@ -36,7 +39,7 @@ import {
  * from the cost-head master. The API supplies the spine; this file
  * relies on it and does not pad the list.
  *
- * The cells are the same three components both other variance screens
+ * The cells are the same figure components both other variance screens
  * use, so the zero-budget ruling cannot drift between them.
  */
 export function PeriodSummaryTable({
@@ -97,6 +100,9 @@ export function PeriodSummaryTable({
           <TableHead>Period</TableHead>
           <TableHead numeric>Budget</TableHead>
           <TableHead numeric>Actual</TableHead>
+          <TableHead numeric className="hidden md:table-cell">
+            % consumed
+          </TableHead>
           <TableHead numeric>Variance</TableHead>
           <TableHead numeric className="hidden md:table-cell">
             Variance %
@@ -112,8 +118,12 @@ export function PeriodSummaryTable({
                 <TableCell>
                   <Skeleton className="h-4 w-24" />
                 </TableCell>
-                {Array.from({ length: 4 }, (_, cell) => (
-                  <TableCell key={cell} numeric>
+                {Array.from({ length: 5 }, (_, cell) => (
+                  <TableCell
+                    key={cell}
+                    numeric
+                    className={cell === 2 || cell === 4 ? "hidden md:table-cell" : undefined}
+                  >
                     <Skeleton className="ml-auto h-4 w-24" />
                   </TableCell>
                 ))}
@@ -126,6 +136,9 @@ export function PeriodSummaryTable({
                   <BudgetFigure paise={row.budgetPaise} />
                 </TableCell>
                 <TableCell numeric>{formatAmount(row.actualPaise)}</TableCell>
+                <TableCell numeric className="hidden md:table-cell">
+                  <ConsumedPercentFigure pct={row.consumedPct} />
+                </TableCell>
                 <TableCell numeric>
                   <VarianceFigure paise={row.variancePaise} />
                 </TableCell>
@@ -152,6 +165,13 @@ export function PeriodSummaryTable({
               <Skeleton className="ml-auto h-4 w-24" />
             ) : (
               formatAmount(result.total.actualPaise)
+            )}
+          </TableCell>
+          <TableCell numeric className="hidden md:table-cell">
+            {result === null ? (
+              <Skeleton className="ml-auto h-4 w-12" />
+            ) : (
+              <ConsumedPercentFigure pct={result.total.consumedPct} />
             )}
           </TableCell>
           <TableCell numeric>

@@ -640,6 +640,58 @@ export function missingPushRoutes(diffs: readonly Difference[]): string[] {
   );
 }
 
+// ---------------------------------------------------------------------
+// D15 (client instruction, 21 Oct 2026): the variance report gains
+// "% consumed". Every row of the three report routes below carries a new
+// `consumedPct` (actual / budget x 100, one decimal, computed in SQL).
+// Additive only:
+//   - a row's `itemKeys` may gain exactly `consumedPct` and nothing else,
+//     on exactly these routes;
+//   - the digest is taken with `consumedPct` removed at any depth on
+//     those routes only (matrix.ts), so every other field must still
+//     match the baseline exactly;
+//   - ids, totals and the status must not change.
+// The baseline has no `consumedPct` key anywhere, so stripping it hides
+// nothing the old build sent. (The new `period` query on the list route
+// is not exercised by the baseline's cases, which send none.)
+// ---------------------------------------------------------------------
+
+/** D15: the key the report rows gain. */
+export const D15_KEY = 'consumedPct';
+
+/** D15: the routes (method + template) whose rows gain it. */
+export const D15_ROUTES: readonly string[] = [
+  'GET /api/reports/variance',
+  'GET /api/reports/variance/periods-summary',
+  'GET /api/reports/variance/head-periods',
+];
+
+const D15_PATHS = new Set(D15_ROUTES.map((r) => r.split(' ')[1]));
+
+function dropDeep(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(dropDeep);
+  if (!value || typeof value !== 'object') return value;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) if (k !== D15_KEY) out[k] = dropDeep(v);
+  return out;
+}
+
+/** The body with D15's `consumedPct` removed at any depth, on its routes only. */
+export function withoutConsumedPct(path: string, body: unknown): unknown {
+  return D15_PATHS.has(path) ? dropDeep(body) : body;
+}
+
+/** D15 for a report route's `itemKeys` that gained exactly `consumedPct`. */
+function consumedPctIdFor(d: Difference): string | null {
+  if (d.kind !== 'field' || d.field !== 'itemKeys') return null;
+  const { route } = splitKey(d.key);
+  if (!D15_ROUTES.includes(route)) return null;
+  if (!Array.isArray(d.baseline) || !Array.isArray(d.run)) return null;
+  const base = d.baseline as string[];
+  if (base.includes(D15_KEY)) return null;
+  return same([...base, D15_KEY].sort(), d.run) ? 'D15' : null;
+}
+
 /** The id of the intended difference this one is, or null when it is unexplained. */
 export function intendedIdFor(d: Difference, world?: IntendedWorld): string | null {
   if ((d.kind === 'route-only-in-run' || d.kind === 'case-only-in-run') && isNewSystemRoute(d.key)) return 'D7';
@@ -653,6 +705,8 @@ export function intendedIdFor(d: Difference, world?: IntendedWorld): string | nu
   if (d10) return d10;
   const d14 = pushRouteIdFor(d);
   if (d14) return d14;
+  const d15 = consumedPctIdFor(d);
+  if (d15) return d15;
   const d11 = optionalFieldsIdFor(d, world);
   if (d11) return d11;
   const d13 = rootCauseIdFor(d, world);
@@ -825,6 +879,7 @@ export function matchSwitchOnly(diffs: readonly Difference[], world: IntendedWor
       approvalsIdFor(d, world) ??
       removedRouteIdFor(d) ??
       pushRouteIdFor(d) ??
+      consumedPctIdFor(d) ??
       titleOnlyIdFor(d) ??
       optionalFieldsIdFor(d, world) ??
       languageIdFor(d, world) ??

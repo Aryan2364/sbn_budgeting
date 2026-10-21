@@ -1,9 +1,10 @@
 import { Badge } from "@/components/ui/badge"
 import { Truncate } from "@/components/ui/truncate"
 import { EMPTY_VALUE, formatAmount, formatPercent } from "@/lib/format"
+import { paiseToRupeeInput } from "@/lib/money"
 
 /**
- * The three cells that carry a variance figure, written once and used
+ * The cells that carry a variance figure, written once and used
  * by both variance screens (section 4 rules 2 and 4).
  *
  * They exist as one file because the zero-budget ruling is easy to get
@@ -85,4 +86,63 @@ export function VarianceFigure({ paise }: { paise: string | null }) {
 export function VariancePercentFigure({ pct }: { pct: string | null }) {
   if (pct === null) return <>{EMPTY_VALUE}</>
   return <Truncate>{formatPercent(Number(pct))}</Truncate>
+}
+
+/**
+ * Actual as a percentage of budget, to one decimal (client instruction,
+ * 21 Oct 2026).
+ *
+ * Plain text, deliberately: NO colour and NO badge, even above 100%.
+ * The Variance column already carries the over badge, and a second
+ * signal for the same fact is the duplication the design rules forbid.
+ * NULL arrives exactly where `variancePct` is null (no budget, or a
+ * budget of zero) and renders an em-dash — the null ruling lives here
+ * and nowhere else.
+ */
+export function ConsumedPercentFigure({ pct }: { pct: string | null }) {
+  if (pct === null) return <>{EMPTY_VALUE}</>
+  return <Truncate>{formatPercent(Number(pct))}</Truncate>
+}
+
+/**
+ * The same figures as plain strings and typed cells, for the PDF and
+ * Excel exports. They sit beside the components above so an export can
+ * never word a figure differently from the screen: one file holds both.
+ */
+export function pdfBudgetCell(paise: string | null): string {
+  return paise === null ? "Budget not set" : formatAmount(paise)
+}
+
+export function pdfVarianceCell(paise: string | null): string {
+  if (paise === null) return EMPTY_VALUE
+  return `${varianceDirection(paise)} ${formatAmount(paise)}`
+}
+
+export function pdfVariancePctCell(pct: string | null): string {
+  return pct === null ? EMPTY_VALUE : formatPercent(Number(pct))
+}
+
+export function pdfConsumedPctCell(pct: string | null): string {
+  return pct === null ? EMPTY_VALUE : formatPercent(Number(pct))
+}
+
+/**
+ * A real numeric Excel cell in rupees, or `null` when the underlying
+ * value is genuinely absent (never `0`, which would state a decision
+ * nobody made — same distinction section 31.2 draws on screen).
+ *
+ * `paiseToRupeeInput` (lib/money.ts) does the paise->rupees conversion
+ * by string manipulation and already returns `""` for `null`; `Number()`
+ * on that exact decimal string is the only conversion to a JS number —
+ * never `Number(paise) / 100`, which is float division on money and
+ * exactly what this product's paise-as-string convention exists to
+ * avoid.
+ */
+export function excelAmountValue(paise: string | null): number | null {
+  const text = paiseToRupeeInput(paise)
+  return text === "" ? null : Number(text)
+}
+
+export function excelPercentValue(pct: string | null): number | null {
+  return pct === null ? null : Number(pct)
 }

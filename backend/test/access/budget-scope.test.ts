@@ -387,6 +387,38 @@ describe('budget scope through the real routes (P3b)', { skip: dbTestsEnabled ? 
     assert.equal(periods.body.total.budgetPaise, '1000', 'S1 only: 100 paise x 10 trees');
   });
 
+  it('reports by period: scope still applies, and a site with nothing in the period still appears', async () => {
+    // Budgets and spend exist for S1 and S2 (and S3's spend) in period 0 only.
+    const p0 = await list('/reports/variance?period=0', 'ceo', 'siteId');
+    assert.deepEqual(p0.ids, ['S1', 'S2', 'S3', 'S4']);
+    const byId = (rows: any[], s: string) => rows.find((r) => r.siteId === S[s as keyof typeof S]);
+    // Each request rolls back, so the seeded amounts stand: 100 paise x 10 trees; E1 + E4 = 2000.
+    assert.equal(byId(p0.rows, 'S1').budgetPaise, '1000');
+    assert.equal(byId(p0.rows, 'S1').actualPaise, '2000');
+    assert.equal(byId(p0.rows, 'S1').consumedPct, '200.0');
+    // S3: spend but no budget; S4: nothing at all. Both present, "Budget not set".
+    assert.deepEqual([byId(p0.rows, 'S3').budgetPaise, byId(p0.rows, 'S3').consumedPct], [null, null]);
+    assert.equal(byId(p0.rows, 'S3').actualPaise, '2000', 'E3 + E5: spend with no budget');
+    assert.deepEqual([byId(p0.rows, 'S4').budgetPaise, byId(p0.rows, 'S4').actualPaise], [null, '0']);
+    // A period with no data anywhere: every site in reach is still a row.
+    const p3 = await list('/reports/variance?period=3', 'ceo', 'siteId');
+    assert.deepEqual(p3.ids, ['S1', 'S2', 'S3', 'S4']);
+    for (const r of p3.rows) assert.deepEqual([r.budgetPaise, r.actualPaise, r.variancePaise, r.consumedPct], [null, '0', null, null]);
+    // Scope: only the sites in reach, with their total.
+    const mine = await list('/reports/variance?period=0', 'mgrA', 'siteId');
+    assert.deepEqual(mine.ids, ['S1', 'S4']);
+    assert.equal(mine.body.total, 2);
+    assert.deepEqual((await list('/reports/variance?period=0', 'office', 'siteId')).ids, ['S3']);
+    assert.deepEqual((await list('/reports/variance?period=0', 'outsider', 'siteId')).ids, []);
+    // Filters and sort keep working beside a period.
+    assert.deepEqual((await list(`/reports/variance?period=0&projectId=${PR.P1}`, 'ceo', 'siteId')).ids, ['S1', 'S2']);
+    assert.deepEqual((await list('/reports/variance?period=0&projectId=none', 'ceo', 'siteId')).ids, ['S4']);
+    assert.deepEqual((await list('/reports/variance?period=0&search=S4', 'ceo', 'siteId')).ids, ['S4']);
+    const sorted = await list('/reports/variance?period=0&sort=consumedPct&direction=desc', 'ceo', 'siteId');
+    assert.equal(sorted.ids.length, 4);
+    assert.equal(sorted.rows[0].siteId, S.S1, 'highest % first; unbudgeted sites last');
+  });
+
   // ---- Picks ----------------------------------------------------------
 
   it('Picks: scoped by the Pick scopes held, searched, declared fields only', async () => {
